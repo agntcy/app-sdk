@@ -34,48 +34,71 @@ class GatewayFactory:
     Factory class to create different types of agent gateway transports and protocols.
     """
     def __init__(self):
-        _gateway_endpoint = ""
         _clients = {} # do we need to store clients and receivers?
         _receivers = {}
 
-    def create_client(self, protocol, endpoint: str, transport=None, auth=None, gateway=None):
+    def create_client(
+        self, protocol: str, 
+        agent_endpoint: str, 
+        gateway_endpoint: str = "", 
+        transport: str = "", 
+        auth=None
+    ):
 
         gateway = None
         client = None
 
         # if transport is specified, match it and create the corresponding gateway
-        if transport:
-            transport = transport.upper()
-            match transport:
-                case "AGP":
-                    gateway = AGPGateway(endpoint, auth)
-                case "NATS":
-                    gateway = NatsGateway(endpoint, auth)
-                case _:
-                    raise ValueError(f"Unsupported transport: {transport}")
+        transport = transport.upper()
+        match transport:
+            case "":
+                pass # noop
+            case "AGP":
+                gateway = AGPGateway(gateway_endpoint, auth)
+            case "NATS":
+                gateway = NatsGateway(gateway_endpoint, auth)
+            case _:
+                raise ValueError(f"Unsupported transport: {transport}")
        
         # return a client for the specified protocol
         protocol = protocol.upper()
         match protocol:
             case "A2A":
-                client = create_client_a2a(endpoint, gateway, auth)
+                client = create_client_a2a(agent_endpoint, gateway, auth)
             case "AP":
-                client = create_client_ap(endpoint, gateway, auth)
+                client = create_client_ap(agent_endpoint, gateway, auth)
             case "MCP":
-                client = create_client_mcp(endpoint, gateway, auth)
+                client = create_client_mcp(agent_endpoint, gateway, auth)
             case "ACP":
-                client = create_client_acp(endpoint, gateway, auth)
+                client = create_client_acp(agent_endpoint, gateway, auth)
             case _:
                 raise ValueError(f"Unsupported protocol: {protocol}")
 
         return client
 
-    def create_receiver(self, protocol, transport: str, endpoint: str, onMessage: callable, auth=None):
+    def create_receiver(
+        self,
+        protocol: str,
+        onMessage: callable,
+        agent_endpoint: str,
+        gateway_endpoint: str = "",
+        transport: str = "",
+        auth: any = None,
+    ):
         """
         Create a receiver for the specified transport and protocol.
 
-        This will connect to a gateway and offload messages to whatever protcol is provided.
+        Connects to a gateway and offloads messages using the provided protocol.
 
-        How do we offload messages, do we have adapters for each protocol?
+        Args:
+            protocol (str): The protocol to use for offloading messages.
+            onMessage (callable): Callback function to handle incoming messages.
+            agent_endpoint (str): Endpoint for the agent.
+            gateway_endpoint (str, optional): Endpoint for the gateway. Defaults to "".
+            transport (str, optional): Transport type (e.g., "websocket", "http"). Defaults to "".
+            auth (any, optional): Optional authentication info or credentials.
+
+        Note:
+            - How do we offload messages? Do we have adapters for each protocol?
         """
         pass

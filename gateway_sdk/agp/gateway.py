@@ -22,6 +22,7 @@ import inspect
 import json
 import base64
 from ..logging_config import configure_logging, get_logger
+from ..base_transport import BaseTransport
 
 configure_logging()
 logger = get_logger(__name__)
@@ -71,13 +72,25 @@ class Message:
             f"headers={self.headers} data={self.data[:50]}...>"
         )
 
-class AGPGateway():
+class AGPGateway(BaseTransport):
     """
     AGP Gateway implementation using the agp_bindings library.
     """
     def __init__(self, endpoint: str, auth: None):
         self.endpoint = endpoint
         self.gateway = None
+
+    def get(self, *args: Any, **kwargs: Any) -> None:
+        """
+        This method is not implemented for AGP Gateway.
+        """
+        raise NotImplementedError("AGP Gateway does not support GET requests.")
+    
+    def post(self, *args: Any, **kwargs: Any) -> None:  
+        """
+        This method is not implemented for AGP Gateway.
+        """
+        raise NotImplementedError("AGP Gateway does not support POST requests.")
 
     async def _create_gateway(self, org: str, namespace: str, topic: str) -> None:
         # create new gateway object
