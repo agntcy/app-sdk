@@ -39,3 +39,10 @@ Run test for a2a gateways
 ```bash
 uv run pytest tests/test_a2a.py
 ```
+
+## Roadmap
+- [ ] Add support for transport decoupling and usage
+- [ ] Add additional protocols
+- [ ] Add observability
+- [ ] Add AGP control plane integration
+- [ ] Add traffic routing via AGP control plane
