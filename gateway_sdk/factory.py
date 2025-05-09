@@ -31,7 +31,7 @@ from .acp.gateway import create_receiver as create_receiver_acp
 
 from enum import Enum
 
-class Protocol(Enum):
+class ProtocolType(Enum):
     """
     Enum for supported agent protocols.
     """
@@ -40,7 +40,7 @@ class Protocol(Enum):
     MCP = "MCP"
     ACP = "ACP"
 
-class Transport(Enum):
+class TransportType(Enum):
     """
     Enum for supported transports.
     """
@@ -54,9 +54,15 @@ class GatewayFactory:
     """
     Factory class to create different types of agent gateway transports and protocols.
     """
-    def __init__(self):
-        _clients = {} # do we need to store clients and receivers?
-        _receivers = {}
+    def __init__(self, enable_logging: bool = True, enable_tracing: bool = False):
+        self.enable_logging = enable_logging
+        self.enable_tracing = enable_tracing
+
+        # manage the state of the factory
+        # TODO: define a state interface
+        self._clients = {} 
+        self._receivers = {}
+        self._sessions = {}
 
     def create_client(
         self, protocol: str, 
@@ -71,31 +77,31 @@ class GatewayFactory:
 
         # if transport is specified, match it and create the corresponding gateway
         try:
-            transport = Transport(transport.upper())
+            transport = TransportType(transport.upper()) # TODO: just pass in a transport object?
         except ValueError:
             raise ValueError(f"Unsupported transport: {transport}")
 
         match transport:
-            case Transport.NONE:
+            case TransportType.NONE:
                 pass # noop
-            case Transport.AGP:
+            case TransportType.AGP:
                 gateway = AGPGateway(gateway_endpoint, auth)
-            case Transport.NATS:
+            case TransportType.NATS:
                 gateway = NatsGateway(gateway_endpoint, auth)
        
         try:
-            protocol = Protocol(protocol.upper())
+            protocol = ProtocolType(protocol.upper())
         except ValueError:
             raise ValueError(f"Unsupported protocol: {protocol}")
         
         match protocol:
-            case Protocol.A2A:
+            case ProtocolType.A2A:
                 client = create_client_a2a(agent_endpoint, gateway, auth)
-            case Protocol.AP:
+            case ProtocolType.AP:
                 client = create_client_ap(agent_endpoint, gateway, auth)
-            case Protocol.MCP:
+            case ProtocolType.MCP:
                 client = create_client_mcp(agent_endpoint, gateway, auth)
-            case Protocol.ACP:
+            case ProtocolType.ACP:
                 client = create_client_acp(agent_endpoint, gateway, auth)
 
         return client
@@ -103,8 +109,10 @@ class GatewayFactory:
     def create_receiver(
         self,
         protocol: str,
-        onMessage: callable,
-        agent_endpoint: str,
+        topic: str,
+        fastapi_app: any = None,
+        flask_app: any = None,
+        onMessage: callable = None,
         gateway_endpoint: str = "",
         transport: str = "",
         auth: any = None,
@@ -125,4 +133,24 @@ class GatewayFactory:
         Note:
             - How do we offload messages? Do we have adapters for each protocol?
         """
-        pass
+        
+        gateway = None
+        receiver = None
+
+        # if transport is specified, match it and create the corresponding gateway
+        try:
+            transport = TransportType(transport.upper()) # TODO: just pass in a transport object?
+        except ValueError:
+            raise ValueError(f"Unsupported transport: {transport}")
+        match transport:
+            case TransportType.AGP:
+                gateway = AGPGateway(gateway_endpoint, auth)
+            case TransportType.NATS:
+                gateway = NatsGateway(gateway_endpoint, auth)
+            case TransportType.NONE:
+                raise ValueError("Transport type is required for receiver creation")
+            
+        gateway.subscribe()
+            
+        
+            

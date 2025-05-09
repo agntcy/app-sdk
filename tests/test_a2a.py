@@ -5,6 +5,7 @@ def test_a2a_factory_client():
     Test the A2A factory client creation.
     """
     factory = GatewayFactory()
+    
     client = factory.create_client("A2A", "http://localhost:5005")
     assert client is not None
 

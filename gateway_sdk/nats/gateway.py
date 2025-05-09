@@ -16,6 +16,7 @@
 
 import asyncio
 import nats
+from ..base_transport import BaseTransport
 from ..logging_config import configure_logging, get_logger
 
 configure_logging()
@@ -26,7 +27,7 @@ Implementations of the BaseGateway class for different protocols.
 These classes should implement the abstract methods defined in BaseGateway.
 """
 
-class NatsGateway():
+class NatsGateway(BaseTransport):
     def __init__(self, endpoint: str, auth=None):
         self.client = None
         self.endpoint = endpoint
@@ -35,6 +36,12 @@ class NatsGateway():
     async def _connect(self):
         self.client = await nats.connect(self.endpoint)
         logger.info("Connected to NATS server")
+
+    async def post(self, url, topic=None, data=None, json=None, **kwargs):
+        raise NotImplementedError("POST method is not implemented for NATS transport")
+    
+    async def get(self, url, topic=None, data=None, json=None, **kwargs):
+        raise NotImplementedError("GET method is not implemented for NATS transport")
 
     async def request(self, org: str, ns: str, agent: str, message: bytes) -> bytes:
         if self.client is None:
