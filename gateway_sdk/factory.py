@@ -29,6 +29,27 @@ from .mcp.gateway import create_receiver as create_receiver_mcp
 from .acp.gateway import create_client as create_client_acp
 from .acp.gateway import create_receiver as create_receiver_acp
 
+from enum import Enum
+
+class Protocol(Enum):
+    """
+    Enum for supported agent protocols.
+    """
+    A2A = "A2A"
+    AP = "AP"
+    MCP = "MCP"
+    ACP = "ACP"
+
+class Transport(Enum):
+    """
+    Enum for supported transports.
+    """
+    NONE = ""
+    AGP = "AGP"
+    NATS = "NATS"
+    # KAFKA = "KAFKA"  # Uncomment if Kafka transport is implemented
+    # MQTT = "MQTT"    # Uncomment if MQTT transport is implemented
+
 class GatewayFactory:
     """
     Factory class to create different types of agent gateway transports and protocols.
@@ -49,30 +70,33 @@ class GatewayFactory:
         client = None
 
         # if transport is specified, match it and create the corresponding gateway
-        transport = transport.upper()
+        try:
+            transport = Transport(transport.upper())
+        except ValueError:
+            raise ValueError(f"Unsupported transport: {transport}")
+
         match transport:
-            case "":
+            case Transport.NONE:
                 pass # noop
-            case "AGP":
+            case Transport.AGP:
                 gateway = AGPGateway(gateway_endpoint, auth)
-            case "NATS":
+            case Transport.NATS:
                 gateway = NatsGateway(gateway_endpoint, auth)
-            case _:
-                raise ValueError(f"Unsupported transport: {transport}")
        
-        # return a client for the specified protocol
-        protocol = protocol.upper()
+        try:
+            protocol = Protocol(protocol.upper())
+        except ValueError:
+            raise ValueError(f"Unsupported protocol: {protocol}")
+        
         match protocol:
-            case "A2A":
+            case Protocol.A2A:
                 client = create_client_a2a(agent_endpoint, gateway, auth)
-            case "AP":
+            case Protocol.AP:
                 client = create_client_ap(agent_endpoint, gateway, auth)
-            case "MCP":
+            case Protocol.MCP:
                 client = create_client_mcp(agent_endpoint, gateway, auth)
-            case "ACP":
+            case Protocol.ACP:
                 client = create_client_acp(agent_endpoint, gateway, auth)
-            case _:
-                raise ValueError(f"Unsupported protocol: {protocol}")
 
         return client
 
