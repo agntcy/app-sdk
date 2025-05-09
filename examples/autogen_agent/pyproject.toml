@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "autogen-agent"
+version = "0.1.0"
+description = "An agent that calls a function in order to prepare a question for testing agent communication"
+authors = ["Peter Balogh <p.balogh.sa@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.14"
+typing-extensions = "^4.12.2"
+autogen-agentchat = "^0.4.3"
+autogen-ext = "^0.4.3"
+tiktoken = "^0.8.0"
+openai = "^1.60.2"
+autogen-core = "^0.4.3"
+agp-bindings = "^0.2.4"
+coloredlogs = "^15.0.1"
+langchain-anthropic = "^0.3.12"
+cisco-outshift-agent-utils = "0.0.2"
+langchain-openai = "^0.3.14"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
