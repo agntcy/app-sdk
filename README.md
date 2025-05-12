@@ -32,7 +32,7 @@ client_with_agp = factory.create_client("A2A", "http://localhost:8080", transpor
 
 Run a sample a2a server:
 ```bash
-uv run python tests/run_a2a_sample_server.py
+uv run tests/helloworld/__main__.p
 ```
 
 Run test for a2a gateways

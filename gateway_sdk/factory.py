@@ -19,25 +19,9 @@ from .nats.gateway import NatsGateway
 
 from .a2a.gateway import A2AFactory
 
-from enum import Enum
 from typing import Dict, Type
 from .base_transport import BaseTransport
 from .base_protocol import BaseProtocol
-
-class ProtocolType(Enum):
-    """
-    Enum for supported agent protocols.
-    """
-    A2A = "A2A"
-    AP = "AP"
-    MCP = "MCP"
-    ACP = "ACP"
-
-    def get_type(self) -> str:
-        """
-        Return the transport type as a string.
-        """
-        return self.value
 
 class GatewayFactory:
     """
