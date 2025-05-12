@@ -15,24 +15,41 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from ..logging_config import configure_logging, get_logger
-from python_a2a import A2AClient
-from python_a2a import A2AServer
+import httpx
+from a2a.client import A2AClient
+from a2a.server import A2AServer
+from ..base_protocol import BaseProtocol
 
 configure_logging()
 logger = get_logger(__name__)
 
-def create_client(url, transport=None, auth=None):
-    """
-    Create an A2A client, passing in the transport and authentication details.
-    """
-
-    # Create an A2A client
-    a2a_client = A2AClient(url)
+class A2AFactory(BaseProtocol):
+    def get_type(self):
+        """
+        Return the transport type as a string.
+        """
+        return "A2A"
     
-    return a2a_client
+    async def create_client(self, url, transport=None, auth=None):
+        """
+        Create an A2A client, passing in the transport and authentication details.
+        """
 
-def create_receiver():
-    """
-    A receiver should connect to a gateway and then offload messages to A2A agents
-    """
-    pass
+        # Create an A2A client
+        async with httpx.AsyncClient() as httpx_client:
+            client = await A2AClient.get_client_from_agent_card_url(
+                httpx_client, url
+            )
+            print('Connection successful.')
+
+            return client
+
+    def create_receiver(self):
+        """
+        A receiver should connect to a gateway and then offload messages to A2A agents
+
+        server = A2AServer(
+            agent_card=get_agent_card(host, port), request_handler=request_handler
+        )
+        """
+        pass

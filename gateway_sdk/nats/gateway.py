@@ -29,9 +29,13 @@ These classes should implement the abstract methods defined in BaseGateway.
 
 class NatsGateway(BaseTransport):
     def __init__(self, endpoint: str, auth=None):
+        self.type = "NATS"
         self.client = None
         self.endpoint = endpoint
         self.auth = auth
+
+    def get_type(self) -> str:
+        return self.type
         
     async def _connect(self):
         self.client = await nats.connect(self.endpoint)

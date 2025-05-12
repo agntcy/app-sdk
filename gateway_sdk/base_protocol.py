@@ -16,29 +16,23 @@
 
 from abc import ABC, abstractmethod
 from typing import Any
+from .base_transport import BaseTransport
 
-class BaseTransport(ABC):
+class BaseProtocol(ABC):
+    """
+    Base class for different agent protocols.
+    """
     @abstractmethod
     def get_type(self) -> str:
-        """Return the transport type."""
+        """Return the protocol type."""
         pass
 
     @abstractmethod
-    def get(self, url, topic=None, params=None, **kwargs) -> Any:
-        """Get a message from a topic."""
+    def create_client(self, url: str, transport: BaseTransport = None, auth: Any = None) -> Any:
+        """Create a client for the protocol."""
         pass
 
     @abstractmethod
-    def post(self, url, topic=None, data=None, json=None, **kwargs) -> None:
-        """Post a message to a topic."""
-        pass
-    
-    @abstractmethod
-    async def publish(self, org: str, namespace: str, topic: str, message: Any) -> None:
-        """Publish a message to a topic."""
-        pass
-
-    @abstractmethod
-    async def subscribe(self, org: str, namespace: str, topic: str, callback: callable) -> None:
-        """Subscribe to a topic with a callback."""
+    def create_receiver(self) -> Any:
+        """Create a receiver for the protocol."""
         pass

@@ -17,19 +17,12 @@
 from .agp.gateway import AGPGateway
 from .nats.gateway import NatsGateway
 
-from .a2a.gateway import create_client as create_client_a2a
-from .a2a.gateway import create_receiver as create_receiver_a2a
-
-from .ap.gateway import create_client as create_client_ap
-from .ap.gateway import create_receiver as create_receiver_ap
-
-from .mcp.gateway import create_client as create_client_mcp
-from .mcp.gateway import create_receiver as create_receiver_mcp
-
-from .acp.gateway import create_client as create_client_acp
-from .acp.gateway import create_receiver as create_receiver_acp
+from .a2a.gateway import A2AFactory
 
 from enum import Enum
+from typing import Dict, Type
+from .base_transport import BaseTransport
+from .base_protocol import BaseProtocol
 
 class ProtocolType(Enum):
     """
@@ -40,15 +33,11 @@ class ProtocolType(Enum):
     MCP = "MCP"
     ACP = "ACP"
 
-class TransportType(Enum):
-    """
-    Enum for supported transports.
-    """
-    NONE = ""
-    AGP = "AGP"
-    NATS = "NATS"
-    # KAFKA = "KAFKA"  # Uncomment if Kafka transport is implemented
-    # MQTT = "MQTT"    # Uncomment if MQTT transport is implemented
+    def get_type(self) -> str:
+        """
+        Return the transport type as a string.
+        """
+        return self.value
 
 class GatewayFactory:
     """
@@ -58,52 +47,43 @@ class GatewayFactory:
         self.enable_logging = enable_logging
         self.enable_tracing = enable_tracing
 
+        self._transport_registry: Dict[str, Type[BaseTransport]] = {}
+        self._protocol_registry: Dict[str, Type[BaseProtocol]] = {}
+
         # manage the state of the factory
         # TODO: define a state interface
         self._clients = {} 
         self._receivers = {}
         self._sessions = {}
 
+        self._register_wellknown_transports()
+        self._register_wellknown_protocols()
+
     def create_client(
         self, protocol: str, 
         agent_endpoint: str, 
-        gateway_endpoint: str = "", 
-        transport: str = "", 
+        transport: str = None,
+        gateway_endpoint: str = "",
         auth=None
     ):
 
         gateway = None
-        client = None
 
-        # if transport is specified, match it and create the corresponding gateway
-        try:
-            transport = TransportType(transport.upper()) # TODO: just pass in a transport object?
-        except ValueError:
-            raise ValueError(f"Unsupported transport: {transport}")
-
-        match transport:
-            case TransportType.NONE:
-                pass # noop
-            case TransportType.AGP:
-                gateway = AGPGateway(gateway_endpoint, auth)
-            case TransportType.NATS:
-                gateway = NatsGateway(gateway_endpoint, auth)
+        if transport is not None:
+            gateway_class = self._transport_registry.get(transport)
+            if gateway_class is None:
+                raise ValueError(f"No gateway registered for transport type: {transport}")
+            gateway = gateway_class(gateway_endpoint, auth)
        
-        try:
-            protocol = ProtocolType(protocol.upper())
-        except ValueError:
-            raise ValueError(f"Unsupported protocol: {protocol}")
-        
-        match protocol:
-            case ProtocolType.A2A:
-                client = create_client_a2a(agent_endpoint, gateway, auth)
-            case ProtocolType.AP:
-                client = create_client_ap(agent_endpoint, gateway, auth)
-            case ProtocolType.MCP:
-                client = create_client_mcp(agent_endpoint, gateway, auth)
-            case ProtocolType.ACP:
-                client = create_client_acp(agent_endpoint, gateway, auth)
-
+        # get the protocol class
+        protocol_class = self._protocol_registry.get(protocol)
+        if protocol_class is None:
+            raise ValueError(f"No protocol registered for protocol type: {protocol}")
+        # create the protocol instance
+        protocol_instance = protocol_class()
+        # create the client
+        client = protocol_instance.create_client(agent_endpoint, gateway, auth)
+  
         return client
 
     def create_receiver(
@@ -119,38 +99,41 @@ class GatewayFactory:
     ):
         """
         Create a receiver for the specified transport and protocol.
-
-        Connects to a gateway and offloads messages using the provided protocol.
-
-        Args:
-            protocol (str): The protocol to use for offloading messages.
-            onMessage (callable): Callback function to handle incoming messages.
-            agent_endpoint (str): Endpoint for the agent.
-            gateway_endpoint (str, optional): Endpoint for the gateway. Defaults to "".
-            transport (str, optional): Transport type (e.g., "websocket", "http"). Defaults to "".
-            auth (any, optional): Optional authentication info or credentials.
-
-        Note:
-            - How do we offload messages? Do we have adapters for each protocol?
         """
         
         gateway = None
         receiver = None
-
-        # if transport is specified, match it and create the corresponding gateway
-        try:
-            transport = TransportType(transport.upper()) # TODO: just pass in a transport object?
-        except ValueError:
-            raise ValueError(f"Unsupported transport: {transport}")
-        match transport:
-            case TransportType.AGP:
-                gateway = AGPGateway(gateway_endpoint, auth)
-            case TransportType.NATS:
-                gateway = NatsGateway(gateway_endpoint, auth)
-            case TransportType.NONE:
-                raise ValueError("Transport type is required for receiver creation")
             
-        gateway.subscribe()
+        #gateway.subscribe()
+
+    @classmethod
+    def register_transport(cls, transport_type: str):
+        """Decorator to register a new transport implementation."""
+        def decorator(transport_class: Type[BaseTransport]):
+            cls.self._transport_registry[transport_type] = transport_class
+            return transport_class
+        return decorator
+    
+    @classmethod
+    def register_protocol(cls, protocol_type: str):
+        """Decorator to register a new protocol implementation."""
+        def decorator(protocol_class: Type[BaseProtocol]):
+            cls.self._protocol_registry[protocol_type] = protocol_class
+            return protocol_class
+        return decorator
+
+    def _register_wellknown_transports(self):
+        """
+        Register well-known transports. New transports can be registered using the register decorator.
+        """
+        self._transport_registry["AGP"] = AGPGateway
+        self._transport_registry["NATS"] = NatsGateway
+
+    def _register_wellknown_protocols(self):
+        """
+        Register well-known protocols. New protocols can be registered using the register decorator.
+        """
+        self._protocol_registry["A2A"] = A2AFactory
             
         
             
