@@ -20,9 +20,8 @@ from agp_bindings import GatewayConfig
 import asyncio
 import inspect
 import json
-import base64
 from ..logging_config import configure_logging, get_logger
-from ..base_transport import BaseTransport
+from ..base_transport import BaseTransport, Message
 
 configure_logging()
 logger = get_logger(__name__)
@@ -31,46 +30,6 @@ logger = get_logger(__name__)
 Implementations of the BaseGateway class for different protocols.
 These classes should implement the abstract methods defined in BaseGateway.
 """
-
-class Message:
-    def __init__(
-        self,
-        subject: str,
-        data: bytes,
-        reply: Optional[str] = None,
-        headers: Optional[dict[str, str]] = None,
-    ):
-        self.subject = subject         # Topic or subject of the message
-        self.data = data               # Raw payload
-        self.reply = reply             # Optional reply subject
-        self.headers = headers or {}   # Optional headers
-
-    def to_dict(self) -> dict:
-        return {
-            "subject": self.subject,
-            "data": base64.b64encode(self.data).decode("utf-8"),
-            "reply": self.reply,
-            "headers": self.headers,
-        }
-
-    def to_bytes(self) -> bytes:
-        return json.dumps(self.to_dict()).encode("utf-8")
-
-    @classmethod
-    def from_bytes(cls, raw: bytes) -> "Message":
-        obj = json.loads(raw.decode("utf-8"))
-        return cls(
-            subject=obj["subject"],
-            data=base64.b64decode(obj["data"]),
-            reply=obj.get("reply"),
-            headers=obj.get("headers"),
-        )
-
-    def __repr__(self):
-        return (
-            f"<Message subject='{self.subject}' reply='{self.reply}' "
-            f"headers={self.headers} data={self.data[:50]}...>"
-        )
 
 class AGPGateway(BaseTransport):
     """

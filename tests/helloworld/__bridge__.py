@@ -10,11 +10,11 @@ from a2a.types import (
     AgentCard,
     AgentSkill,
 )
+import asyncio
+from gateway_sdk.factory import GatewayFactory
+from gateway_sdk.nats.gateway import NatsGateway
 
-@click.command()
-@click.option('--host', 'host', default='localhost')
-@click.option('--port', 'port', default=9999)
-def main(host: str, port: int):
+async def main():
     skill = AgentSkill(
         id='hello_world',
         name='Returns hello world',
@@ -41,8 +41,23 @@ def main(host: str, port: int):
 
     server = A2AServer(agent_card=agent_card, request_handler=request_handler)
 
-    server.start(host=host, port=port)
+    factory = GatewayFactory()
+    transport = NatsGateway(endpoint='localhost:4222')
+    bridge = factory.create_bridge(server, transport=transport)
+
+    await bridge.start()
+
+    try:
+        # Keep the bridge running
+        print("Bridge is running. Press Ctrl+C to exit.")
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        print("Shutting down...")
+
+    #await server.start(host="0.0.0.0", port=9999)
 
 
 if __name__ == '__main__':
-    main()
+    print('Running as main')
+    asyncio.run(main())

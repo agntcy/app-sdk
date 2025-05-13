@@ -1,4 +1,5 @@
 from gateway_sdk.factory import GatewayFactory
+from typing import Any
 import pytest
 
 @pytest.mark.asyncio
@@ -11,30 +12,18 @@ async def test_a2a_factory_client():
     client = await factory.create_client("A2A", "http://localhost:9999")
     assert client is not None
 
-    '''print("\n=== Agent Information ===")
-    print(f"Name: {client.agent_card.name}")
-    print(f"Description: {client.agent_card.description}")
-    print(f"Version: {client.agent_card.version}")
+    print("\n=== Agent Information ===")
+    print(f"Name: {client.agent_card}")
 
-    if client.agent_card.skills:
-        print("\nAvailable Skills:")
-        for skill in client.agent_card.skills:
-            print(f"- {skill.name}: {skill.description}")
-            if skill.examples:
-                print(f"  Examples: {', '.join(skill.examples)}")
+    '''send_message_payload: dict[str, Any] = {
+        'message': {
+            'role': 'user',
+            'parts': [
+                {'type': 'text', 'text': 'how much is 10 USD in INR?'}
+            ],
+            'messageId': "1234",
+        },
+    }
 
-def test_a2a_factory_client_agp():
-    """
-    Test the A2A factory client creation with AGP transport.
-    """
-    factory = GatewayFactory()
-    client = factory.create_client("A2A", "http://localhost:8080", transport="AGP")
-    assert client is not None
-
-def test_a2a_factory_client_nats():
-    """
-    Test the A2A factory client creation with NATS transport.
-    """
-    factory = GatewayFactory()
-    client = factory.create_client("A2A", "http://localhost:8080", transport="NATS")
-    assert client is not None'''
+    response = await client.send_message(payload=send_message_payload)
+    print(response.model_dump(mode='json', exclude_none=True))'''

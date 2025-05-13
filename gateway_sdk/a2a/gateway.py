@@ -16,40 +16,50 @@
 
 from ..logging_config import configure_logging, get_logger
 import httpx
-from a2a.client import A2AClient
+from a2a.client import A2AClient, A2ACardResolver
 from a2a.server import A2AServer
-from ..base_protocol import BaseProtocol
+from ..base_protocol import BaseAgentProtocol
+from ..base_transport import BaseTransport
+from ..adapters.base import RequestHandler
+from ..adapters.asgi_adapter import AsgiHandler
 
 configure_logging()
 logger = get_logger(__name__)
 
-class A2AFactory(BaseProtocol):
+class A2AProtocol(BaseAgentProtocol):
     def get_type(self):
-        """
-        Return the transport type as a string.
-        """
         return "A2A"
     
-    async def create_client(self, url, transport=None, auth=None):
+    async def create_client(self, url, transport: BaseTransport = None, auth=None):
         """
         Create an A2A client, passing in the transport and authentication details.
         """
 
-        # Create an A2A client
-        async with httpx.AsyncClient() as httpx_client:
-            client = await A2AClient.get_client_from_agent_card_url(
-                httpx_client, url
-            )
-            print('Connection successful.')
-
-            return client
-
-    def create_receiver(self):
-        """
-        A receiver should connect to a gateway and then offload messages to A2A agents
-
-        server = A2AServer(
-            agent_card=get_agent_card(host, port), request_handler=request_handler
+        httpx_client = httpx.AsyncClient()
+        client = await A2AClient.get_client_from_agent_card_url(
+            httpx_client, url
         )
+
+        # fix bug in A2AClient.get_client_from_agent_card_url where the card is not being set
+        if not hasattr(client, "agent_card"):
+            agent_card = await A2ACardResolver(
+                httpx_client, base_url=url,
+            ).get_agent_card()
+            client.agent_card = agent_card
+
+        if transport:
+            topic = f"{agent_card.name}_{agent_card.version}" # TODO: use a method to generate the topic
+            transport.bind_to_topic(topic)
+            transport.set_message_translator(AsgiHandler.translate_outgoing_request)
+            client.httpx_client = transport
+
+        return client
+
+    def create_ingress_handler(self, server: A2AServer) -> RequestHandler:
         """
-        pass
+        Create a bridge between the A2A server and the ASGI adapter.
+        """
+        # Create an ASGI adapter
+        asgi_adapter = AsgiHandler(server.app())
+        return asgi_adapter
+    

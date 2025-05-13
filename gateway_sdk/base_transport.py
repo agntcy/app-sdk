@@ -15,7 +15,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from typing import Any
+from .message import Message, Response
+from typing import Callable, Dict, Any, Optional
+import asyncio
 
 class BaseTransport(ABC):
     @abstractmethod
@@ -24,21 +26,60 @@ class BaseTransport(ABC):
         pass
 
     @abstractmethod
-    def get(self, url, topic=None, params=None, **kwargs) -> Any:
+    def bind_to_topic(self, topic: str) -> None:
+        """Bind the transport to a specific topic. Will be used when no
+        topic is specified in the request.
+        """
+        pass
+
+    @abstractmethod
+    async def get(
+        self,
+        url: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        correlation_id: Optional[str] = None,
+        reply_to: Optional[str] = None
+    ) -> Any:
         """Get a message from a topic."""
         pass
 
-    @abstractmethod
-    def post(self, url, topic=None, data=None, json=None, **kwargs) -> None:
+    '''@abstractmethod
+    async def post(
+        self,
+        url: str,
+        *,
+        json: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        correlation_id: Optional[str] = None,
+        reply_to: Optional[str] = None
+    ) -> Any:
         """Post a message to a topic."""
+        pass'''
+    
+    @abstractmethod
+    async def set_message_translator(
+        self, 
+        translator: Callable[[dict], Message]
+    ) -> None:
+        """Set the message translator function."""
         pass
     
     @abstractmethod
-    async def publish(self, org: str, namespace: str, topic: str, message: Any) -> None:
-        """Publish a message to a topic."""
+    async def set_message_handler(
+        self, 
+        handler: Callable[[Message], asyncio.Future]
+    ) -> None:
+        """Set the message handler function."""
         pass
-
+    
     @abstractmethod
-    async def subscribe(self, org: str, namespace: str, topic: str, callback: callable) -> None:
+    async def subscribe(self, topic: str) -> None:
         """Subscribe to a topic with a callback."""
+        pass
+    
+    @abstractmethod
+    async def send_response(self, response: Response) -> None:
+        """Send a response message."""
         pass

@@ -17,11 +17,13 @@
 from .agp.gateway import AGPGateway
 from .nats.gateway import NatsGateway
 
-from .a2a.gateway import A2AFactory
+from .a2a.gateway import A2AProtocol
+from a2a.server import A2AServer
 
 from typing import Dict, Type
 from .base_transport import BaseTransport
-from .base_protocol import BaseProtocol
+from .base_protocol import BaseAgentProtocol
+from .bridge import MessageBridge
 
 class GatewayFactory:
     """
@@ -32,10 +34,8 @@ class GatewayFactory:
         self.enable_tracing = enable_tracing
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
-        self._protocol_registry: Dict[str, Type[BaseProtocol]] = {}
+        self._protocol_registry: Dict[str, Type[BaseAgentProtocol]] = {}
 
-        # manage the state of the factory
-        # TODO: define a state interface
         self._clients = {} 
         self._receivers = {}
         self._sessions = {}
@@ -45,50 +45,73 @@ class GatewayFactory:
 
     def create_client(
         self, protocol: str, 
-        agent_endpoint: str, 
-        transport: str = None,
-        gateway_endpoint: str = "",
+        agent_endpoint: str,
+        transport: BaseTransport = None,
         auth=None
     ):
+        """
+        Create a client for the specified transport and protocol.
 
-        gateway = None
+        Factory uses a registry pattern to hide the transport and protocol 
+        implementations from the user.
+        """
 
-        if transport is not None:
-            gateway_class = self._transport_registry.get(transport)
-            if gateway_class is None:
-                raise ValueError(f"No gateway registered for transport type: {transport}")
-            gateway = gateway_class(gateway_endpoint, auth)
+        #if transport is not None:
+        #    transport = self.get_transport(transport)
        
         # get the protocol class
+        protocol_instance = self.get_protocol(protocol)
+
+        # create the client
+        client = protocol_instance.create_client(agent_endpoint, transport, auth)
+  
+        return client
+
+    def create_bridge(
+        self,
+        server, # how to we specify the type of server?
+        transport,
+    ) -> MessageBridge:
+        """
+        Create a bridge/receiver for the specified transport and protocol.
+        """
+
+        bridge = None
+        topic = None
+
+        if isinstance(server, A2AServer):
+            topic = f"{server.agent_card.name}_{server.agent_card.version}"
+            handler = self.get_protocol("A2A").create_ingress_handler(server)
+        else:
+            raise ValueError("Unsupported server type")
+        
+        bridge = MessageBridge(
+            transport=transport,
+            handler=handler,
+            topic=topic,
+        )
+        return bridge
+
+    def get_transport(self, transport: str, gateway_endpoint: str, auth=None):
+        """
+        Get the transport class for the specified transport type.
+        """
+        gateway_class = self._transport_registry.get(transport)
+        if gateway_class is None:
+            raise ValueError(f"No gateway registered for transport type: {transport}")
+        transport = gateway_class(gateway_endpoint, auth)
+        return transport
+    
+    def get_protocol(self, protocol: str):
+        """
+        Get the protocol class for the specified protocol type.
+        """
         protocol_class = self._protocol_registry.get(protocol)
         if protocol_class is None:
             raise ValueError(f"No protocol registered for protocol type: {protocol}")
         # create the protocol instance
         protocol_instance = protocol_class()
-        # create the client
-        client = protocol_instance.create_client(agent_endpoint, gateway, auth)
-  
-        return client
-
-    def create_receiver(
-        self,
-        protocol: str,
-        topic: str,
-        fastapi_app: any = None,
-        flask_app: any = None,
-        onMessage: callable = None,
-        gateway_endpoint: str = "",
-        transport: str = "",
-        auth: any = None,
-    ):
-        """
-        Create a receiver for the specified transport and protocol.
-        """
-        
-        gateway = None
-        receiver = None
-            
-        #gateway.subscribe()
+        return protocol_instance
 
     @classmethod
     def register_transport(cls, transport_type: str):
@@ -101,7 +124,7 @@ class GatewayFactory:
     @classmethod
     def register_protocol(cls, protocol_type: str):
         """Decorator to register a new protocol implementation."""
-        def decorator(protocol_class: Type[BaseProtocol]):
+        def decorator(protocol_class: Type[BaseAgentProtocol]):
             cls.self._protocol_registry[protocol_type] = protocol_class
             return protocol_class
         return decorator
@@ -117,7 +140,7 @@ class GatewayFactory:
         """
         Register well-known protocols. New protocols can be registered using the register decorator.
         """
-        self._protocol_registry["A2A"] = A2AFactory
+        self._protocol_registry["A2A"] = A2AProtocol
             
         
             
