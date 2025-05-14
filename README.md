@@ -26,7 +26,6 @@ Create an A2A server bridge with a custom network transport:
 ```python
 from a2a.server import A2AServer
 from gateway_sdk.factory import GatewayFactory
-from gateway_sdk.transports.nats.gateway import NatsGateway
 
 ...
 server = A2AServer(agent_card=agent_card, request_handler=request_handler)

@@ -21,7 +21,7 @@ import httpx
 
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.server import A2AServer
-from a2a.types import A2ARequest
+from a2a.types import A2ARequest, AgentCard
 
 from gateway_sdk.protocols.base_protocol import BaseAgentProtocol
 from gateway_sdk.transports.base_transport import BaseTransport
@@ -36,10 +36,31 @@ class A2AProtocol(BaseAgentProtocol):
     def get_type(self):
         return "A2A"
     
+    @staticmethod
+    def create_agent_topic(
+        agent_card: AgentCard) -> str:
+        """
+        Create a topic for the agent card metadata.
+        """
+        return f"{agent_card.name}_{agent_card.version}"
+    
+    async def get_client_from_agent_card_topic(
+        self, topic: str, transport: BaseTransport = None, **kwargs
+    ) -> AgentCard:
+        """
+        Create an A2A client from the agent card topic, bypassing all need for a URLs.
+        """
+        raise NotImplementedError(
+            "get_client_from_agent_card_topic is not implemented. Use get_client_from_agent_card_url instead."
+        )
+    
     async def create_client(self, url, transport: BaseTransport = None, **kwargs) -> A2AClient:
         """
-        Create an A2A client, passing in the transport and authentication details.
+        Create an A2A client, overriding the default client _send_request method to 
+        use the provided transport.
         """
+
+        # TODO: how can we get the agent card without using a URL? Use pubsub topic option
         httpx_client = httpx.AsyncClient()
         client = await A2AClient.get_client_from_agent_card_url(
             httpx_client, url
@@ -56,7 +77,7 @@ class A2AProtocol(BaseAgentProtocol):
             logger.info(
                 f"Using transport {transport.get_type()} for A2A client {client.agent_card.name}"
             )
-            topic = f"{agent_card.name}_{agent_card.version}" # TODO: use a method to generate the topic
+            topic = self.create_agent_topic(client.agent_card)
             transport.bind_to_topic(topic)
 
             async def _send_request(request: A2ARequest) -> None:
@@ -79,7 +100,7 @@ class A2AProtocol(BaseAgentProtocol):
     
     def message_translator(self, request: A2ARequest) -> Message:
         """
-        Translate an A2A request into a Message object.
+        Translate an A2A request into our internal Message object.
         """
         message = Message(
             type="A2ARequest",
@@ -90,7 +111,7 @@ class A2AProtocol(BaseAgentProtocol):
 
     def create_ingress_handler(self, server: A2AServer) -> Callable[[Message], Message]:
         """
-        Create a bridge between the A2A server and the ASGI adapter.
+        Create a bridge between the A2A server/ASGI app and our internal message type.
         """
         # Create an ASGI adapter
         self._app = server.app()
@@ -166,7 +187,6 @@ class A2AProtocol(BaseAgentProtocol):
             type="A2AResponse",
             payload=payload,
             reply_to=message.reply_to,
-            correlation_id=message.correlation_id,
         )
 
 
