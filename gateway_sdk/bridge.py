@@ -14,9 +14,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from .transports.base_transport import BaseTransport
-from .message import Message
-from .logging_config import configure_logging, get_logger
+from gateway_sdk.transports.base_transport import BaseTransport
+from gateway_sdk.protocols.message import Message
+from gateway_sdk.common.logging_config import configure_logging, get_logger
 from typing import Callable
 
 configure_logging()

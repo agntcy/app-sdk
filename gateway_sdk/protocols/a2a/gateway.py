@@ -23,11 +23,11 @@ from a2a.client import A2AClient, A2ACardResolver
 from a2a.server import A2AServer
 from a2a.types import A2ARequest
 
-from ...protocols.base_protocol import BaseAgentProtocol
-from ...transports.base_transport import BaseTransport
-from ...message import Message
+from gateway_sdk.protocols.base_protocol import BaseAgentProtocol
+from gateway_sdk.transports.base_transport import BaseTransport
+from gateway_sdk.protocols.message import Message
 
-from ...logging_config import configure_logging, get_logger
+from gateway_sdk.common.logging_config import configure_logging, get_logger
 
 configure_logging()
 logger = get_logger(__name__)
