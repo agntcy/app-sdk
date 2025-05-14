@@ -15,14 +15,19 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from .message import Message
-from typing import Callable, Dict, Any, Optional
+from ..message import Message
+from typing import Callable, Dict, Optional
 import asyncio
 
 class BaseTransport(ABC):
     @abstractmethod
     def get_type(self) -> str:
         """Return the transport type."""
+        pass
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Close the transport connection."""
         pass
 
     @abstractmethod

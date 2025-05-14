@@ -1,5 +1,3 @@
-import click
-
 from agent_executor import HelloWorldAgentExecutor
 
 from a2a.server import A2AServer
@@ -12,7 +10,7 @@ from a2a.types import (
 )
 import asyncio
 from gateway_sdk.factory import GatewayFactory
-from gateway_sdk.nats.gateway import NatsGateway
+from gateway_sdk.transports.nats.gateway import NatsGateway
 
 async def main():
     skill = AgentSkill(
@@ -40,7 +38,6 @@ async def main():
     )
 
     server = A2AServer(agent_card=agent_card, request_handler=request_handler)
-    #server.start(host="0.0.0", port=9999)
 
     factory = GatewayFactory()
     transport = NatsGateway(endpoint='localhost:4222')
@@ -48,7 +45,7 @@ async def main():
     await bridge.start()
 
     """
-    If you want A2A default starllet server running as well
+    Optional if you want A2A default starllet server running as well
     """
 
     from uvicorn import Config, Server

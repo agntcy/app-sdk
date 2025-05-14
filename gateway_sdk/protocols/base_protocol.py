@@ -15,21 +15,30 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from ..message import Message, Response
+from typing import Any, Callable
+from ..transports.base_transport import BaseTransport
+from ..message import Message
 
-class RequestHandler(ABC):
-    """Abstract base class for handling requests."""
-
-    async def start(self) -> None:
-        """Start the ASGI handler."""
-        self._started = True
-    
+class BaseAgentProtocol(ABC):
+    """
+    Base class for different agent protocols.
+    """
     @abstractmethod
-    async def handle_incoming_request(self, message: Message) -> Response:
-        """Handle a request message and return a response."""
+    def get_type(self) -> str:
+        """Return the protocol type."""
         pass
 
     @abstractmethod
-    def translate_outgoing_request(self, *args, **kwargs) -> Message:
-        """Handle a request message and return a response."""
+    def create_client(self, url: str, transport: BaseTransport = None, **kwargs) -> Any:
+        """Create a client for the protocol."""
+        pass
+
+    @abstractmethod
+    def message_translator(self, request: Any) -> Message:
+        """Translate a request into a message."""
+        pass
+
+    @abstractmethod
+    def create_ingress_handler(self, *args, **kwargs) -> Callable[[Message], Message]:
+        """Create an ingress handler for the protocol."""
         pass

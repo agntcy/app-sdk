@@ -14,7 +14,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, Any, Dict, Union
+from typing import Optional
 import json
 import base64
 

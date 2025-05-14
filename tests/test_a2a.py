@@ -63,3 +63,7 @@ async def test_a2a_factory_client_with_transport():
     print(response.model_dump(mode='json', exclude_none=True))
 
     print("\n=== Success ===")
+
+    await transport.close()
+
+    print("\n=== Transport Closed ===")
