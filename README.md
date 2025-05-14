@@ -34,32 +34,32 @@ client_over_nats = factory.create_client("A2A", "http://localhost:8080", transpo
 
 ## Testing
 
-**Test the gateway factory with default A2A client/server**
+**✅ Test the gateway factory with default A2A client/server**
 
 Run a sample agent via an A2A server:
 ```bash
 uv run python tests/helloworld/__main__.py 
 ```
 
-Run an A2A test client:
+In a second terminal, run an A2A test client:
 ```bash
 uv run pytest tests/test_a2a.py::test_a2a_factory_client -s
 ```
 
-**Test the gateway factory with A2A over NATS transport**
+**🚀 Test the gateway factory with A2A over NATS transport**
 
 Run an A2A server with a NATS bridge:
 ```bash
 uv run python tests/helloworld/__bridge__.py
 ```
 
-Run a test for the A2A gateway with NATS transport:
+In a second terminal, run an A2A test client with a NATS transport:
 ```bash
 uv run pytest tests/test_a2a.py::test_a2a_factory_client_with_transport -s
 ```
 
 ## Roadmap
-- [ ] Add support for transport decoupling and usage
+- [x] Add support for transport decoupling and usage
 - [ ] Add additional protocols
 - [ ] Add observability
 - [ ] Add authentication and transport security
