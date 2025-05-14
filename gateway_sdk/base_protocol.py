@@ -15,8 +15,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
 from .base_transport import BaseTransport
+from .message import Message
 
 class BaseAgentProtocol(ABC):
     """
@@ -28,6 +29,16 @@ class BaseAgentProtocol(ABC):
         pass
 
     @abstractmethod
-    def create_client(self, url: str, transport: BaseTransport = None, auth: Any = None) -> Any:
+    def create_client(self, url: str, transport: BaseTransport = None, **kwargs) -> Any:
         """Create a client for the protocol."""
+        pass
+
+    @abstractmethod
+    def message_translator(self, request: Any) -> Message:
+        """Translate a request into a message."""
+        pass
+
+    @abstractmethod
+    def create_ingress_handler(self, *args, **kwargs) -> Callable[[Message], Message]:
+        """Create an ingress handler for the protocol."""
         pass

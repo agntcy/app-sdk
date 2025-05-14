@@ -17,7 +17,7 @@
 from .base import RequestHandler
 from starlette.applications import Starlette
 from ..message import Message, Response
-from urllib.parse import urlencode
+from urllib.parse import urlparse, urlencode
 from typing import Dict, Any, Optional
 import json
 
@@ -33,6 +33,7 @@ class AsgiHandler(RequestHandler):
         self._started = True
     
     async def handle_incoming_request(self, message: Message) -> Response:
+        print(f"Handling incoming request: {message.path} with method {message.method}")
         """Handle a request by passing it to the ASGI application."""
         # Ensure path starts with a leading slash
         path = message.path if message.path.startswith('/') else f'/{message.path}'
@@ -113,6 +114,8 @@ class AsgiHandler(RequestHandler):
                 response_data = full_response_body
         else:
             response_data = full_response_body
+
+        print(f"ASGI response status: {response_status[0]}, body: {response_data}, headers: {headers_dict}")
         
         return Response(
             status_code=response_status[0] or 200,
@@ -120,6 +123,10 @@ class AsgiHandler(RequestHandler):
             headers=headers_dict,
             correlation_id=message.reply_to
         )
+    
+    @staticmethod
+    def translate_incoming_request(message: Message) -> Dict[str, Any]:
+        """Translate an incoming ASGI request to a dictionary."""
     
     @staticmethod
     def translate_outgoing_request(
@@ -132,13 +139,19 @@ class AsgiHandler(RequestHandler):
         reply_to: Optional[str] = None
     ) -> Message:
         """Construct a Message from HTTP-style input."""
-        full_path = url
+        parsed_url = urlparse(url)
+        path = parsed_url.path
+
         if method.upper() == "GET" and params:
             query_string = urlencode(params, doseq=True)
-            full_path = f"{url}?{query_string}"
+            path = f"{path}?{query_string}"
+        elif parsed_url.query:
+            path = f"{path}?{parsed_url.query}"
+
+        print(f"Translating outgoing request: {method} {path} with params {params} and json {json}")
 
         return Message(
-            path=full_path,
+            path=path,
             method=method.upper(),
             data=json if method.upper() != "GET" else None,
             headers=headers,

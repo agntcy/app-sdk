@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from .message import Message, Response
+from .message import Message
 from typing import Callable, Dict, Any, Optional
 import asyncio
 
@@ -31,40 +31,6 @@ class BaseTransport(ABC):
         topic is specified in the request.
         """
         pass
-
-    @abstractmethod
-    async def get(
-        self,
-        url: str,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-        correlation_id: Optional[str] = None,
-        reply_to: Optional[str] = None
-    ) -> Any:
-        """Get a message from a topic."""
-        pass
-
-    '''@abstractmethod
-    async def post(
-        self,
-        url: str,
-        *,
-        json: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-        correlation_id: Optional[str] = None,
-        reply_to: Optional[str] = None
-    ) -> Any:
-        """Post a message to a topic."""
-        pass'''
-    
-    @abstractmethod
-    async def set_message_translator(
-        self, 
-        translator: Callable[[dict], Message]
-    ) -> None:
-        """Set the message translator function."""
-        pass
     
     @abstractmethod
     async def set_message_handler(
@@ -73,6 +39,17 @@ class BaseTransport(ABC):
     ) -> None:
         """Set the message handler function."""
         pass
+
+    @abstractmethod
+    async def publish(
+        self, 
+        topic: str, 
+        message: Message, 
+        respond: Optional[bool] = False,
+        headers: Optional[Dict[str, str]] = None
+    ) -> None:
+        """Publish a message to a topic."""
+        pass
     
     @abstractmethod
     async def subscribe(self, topic: str) -> None:
@@ -80,6 +57,6 @@ class BaseTransport(ABC):
         pass
     
     @abstractmethod
-    async def send_response(self, response: Response) -> None:
+    async def send_response(self, response: Message) -> None:
         """Send a response message."""
         pass

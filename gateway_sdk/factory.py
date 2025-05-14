@@ -63,7 +63,7 @@ class GatewayFactory:
         protocol_instance = self.get_protocol(protocol)
 
         # create the client
-        client = protocol_instance.create_client(agent_endpoint, transport, auth)
+        client = protocol_instance.create_client(agent_endpoint, transport)
   
         return client
 
@@ -92,14 +92,14 @@ class GatewayFactory:
         )
         return bridge
 
-    def get_transport(self, transport: str, gateway_endpoint: str, auth=None):
+    def get_transport(self, transport: str, gateway_endpoint: str, *args, **kwargs):
         """
         Get the transport class for the specified transport type.
         """
         gateway_class = self._transport_registry.get(transport)
         if gateway_class is None:
             raise ValueError(f"No gateway registered for transport type: {transport}")
-        transport = gateway_class(gateway_endpoint, auth)
+        transport = gateway_class(gateway_endpoint, *args, **kwargs)
         return transport
     
     def get_protocol(self, protocol: str):

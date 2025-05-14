@@ -15,9 +15,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from .base_transport import BaseTransport
-from .adapters.base import RequestHandler
-from .message import Message, Response
+from .message import Message
 from .logging_config import configure_logging, get_logger
+from typing import Callable
 
 configure_logging()
 logger = get_logger(__name__)
@@ -29,7 +29,7 @@ class MessageBridge:
     def __init__(
         self,
         transport: BaseTransport,
-        handler: RequestHandler,
+        handler: Callable[[Message], Message],
         topic: str,
     ):
         self.transport = transport
@@ -42,7 +42,6 @@ class MessageBridge:
         self.transport.set_message_handler(self._process_message)
         
         # Start all components
-        await self.handler.start()
         await self.transport.subscribe(self.topic)
         
         logger.info("Message bridge started.")
@@ -51,20 +50,20 @@ class MessageBridge:
         """Process an incoming message through the handler and send response."""
         try:
             # Handle the request
-            response = await self.handler.handle_incoming_request(message)
+            response = await self.handler(message)
             
             # Send response if reply is expected
             if message.reply_to:
+                response.reply_to = message.reply_to
                 await self.transport.send_response(response)
                 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
-            
             # Send error response if reply is expected
             if message.reply_to:
-                error_response = Response(
-                    status_code=500,
-                    body={"error": str(e)},
-                    correlation_id=message.reply_to
+                error_response = Message(
+                    type="error",
+                    payload=str(e),
+                    reply_to=message.reply_to
                 )
                 await self.transport.send_response(error_response)

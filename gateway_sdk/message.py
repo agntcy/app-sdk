@@ -15,6 +15,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional, Any, Dict, Union
+import json
+import base64
 
 # =============== Message Models ================
 
@@ -23,70 +25,78 @@ class Message:
     
     def __init__(
         self,
-        path: str,
-        method: str = "POST",
-        data: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
+        type: str,
+        payload: bytes,
+        reply_to: Optional[str] = None,
         correlation_id: Optional[str] = None,
-        reply_to: Optional[str] = None
     ):
-        self.path = path
-        self.method = method
-        self.data = data or {}
-        self.headers = headers or {}
-        self.correlation_id = correlation_id
+        self.type = type
+        self.payload = payload
         self.reply_to = reply_to
-        
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert message to dictionary representation."""
-        return {
-            "path": self.path,
-            "method": self.method,
-            "data": self.data,
-            "headers": self.headers,
-            "correlation_id": self.correlation_id,
-            "reply_to": self.reply_to
-        }
-        
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Message':
-        """Create message from dictionary representation."""
-        return cls(
-            path=data.get("path") or data.get("route", ""),
-            method=data.get("method", "POST"),
-            data=data.get("data", {}),
-            headers=data.get("headers", {}),
-            correlation_id=data.get("correlation_id"),
-            reply_to=data.get("reply_to")
-        )
-
-
-class Response:
-    """Response structure for communication between components."""
-    
-    def __init__(
-        self,
-        status_code: int = 200,
-        body: Union[Dict[str, Any], bytes, str] = None,
-        headers: Optional[Dict[str, str]] = None,
-        correlation_id: Optional[str] = None
-    ):
-        self.status_code = status_code
-        self.body = body if body is not None else {}
-        self.headers = headers or {}
         self.correlation_id = correlation_id
+    
+    def serialize(self) -> bytes:
+        """
+        Serialize the Message object into bytes.
         
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert response to dictionary representation."""
-        body_data = self.body
-        if isinstance(self.body, bytes):
-            body_data = self.body.decode('utf-8', errors='replace')
-        elif not isinstance(self.body, (dict, str)):
-            body_data = str(self.body)
-            
-        return {
-            "status_code": self.status_code,
-            "body": body_data,
-            "headers": self.headers,
-            "correlation_id": self.correlation_id
+        Returns:
+            bytes: The serialized message
+        """
+        # Ensure payload is bytes-like
+        payload_bytes = self.payload
+        if not isinstance(payload_bytes, bytes):
+            if isinstance(payload_bytes, str):
+                payload_bytes = payload_bytes.encode('utf-8')
+            else:
+                payload_bytes = str(payload_bytes).encode('utf-8')
+        
+        # Create a dictionary representation of the Message
+        message_dict = {
+            "type": self.type,
+            "payload": base64.b64encode(payload_bytes).decode('ascii'),
         }
+        
+        # Add optional fields only if they exist
+        if self.reply_to is not None:
+            message_dict["reply_to"] = self.reply_to
+            
+        if self.correlation_id is not None:
+            message_dict["correlation_id"] = self.correlation_id
+        
+        # Convert dictionary to JSON string and then to bytes
+        return json.dumps(message_dict).encode('utf-8')
+    
+    @classmethod
+    def deserialize(cls, data: bytes) -> 'Message':
+        """
+        Deserialize bytes into a Message object.
+        
+        Args:
+            data: The serialized message bytes
+            
+        Returns:
+            Message: The deserialized Message object
+        """
+        # Ensure input is bytes
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+            
+        # Convert bytes to JSON string and then to dictionary
+        message_dict = json.loads(data.decode('utf-8'))
+        
+        # Extract required fields
+        type_value = message_dict.get("type")
+        # Decode the base64-encoded payload
+        payload = base64.b64decode(message_dict["payload"])
+        
+        # Extract optional fields
+        reply_to = message_dict.get("reply_to")
+        correlation_id = message_dict.get("correlation_id")
+        
+        # Create and return a new Message instance
+        return cls(
+            type=type_value,
+            payload=payload,
+            reply_to=reply_to,
+            correlation_id=correlation_id
+        )

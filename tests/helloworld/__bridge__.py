@@ -40,12 +40,35 @@ async def main():
     )
 
     server = A2AServer(agent_card=agent_card, request_handler=request_handler)
+    #server.start(host="0.0.0", port=9999)
 
     factory = GatewayFactory()
     transport = NatsGateway(endpoint='localhost:4222')
     bridge = factory.create_bridge(server, transport=transport)
-
     await bridge.start()
+
+    """
+    If you want A2A default starllet server running as well
+    """
+
+    from uvicorn import Config, Server
+    config = Config(app=server.app(), host="0.0.0.0", port=9999, loop="asyncio")
+    userver = Server(config)
+
+    # Serve the app. This is a coroutine.
+    await userver.serve()
+
+
+
+
+
+
+
+
+
+
+
+
 
     try:
         # Keep the bridge running
