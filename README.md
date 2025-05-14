@@ -22,14 +22,31 @@ source .venv/bin/activate
 
 ## Getting Started
 
-Create an A2A client:
+Create an A2A server bridge with a custom network transport:
+```python
+from a2a.server import A2AServer
+from gateway_sdk.factory import GatewayFactory
+from gateway_sdk.transports.nats.gateway import NatsGateway
+
+...
+server = A2AServer(agent_card=agent_card, request_handler=request_handler)
+
+factory = GatewayFactory()
+transport = factory.create_transport("NATS", "localhost:4222", options={})
+bridge = factory.create_bridge(server, transport=transport)
+
+await bridge.start()
+```
+
+Create an A2A client with a custom network transport:
 ```python
 from gateway_sdk.factory import GatewayFactory
 
 factory = GatewayFactory()
 
-default_client = factory.create_client("A2A", "http://localhost:8080")
-client_over_nats = factory.create_client("A2A", "http://localhost:8080", transport="NATS")
+transport = factory.create_transport("NATS", "localhost:4222", options={})
+    
+client_over_nats = await factory.create_client("A2A", agent_endpoint="http://localhost:9999", transport=transport)
 ```
 
 ## Testing
@@ -47,6 +64,11 @@ uv run pytest tests/test_a2a.py::test_a2a_factory_client -s
 ```
 
 **🚀 Test the gateway factory with A2A over NATS transport**
+
+Run a NATS server:
+```bash
+cd tests && docker-compose up -d
+```
 
 Run an A2A server with a NATS bridge:
 ```bash

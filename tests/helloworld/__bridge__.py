@@ -40,7 +40,7 @@ async def main():
     server = A2AServer(agent_card=agent_card, request_handler=request_handler)
 
     factory = GatewayFactory()
-    transport = NatsGateway(endpoint='localhost:4222')
+    transport = factory.create_transport("NATS", "localhost:4222", options={})
     bridge = factory.create_bridge(server, transport=transport)
     await bridge.start()
 

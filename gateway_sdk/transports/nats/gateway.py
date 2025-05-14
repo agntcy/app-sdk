@@ -16,9 +16,9 @@
 
 import asyncio
 import nats
-from ..base_transport import BaseTransport
-from ...logging_config import configure_logging, get_logger
-from ...message import Message
+from gateway_sdk.transports.base_transport import BaseTransport
+from gateway_sdk.common.logging_config import configure_logging, get_logger
+from gateway_sdk.protocols.message import Message
 from typing import Callable, Dict, Optional
 
 configure_logging()

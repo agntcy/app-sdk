@@ -38,7 +38,7 @@ async def test_a2a_factory_client_with_transport():
     factory = GatewayFactory() # TODO: consider separate factories
 
     # Create a Nats transport
-    transport = factory.get_transport("NATS", "localhost:4222", options={})
+    transport = factory.create_transport("NATS", "localhost:4222", options={})
     # or: transport = await nats.connect(self.endpoint)
     # ie: do we support nats.nc object and wrap in the create_client?
 
@@ -60,7 +60,7 @@ async def test_a2a_factory_client_with_transport():
     response = await client.send_message(payload=send_message_payload)
     assert response is not None
 
-    print(response.model_dump(mode='json', exclude_none=True))
+    print("remote agent responded with: \n", response.model_dump(mode='json', exclude_none=True))
 
     print("\n=== Success ===")
 

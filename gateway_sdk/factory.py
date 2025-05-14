@@ -16,16 +16,16 @@
 
 from typing import Dict, Type
 
-from .transports.base_transport import BaseTransport
-from .protocols.base_protocol import BaseAgentProtocol
+from gateway_sdk.transports.base_transport import BaseTransport
+from gateway_sdk.protocols.base_protocol import BaseAgentProtocol
 
-from .transports.agp.gateway import AGPGateway
-from .transports.nats.gateway import NatsGateway
+from gateway_sdk.transports.agp.gateway import AGPGateway
+from gateway_sdk.transports.nats.gateway import NatsGateway
 
-from .protocols.a2a.gateway import A2AProtocol
+from gateway_sdk.protocols.a2a.gateway import A2AProtocol
 from a2a.server import A2AServer
 
-from .bridge import MessageBridge
+from gateway_sdk.bridge import MessageBridge
 
 class GatewayFactory:
     """
@@ -38,9 +38,8 @@ class GatewayFactory:
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
         self._protocol_registry: Dict[str, Type[BaseAgentProtocol]] = {}
 
-        self._clients = {} 
-        self._receivers = {}
-        self._sessions = {}
+        self._clients = {}
+        self._bridges = {}
 
         self._register_wellknown_transports()
         self._register_wellknown_protocols()
@@ -49,30 +48,26 @@ class GatewayFactory:
         self, protocol: str, 
         agent_endpoint: str,
         transport: BaseTransport = None,
-        auth=None
+        **kwargs
     ):
         """
         Create a client for the specified transport and protocol.
-
-        Factory uses a registry pattern to hide the transport and protocol 
-        implementations from the user.
         """
-
-        #if transport is not None:
-        #    transport = self.get_transport(transport)
        
         # get the protocol class
-        protocol_instance = self.get_protocol(protocol)
+        protocol_instance = self.create_protocol(protocol)
 
         # create the client
         client = protocol_instance.create_client(agent_endpoint, transport)
+
+        self._clients[agent_endpoint] = client
   
         return client
 
     def create_bridge(
         self,
         server, # how to we specify the type of server?
-        transport,
+        transport: BaseTransport,
     ) -> MessageBridge:
         """
         Create a bridge/receiver for the specified transport and protocol.
@@ -84,7 +79,7 @@ class GatewayFactory:
         # TODO: handle multiple server types and or agent frameworks ie graph
         if isinstance(server, A2AServer):
             topic = f"{server.agent_card.name}_{server.agent_card.version}"
-            handler = self.get_protocol("A2A").create_ingress_handler(server)
+            handler = self.create_protocol("A2A").create_ingress_handler(server)
         else:
             raise ValueError("Unsupported server type")
         
@@ -93,11 +88,15 @@ class GatewayFactory:
             handler=handler,
             topic=topic,
         )
+
+        self._bridges[topic] = bridge
+
         return bridge
 
-    def get_transport(self, transport: str, gateway_endpoint: str, *args, **kwargs):
+    def create_transport(self, transport: str, gateway_endpoint: str, *args, **kwargs):
         """
-        Get the transport class for the specified transport type.
+        Get the transport class for the specified transport type. Enables users to
+        instantiate a transport class with a string name.
         """
         gateway_class = self._transport_registry.get(transport)
         if gateway_class is None:
@@ -105,9 +104,10 @@ class GatewayFactory:
         transport = gateway_class(gateway_endpoint, *args, **kwargs)
         return transport
     
-    def get_protocol(self, protocol: str):
+    def create_protocol(self, protocol: str):
         """
-        Get the protocol class for the specified protocol type.
+        Get the protocol class for the specified protocol type. Enables users to 
+        instantiate a protocol class with a string name.
         """
         protocol_class = self._protocol_registry.get(protocol)
         if protocol_class is None:

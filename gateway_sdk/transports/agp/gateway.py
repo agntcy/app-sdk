@@ -14,14 +14,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Optional
+from typing import Any
 import agp_bindings
 from agp_bindings import GatewayConfig
 import asyncio
 import inspect
 import json
-from ...logging_config import configure_logging, get_logger
-from ..base_transport import BaseTransport, Message
+from gateway_sdk.common.logging_config import configure_logging, get_logger
+from gateway_sdk.transports.base_transport import BaseTransport, Message
 
 configure_logging()
 logger = get_logger(__name__)

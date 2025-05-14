@@ -16,8 +16,8 @@
 
 from abc import ABC, abstractmethod
 from typing import Any, Callable
-from ..transports.base_transport import BaseTransport
-from ..message import Message
+from gateway_sdk.transports.base_transport import BaseTransport
+from gateway_sdk.protocols.message import Message
 
 class BaseAgentProtocol(ABC):
     """
