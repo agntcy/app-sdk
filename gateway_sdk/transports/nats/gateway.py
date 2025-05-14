@@ -17,8 +17,8 @@
 import asyncio
 import nats
 from ..base_transport import BaseTransport
-from ..logging_config import configure_logging, get_logger
-from ..message import Message
+from ...logging_config import configure_logging, get_logger
+from ...message import Message
 from typing import Callable, Dict, Optional
 
 configure_logging()
@@ -49,6 +49,14 @@ class NatsGateway(BaseTransport):
     async def _connect(self):
         self._nc = await nats.connect(self.endpoint)
         logger.info("Connected to NATS server")
+
+    async def close(self) -> None:
+        """Close the NATS connection."""
+        if self._nc:
+            await self._nc.close()
+            logger.info("NATS connection closed")
+        else:
+            logger.warning("No NATS connection to close")
 
     def bind_to_topic(self, topic: str) -> None:
         """Bind the transport to a specific topic. Will be used when no

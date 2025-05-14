@@ -14,15 +14,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from .agp.gateway import AGPGateway
-from .nats.gateway import NatsGateway
+from typing import Dict, Type
 
-from .a2a.gateway import A2AProtocol
+from .transports.base_transport import BaseTransport
+from .protocols.base_protocol import BaseAgentProtocol
+
+from .transports.agp.gateway import AGPGateway
+from .transports.nats.gateway import NatsGateway
+
+from .protocols.a2a.gateway import A2AProtocol
 from a2a.server import A2AServer
 
-from typing import Dict, Type
-from .base_transport import BaseTransport
-from .base_protocol import BaseAgentProtocol
 from .bridge import MessageBridge
 
 class GatewayFactory:
@@ -79,6 +81,7 @@ class GatewayFactory:
         bridge = None
         topic = None
 
+        # TODO: handle multiple server types and or agent frameworks ie graph
         if isinstance(server, A2AServer):
             topic = f"{server.agent_card.name}_{server.agent_card.version}"
             handler = self.get_protocol("A2A").create_ingress_handler(server)

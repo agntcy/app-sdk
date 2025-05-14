@@ -2,6 +2,10 @@ Agent Gateway SDK
 ========================
 A multi-protocol gateway factory with variable transports and observability for agent-to-agent communication.
 
+### Architecture
+
+[![architecture](assets/architecture.png )]()
+
 ## Installation
 
 This project uses [uv](https://github.com/astral-sh/uv) for package management:
@@ -25,23 +29,37 @@ from gateway_sdk.factory import GatewayFactory
 factory = GatewayFactory()
 
 default_client = factory.create_client("A2A", "http://localhost:8080")
-client_with_agp = factory.create_client("A2A", "http://localhost:8080", transport="AGP")
+client_over_nats = factory.create_client("A2A", "http://localhost:8080", transport="NATS")
 ```
 
 ## Testing
 
-Run a sample a2a server:
+**✅ Test the gateway factory with default A2A client/server**
+
+Run a sample agent via an A2A server:
 ```bash
-uv run tests/helloworld/__main__.p
+uv run python tests/helloworld/__main__.py 
 ```
 
-Run test for a2a gateways
+In a second terminal, run an A2A test client:
 ```bash
-uv run pytest tests/test_a2a.py -s
+uv run pytest tests/test_a2a.py::test_a2a_factory_client -s
+```
+
+**🚀 Test the gateway factory with A2A over NATS transport**
+
+Run an A2A server with a NATS bridge:
+```bash
+uv run python tests/helloworld/__bridge__.py
+```
+
+In a second terminal, run an A2A test client with a NATS transport:
+```bash
+uv run pytest tests/test_a2a.py::test_a2a_factory_client_with_transport -s
 ```
 
 ## Roadmap
-- [ ] Add support for transport decoupling and usage
+- [x] Add support for transport decoupling and usage
 - [ ] Add additional protocols
 - [ ] Add observability
 - [ ] Add authentication and transport security

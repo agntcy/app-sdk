@@ -14,17 +14,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from ..logging_config import configure_logging, get_logger
-import httpx
-from a2a.client import A2AClient, A2ACardResolver
-from a2a.server import A2AServer
-from a2a.types import A2ARequest
-from ..base_protocol import BaseAgentProtocol
-from ..base_transport import BaseTransport
-from ..message import Message
 from starlette.types import Scope
 from typing import Dict, Any, Callable
 import json
+import httpx
+
+from a2a.client import A2AClient, A2ACardResolver
+from a2a.server import A2AServer
+from a2a.types import A2ARequest
+
+from ...protocols.base_protocol import BaseAgentProtocol
+from ...transports.base_transport import BaseTransport
+from ...message import Message
+
+from ...logging_config import configure_logging, get_logger
 
 configure_logging()
 logger = get_logger(__name__)

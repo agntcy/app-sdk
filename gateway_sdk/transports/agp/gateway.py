@@ -20,7 +20,7 @@ from agp_bindings import GatewayConfig
 import asyncio
 import inspect
 import json
-from ..logging_config import configure_logging, get_logger
+from ...logging_config import configure_logging, get_logger
 from ..base_transport import BaseTransport, Message
 
 configure_logging()
