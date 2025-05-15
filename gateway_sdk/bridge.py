@@ -55,7 +55,13 @@ class MessageBridge:
             # Send response if reply is expected
             if message.reply_to:
                 response.reply_to = message.reply_to
-                await self.transport.send_response(response)
+
+                # Send the response back through the transport using publish
+                await self.transport.publish(
+                    topic=response.reply_to,
+                    message=response,
+                    respond=False
+                )
                 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
