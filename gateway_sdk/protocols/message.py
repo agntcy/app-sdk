@@ -28,10 +28,16 @@ class Message:
         type: str,
         payload: bytes,
         reply_to: Optional[str] = None,
+        route_path: Optional[str] = None,
+        method: Optional[str] = None,
+        status_code: Optional[int] = None,
     ):
         self.type = type
         self.payload = payload
         self.reply_to = reply_to
+        self.route_path = route_path
+        self.method = method
+        self.status_code = status_code
     
     def serialize(self) -> bytes:
         """
@@ -53,8 +59,13 @@ class Message:
             "type": self.type,
             "payload": base64.b64encode(payload_bytes).decode('ascii'),
         }
-        
-        # Add optional fields only if they exist
+
+        if self.route_path is not None:
+            message_dict["route_path"] = self.route_path
+        if self.method is not None:
+            message_dict["method"] = self.method
+        if self.status_code is not None:
+            message_dict["status_code"] = self.status_code
         if self.reply_to is not None:
             message_dict["reply_to"] = self.reply_to
         
@@ -86,10 +97,16 @@ class Message:
         
         # Extract optional fields
         reply_to = message_dict.get("reply_to")
+        route_path = message_dict.get("route_path")
+        method = message_dict.get("method")
+        status_code = message_dict.get("status_code")
         
         # Create and return a new Message instance
         return cls(
             type=type_value,
             payload=payload,
             reply_to=reply_to,
+            route_path=route_path,
+            method=method,
+            status_code=status_code,
         )

@@ -29,7 +29,7 @@ class BaseAgentProtocol(ABC):
         pass
 
     @abstractmethod
-    def create_client(self, url: str, transport: BaseTransport = None, **kwargs) -> Any:
+    def create_client(self, url: str = None, topic: str = None, transport: BaseTransport = None, **kwargs) -> Any:
         """Create a client for the protocol."""
         pass
 
