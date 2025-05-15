@@ -16,10 +16,12 @@
 
 import asyncio
 import nats
-from gateway_sdk.transports.base_transport import BaseTransport
+from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.protocols.message import Message
 from typing import Callable, Dict, Optional
+from opentelemetry.propagate import inject, extract
+from opentelemetry import trace
 
 configure_logging()
 logger = get_logger(__name__)
@@ -93,21 +95,36 @@ class NatsGateway(BaseTransport):
         if self._nc is None:
             await self._connect()
 
-        if respond:
-            resp = await self._nc.request(
-                self.santize_topic(topic),
-                message.serialize(),
-                headers=headers,
-                timeout=timeout
-            )
+        if not headers:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
 
-            message = Message.deserialize(resp.data)
-            return message
-        else:
-            await self._nc.publish(
-                topic,
-                message.serialize(),
-            )
+        ctx = extract(message.headers)
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("nats_publish", context=ctx):
+
+            inject(carrier=headers)
+
+            # add tracing headers to the message
+            message.headers = headers
+
+            if respond:
+                resp = await self._nc.request(
+                    self.santize_topic(topic),
+                    message.serialize(),
+                    headers=headers,
+                    timeout=timeout
+                )
+
+                message = Message.deserialize(resp.data)
+                return message
+            else:
+                await self._nc.publish(
+                    topic,
+                    message.serialize(),
+                )
 
     async def _message_handler(self, nats_msg):
         """Internal handler for NATS messages."""
