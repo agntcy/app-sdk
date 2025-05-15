@@ -43,7 +43,7 @@ class NatsGateway(BaseTransport):
     def santize_topic(self, topic: str) -> str:
         """Sanitize the topic name to ensure it is valid for NATS."""
         # NATS topics should not contain spaces or special characters
-        sanitized_topic = topic.replace(" ", "_").replace(".", "_")
+        sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
         
     async def _connect(self):
@@ -114,9 +114,7 @@ class NatsGateway(BaseTransport):
             await self._nc.publish(
                 topic,
                 message.serialize(),
-                headers=headers
             )
-            logger.info(f"Message published to {topic}")
 
     async def _message_handler(self, nats_msg):
         """Internal handler for NATS messages."""
@@ -129,16 +127,3 @@ class NatsGateway(BaseTransport):
         # Process the message with the registered handler
         if self._callback:
             await self._callback(message)
-    
-    async def send_response(self, response: Message) -> None:
-        """Send a response via NATS."""
-
-        if not response.reply_to:
-            logger.warning("No reply_to field in response message")
-            return
-            
-        await self._nc.publish(
-            response.reply_to,
-            response.serialize(),
-        )
-        logger.debug(f"Response sent to {response.reply_to}")

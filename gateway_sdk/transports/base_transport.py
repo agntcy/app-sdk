@@ -62,8 +62,3 @@ class BaseTransport(ABC):
     async def subscribe(self, topic: str) -> None:
         """Subscribe to a topic with a callback."""
         pass
-    
-    @abstractmethod
-    async def send_response(self, response: Message) -> None:
-        """Send a response message."""
-        pass
