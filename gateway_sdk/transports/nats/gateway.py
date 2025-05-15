@@ -95,11 +95,12 @@ class NatsGateway(BaseTransport):
         if self._nc is None:
             await self._connect()
 
-        if not headers:
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            }
+        if headers:
+            # add these headers to the message
+            for key, value in headers.items():
+                message.headers[key] = value
+        else:
+            headers = message.headers
 
         ctx = extract(message.headers)
         tracer = trace.get_tracer(__name__)

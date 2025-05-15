@@ -55,8 +55,6 @@ class MessageBridge:
             if message.reply_to:
                 response.reply_to = message.reply_to
 
-                print(f"response headers: {response.headers}")
-
                 # Send the response back through the transport using publish
                 await self.transport.publish(
                     topic=response.reply_to,

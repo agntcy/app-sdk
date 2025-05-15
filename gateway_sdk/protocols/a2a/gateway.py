@@ -119,14 +119,21 @@ class A2AProtocol(BaseAgentProtocol):
                 """
                 Send a request using the provided transport.
                 """
-                response = await transport.publish(
-                    topic,
-                    self.message_translator(request),
-                    respond=True,
-                )
+                headers = {}
+                tracer = trace.get_tracer(__name__)
+                with tracer.start_as_current_span("a2a_send_request"):
+                    # add tracing headers to the message
+                    inject(carrier=headers)
+                    
+                    response = await transport.publish(
+                        topic,
+                        self.message_translator(request),
+                        respond=True,
+                        headers=headers,
+                    )
 
-                response.payload = json.loads(response.payload.decode('utf-8'))
-                return response.payload
+                    response.payload = json.loads(response.payload.decode('utf-8'))
+                    return response.payload
 
             # override the _send_request method to use the provided transport
             client._send_request = _send_request
