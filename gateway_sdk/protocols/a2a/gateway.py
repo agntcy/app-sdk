@@ -18,13 +18,17 @@ from starlette.types import Scope
 from typing import Dict, Any, Callable
 import json
 import httpx
+from os import environ
+from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+from opentelemetry.propagate import inject, extract
+from opentelemetry import trace
 
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.server import A2AServer
 from a2a.types import A2ARequest, AgentCard
 
-from gateway_sdk.protocols.base_protocol import BaseAgentProtocol
-from gateway_sdk.transports.base_transport import BaseTransport
+from gateway_sdk.protocols.protocol import BaseAgentProtocol
+from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.protocols.message import Message
 
 from gateway_sdk.common.logging_config import configure_logging, get_logger
@@ -88,7 +92,6 @@ class A2AProtocol(BaseAgentProtocol):
 
         # If a topic is provided, use it to get the agent card using the transport
         if topic:
-            print(f"Using topic {topic} to get agent card")
             if transport is None:
                 raise ValueError("Transport must be provided when using a topic")
             
@@ -116,14 +119,21 @@ class A2AProtocol(BaseAgentProtocol):
                 """
                 Send a request using the provided transport.
                 """
-                response = await transport.publish(
-                    topic,
-                    self.message_translator(request),
-                    respond=True,
-                )
+                headers = {}
+                tracer = trace.get_tracer(__name__)
+                with tracer.start_as_current_span("a2a_send_request"):
+                    # add tracing headers to the message
+                    inject(carrier=headers)
+                    
+                    response = await transport.publish(
+                        topic,
+                        self.message_translator(request),
+                        respond=True,
+                        headers=headers,
+                    )
 
-                response.payload = json.loads(response.payload.decode('utf-8'))
-                return response.payload
+                    response.payload = json.loads(response.payload.decode('utf-8'))
+                    return response.payload
 
             # override the _send_request method to use the provided transport
             client._send_request = _send_request
@@ -149,6 +159,11 @@ class A2AProtocol(BaseAgentProtocol):
         """
         # Create an ASGI adapter
         self._app = server.app()
+
+        if environ.get("TRACING_ENABLED", "false").lower() == "true":
+            StarletteInstrumentor().instrument_app(self._app)
+            logger.info("Tracing enabled for ASGI app")
+
         return self.handle_incoming_request
     
     async def handle_incoming_request(self, message: Message) -> Message:
@@ -161,6 +176,15 @@ class A2AProtocol(BaseAgentProtocol):
         route_path = message.route_path if message.route_path.startswith('/') else f'/{message.route_path}'
         method = message.method
 
+        headers = []
+        for key, value in message.headers.items():
+            if isinstance(value, str):
+                headers.append((key.encode("utf-8"), value.encode("utf-8")))
+            elif isinstance(value, bytes):
+                headers.append((key.encode("utf-8"), value))
+            else:
+                raise ValueError(f"Unsupported header value type: {type(value)}")
+
         # Set up ASGI scope
         scope: Scope = {
             "type": "http",
@@ -171,11 +195,7 @@ class A2AProtocol(BaseAgentProtocol):
             "path": route_path,
             "raw_path": route_path.encode('utf-8'),
             "query_string": b"",
-            "headers": [
-                (b"host", b"nats-bridge"),
-                (b"content-type", b"application/json"),
-                (b"content-length", str(len(body)).encode('utf-8')),
-            ],
+            "headers": headers,
             "client": ("nats-bridge", 0),
             "server": ("nats-bridge", 0),
         }
@@ -205,23 +225,32 @@ class A2AProtocol(BaseAgentProtocol):
             elif message_type == "http.response.body":
                 if "body" in message:
                     response_data["body"].extend(message["body"])
-        
-        # Call the ASGI application with our scope, receive, and send
-        await self._app(scope, receive, send)
-        
-        # Parse the body
-        body = bytes(response_data["body"])
-        try:
-            body_obj = json.loads(body.decode("utf-8"))
-            payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            payload = body  # raw bytes
 
-        return Message(
-            type="A2AResponse",
-            payload=payload,
-            reply_to=message.reply_to,
-        )
+        
+        ctx = extract(message.headers)
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("server_run", context=ctx):
+            
+            # Call the ASGI application with our scope, receive, and send
+            await self._app(scope, receive, send)
+            
+            # Parse the body
+            body = bytes(response_data["body"])
+            try:
+                body_obj = json.loads(body.decode("utf-8"))
+                payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                payload = body  # raw bytes
+
+            headers = {}
+            inject(carrier=headers)
+
+            return Message(
+                type="A2AResponse",
+                payload=payload,
+                reply_to=message.reply_to,
+                headers=headers,
+            )
 
 
     

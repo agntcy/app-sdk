@@ -1,4 +1,5 @@
 from gateway_sdk.factory import GatewayFactory
+from gateway_sdk.factory import ProtocolTypes
 from typing import Any
 import pytest
 
@@ -35,7 +36,7 @@ async def test_a2a_factory_client_with_transport():
     """
     Test the A2A factory client creation with transport.
     """
-    factory = GatewayFactory() # TODO: consider separate factories
+    factory = GatewayFactory(enable_tracing=True)
 
     # Create a Nats transport
     transport = factory.create_transport("NATS", "localhost:4222", options={})
@@ -43,7 +44,7 @@ async def test_a2a_factory_client_with_transport():
     # ie: do we support nats.nc object and wrap in the create_client?
 
     # Create a client with the transport
-    client = await factory.create_client("A2A", agent_url="http://localhost:9999", transport=transport)
+    client = await factory.create_client(ProtocolTypes.A2A.value, agent_url="http://localhost:9999", transport=transport)
     
     assert client is not None
 
@@ -73,9 +74,12 @@ async def test_a2a_factory_client_from_topic():
     """
     Test the A2A factory client creation.
     """
-    factory = GatewayFactory()
+    factory = GatewayFactory(enable_tracing=True)
 
     transport = factory.create_transport("NATS", "localhost:4222", options={})
+
+    #from gateway_sdk.protocols.a2a.gateway import A2AProtocol
+    #topic = A2AProtocol.create_agent_topic(card)
     
     client = await factory.create_client("A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport)
     assert client is not None

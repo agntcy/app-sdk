@@ -21,7 +21,7 @@ import asyncio
 import inspect
 import json
 from gateway_sdk.common.logging_config import configure_logging, get_logger
-from gateway_sdk.transports.base_transport import BaseTransport, Message
+from gateway_sdk.transports.transport import BaseTransport, Message
 
 configure_logging()
 logger = get_logger(__name__)
