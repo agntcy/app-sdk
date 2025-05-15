@@ -39,7 +39,7 @@ class MessageBridge:
     async def start(self):
         """Start all components of the bridge."""
         # Set up message handling flow
-        self.transport.set_message_handler(self._process_message)
+        self.transport.set_callback(self._process_message)
         
         # Start all components
         await self.transport.subscribe(self.topic)

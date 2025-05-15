@@ -78,7 +78,7 @@ class GatewayFactory:
 
         # TODO: handle multiple server types and or agent frameworks ie graph
         if isinstance(server, A2AServer):
-            topic = f"{server.agent_card.name}_{server.agent_card.version}"
+            topic = A2AProtocol.create_agent_topic(server.agent_card)
             handler = self.create_protocol("A2A").create_ingress_handler(server)
         else:
             raise ValueError("Unsupported server type")

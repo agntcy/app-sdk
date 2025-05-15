@@ -33,7 +33,7 @@ class NatsGateway(BaseTransport):
         self.type = "NATS"
         self._nc = None
         self.endpoint = endpoint
-        self._handler = None
+        self._callback = None
         self._default_topic = None
         self.subscriptions = []
 
@@ -64,12 +64,12 @@ class NatsGateway(BaseTransport):
         """
         self._default_topic = topic
 
-    def set_message_handler(
+    def set_callback(
         self, 
-        handler: Callable[[Message], asyncio.Future]
+        callback: Callable[[Message], asyncio.Future]
     ) -> None:
         """Set the message handler function."""
-        self._handler = handler
+        self._callback = callback
 
     async def subscribe(self, topic: str) -> None:
         topic = self.santize_topic(topic)
@@ -78,7 +78,7 @@ class NatsGateway(BaseTransport):
         if self._nc is None:
             await self._connect()
         
-        if not self._handler:
+        if not self._callback:
             raise ValueError("Message handler must be set before starting transport")
         
         sub = await self._nc.subscribe(topic, cb=self._message_handler)
@@ -127,14 +127,14 @@ class NatsGateway(BaseTransport):
             message.reply_to = nats_msg.reply
             
         # Process the message with the registered handler
-        if self._handler:
-            await self._handler(message)
+        if self._callback:
+            await self._callback(message)
     
     async def send_response(self, response: Message) -> None:
         """Send a response via NATS."""
 
         if not response.reply_to:
-            logger.warning("no correlation_id in response, can't route back")
+            logger.warning("No reply_to field in response message")
             return
             
         await self._nc.publish(

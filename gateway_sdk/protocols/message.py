@@ -28,12 +28,10 @@ class Message:
         type: str,
         payload: bytes,
         reply_to: Optional[str] = None,
-        correlation_id: Optional[str] = None,
     ):
         self.type = type
         self.payload = payload
         self.reply_to = reply_to
-        self.correlation_id = correlation_id
     
     def serialize(self) -> bytes:
         """
@@ -59,9 +57,6 @@ class Message:
         # Add optional fields only if they exist
         if self.reply_to is not None:
             message_dict["reply_to"] = self.reply_to
-            
-        if self.correlation_id is not None:
-            message_dict["correlation_id"] = self.correlation_id
         
         # Convert dictionary to JSON string and then to bytes
         return json.dumps(message_dict).encode('utf-8')
@@ -91,12 +86,10 @@ class Message:
         
         # Extract optional fields
         reply_to = message_dict.get("reply_to")
-        correlation_id = message_dict.get("correlation_id")
         
         # Create and return a new Message instance
         return cls(
             type=type_value,
             payload=payload,
             reply_to=reply_to,
-            correlation_id=correlation_id
         )

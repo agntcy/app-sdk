@@ -36,6 +36,14 @@ class A2AProtocol(BaseAgentProtocol):
     def get_type(self):
         return "A2A"
     
+    @staticmethod
+    def create_agent_topic(
+        agent_card: AgentCard) -> str:
+        """
+        Create a topic for the agent card metadata.
+        """
+        return f"{agent_card.name}_{agent_card.version}"
+    
     async def get_client_from_agent_card_topic(
         self, topic: str, transport: BaseTransport = None, **kwargs
     ) -> AgentCard:
@@ -69,7 +77,7 @@ class A2AProtocol(BaseAgentProtocol):
             logger.info(
                 f"Using transport {transport.get_type()} for A2A client {client.agent_card.name}"
             )
-            topic = f"{agent_card.name}_{agent_card.version}" # TODO: use a method to generate the topic
+            topic = self.create_agent_topic(client.agent_card)
             transport.bind_to_topic(topic)
 
             async def _send_request(request: A2ARequest) -> None:
@@ -179,7 +187,6 @@ class A2AProtocol(BaseAgentProtocol):
             type="A2AResponse",
             payload=payload,
             reply_to=message.reply_to,
-            correlation_id=message.correlation_id,
         )
 
 

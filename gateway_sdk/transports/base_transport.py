@@ -34,11 +34,13 @@ class BaseTransport(ABC):
     def bind_to_topic(self, topic: str) -> None:
         """Bind the transport to a specific topic. Will be used when no
         topic is specified in the request.
+
+        This could/should be replaced by sessions.
         """
         pass
     
     @abstractmethod
-    async def set_message_handler(
+    async def set_callback(
         self, 
         handler: Callable[[Message], asyncio.Future]
     ) -> None:
