@@ -9,7 +9,7 @@ async def test_a2a_factory_client():
     """
     factory = GatewayFactory()
     
-    client = await factory.create_client("A2A", "http://localhost:9999")
+    client = await factory.create_client("A2A", agent_url="http://localhost:9999")
     assert client is not None
 
     print("\n=== Agent Information ===")
@@ -43,7 +43,7 @@ async def test_a2a_factory_client_with_transport():
     # ie: do we support nats.nc object and wrap in the create_client?
 
     # Create a client with the transport
-    client = await factory.create_client("A2A", agent_endpoint="http://localhost:9999", transport=transport)
+    client = await factory.create_client("A2A", agent_url="http://localhost:9999", transport=transport)
     
     assert client is not None
 
@@ -67,3 +67,37 @@ async def test_a2a_factory_client_with_transport():
     await transport.close()
 
     print("\n=== Transport Closed ===")
+
+@pytest.mark.asyncio
+async def test_a2a_factory_client_from_topic():
+    """
+    Test the A2A factory client creation.
+    """
+    factory = GatewayFactory()
+
+    transport = factory.create_transport("NATS", "localhost:4222", options={})
+    
+    client = await factory.create_client("A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport)
+    assert client is not None
+
+    print("\n=== Agent Information ===")
+    print(f"Name: {client.agent_card}")
+
+    assert client is not None
+
+    send_message_payload: dict[str, Any] = {
+        'message': {
+            'role': 'user',
+            'parts': [
+                {'type': 'text', 'text': 'how much is 10 USD in INR?'}
+            ],
+            'messageId': "1234",
+        },
+    }
+
+    response = await client.send_message(payload=send_message_payload)
+    print(response.model_dump(mode='json', exclude_none=True))
+
+    print("\n=== Success ===")
+
+    await transport.close()

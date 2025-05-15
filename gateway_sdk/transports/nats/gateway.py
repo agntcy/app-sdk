@@ -34,7 +34,6 @@ class NatsGateway(BaseTransport):
         self._nc = None
         self.endpoint = endpoint
         self._callback = None
-        self._default_topic = None
         self.subscriptions = []
 
     def get_type(self) -> str:
@@ -57,12 +56,6 @@ class NatsGateway(BaseTransport):
             logger.info("NATS connection closed")
         else:
             logger.warning("No NATS connection to close")
-
-    def bind_to_topic(self, topic: str) -> None:
-        """Bind the transport to a specific topic. Will be used when no
-        topic is specified in the request.
-        """
-        self._default_topic = topic
 
     def set_callback(
         self, 
@@ -102,7 +95,7 @@ class NatsGateway(BaseTransport):
 
         if respond:
             resp = await self._nc.request(
-                self.santize_topic(self._default_topic),
+                self.santize_topic(topic),
                 message.serialize(),
                 headers=headers,
                 timeout=timeout

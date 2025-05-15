@@ -29,15 +29,6 @@ class BaseTransport(ABC):
     async def close(self) -> None:
         """Close the transport connection."""
         pass
-
-    @abstractmethod
-    def bind_to_topic(self, topic: str) -> None:
-        """Bind the transport to a specific topic. Will be used when no
-        topic is specified in the request.
-
-        This could/should be replaced by sessions.
-        """
-        pass
     
     @abstractmethod
     async def set_callback(

@@ -45,7 +45,11 @@ factory = GatewayFactory()
 
 transport = factory.create_transport("NATS", "localhost:4222", options={})
     
-client_over_nats = await factory.create_client("A2A", agent_endpoint="http://localhost:9999", transport=transport)
+# connect via agent URL
+client_over_nats = await factory.create_client("A2A", agent_url="http://localhost:9999", transport=transport)
+
+# or connect via agent topic
+client_over_nats = await factory.create_client("A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport)
 ```
 
 ## Testing

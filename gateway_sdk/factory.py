@@ -46,21 +46,26 @@ class GatewayFactory:
 
     def create_client(
         self, protocol: str, 
-        agent_endpoint: str,
+        agent_url: str = None,
+        agent_topic: str = None,
         transport: BaseTransport = None,
         **kwargs
     ):
         """
         Create a client for the specified transport and protocol.
         """
+
+        if agent_url is None and agent_topic is None:
+            raise ValueError("Either agent_url or agent_topic must be provided")
        
         # get the protocol class
         protocol_instance = self.create_protocol(protocol)
 
         # create the client
-        client = protocol_instance.create_client(agent_endpoint, transport)
+        client = protocol_instance.create_client(url=agent_url, topic=agent_topic, transport=transport)
 
-        self._clients[agent_endpoint] = client
+        key = agent_url if agent_url else agent_topic
+        self._clients[key] = client
   
         return client
 

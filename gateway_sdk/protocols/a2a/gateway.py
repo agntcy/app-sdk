@@ -44,27 +44,60 @@ class A2AProtocol(BaseAgentProtocol):
         """
         return f"{agent_card.name}_{agent_card.version}"
     
-    async def get_client_from_agent_card_topic(
-        self, topic: str, transport: BaseTransport = None, **kwargs
-    ) -> AgentCard:
+    async def get_client_from_agent_card_topic(self, topic: str, transport: BaseTransport) -> A2AClient:
         """
         Create an A2A client from the agent card topic, bypassing all need for a URLs.
         """
-        raise NotImplementedError(
-            "get_client_from_agent_card_topic is not implemented. Use get_client_from_agent_card_url instead."
+        logger.info(f"Getting agent card from topic {topic}")
+
+        path = ".well-known/agent.json"
+        method = "GET"
+
+        request = Message(
+            type="A2ARequest",
+            payload=json.dumps({"path": path, "method": method}),
+            route_path=path,
+            method=method,
+        )   
+
+        response = await transport.publish(
+            topic,
+            request,
+            respond=True,
         )
+
+        response.payload = json.loads(response.payload.decode('utf-8'))
+        card = AgentCard.model_validate(response.payload)
+
+        cl = A2AClient(
+            agent_card=card,
+            httpx_client=None,
+            url=None,
+        )
+        cl.agent_card = card
+        return cl
     
-    async def create_client(self, url, transport: BaseTransport = None, **kwargs) -> A2AClient:
+    async def create_client(self, url: str = None, topic: str = None, transport: BaseTransport = None, **kwargs) -> A2AClient:
         """
         Create an A2A client, overriding the default client _send_request method to 
         use the provided transport.
         """
 
-        # TODO: how can we get the agent card without using a URL? Use pubsub topic option
-        httpx_client = httpx.AsyncClient()
-        client = await A2AClient.get_client_from_agent_card_url(
-            httpx_client, url
-        )
+        if url is None and topic is None:
+            raise ValueError("Either url or topic must be provided")
+
+        # If a topic is provided, use it to get the agent card using the transport
+        if topic:
+            print(f"Using topic {topic} to get agent card")
+            if transport is None:
+                raise ValueError("Transport must be provided when using a topic")
+            
+            client = await self.get_client_from_agent_card_topic(topic, transport)
+        else:
+            httpx_client = httpx.AsyncClient()
+            client = await A2AClient.get_client_from_agent_card_url(
+                httpx_client, url
+            )
 
         # fix bug in A2AClient.get_client_from_agent_card_url where the card is not being set
         if not hasattr(client, "agent_card"):
@@ -78,7 +111,6 @@ class A2AProtocol(BaseAgentProtocol):
                 f"Using transport {transport.get_type()} for A2A client {client.agent_card.name}"
             )
             topic = self.create_agent_topic(client.agent_card)
-            transport.bind_to_topic(topic)
 
             async def _send_request(request: A2ARequest) -> None:
                 """
@@ -104,7 +136,9 @@ class A2AProtocol(BaseAgentProtocol):
         """
         message = Message(
             type="A2ARequest",
-            payload=json.dumps(request.root.model_dump(mode='json'))
+            payload=json.dumps(request.root.model_dump(mode='json')),
+            route_path="/", # json-rpc path
+            method="POST",  # A2A json-rpc will always use POST
         )
 
         return message
@@ -124,8 +158,8 @@ class A2AProtocol(BaseAgentProtocol):
         assert self._app is not None, "ASGI app is not set up"
 
         body = message.payload
-        route_path = "/" # json-rpc path
-        method = "POST" # A2A json-rpc will always use POST
+        route_path = message.route_path if message.route_path.startswith('/') else f'/{message.route_path}'
+        method = message.method
 
         # Set up ASGI scope
         scope: Scope = {
