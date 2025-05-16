@@ -48,12 +48,23 @@ class NatsGateway(BaseTransport):
         return sanitized_topic
         
     async def _connect(self):
-        self._nc = await nats.connect(self.endpoint)
+        self._nc = await nats.connect(
+            self.endpoint,
+            reconnect_time_wait=2,             # Time between reconnect attempts
+            max_reconnect_attempts=30,         # Retry for 2 minutes before giving up
+            error_cb=self.error_cb,
+            closed_cb=self.closed_cb,
+            disconnected_cb=self.disconnected_cb,
+            reconnected_cb=self.reconnected_cb,
+            connect_timeout=5,
+            drain_timeout=2,
+        )
         logger.info("Connected to NATS server")
 
     async def close(self) -> None:
         """Close the NATS connection."""
         if self._nc:
+            await self._nc.drain()
             await self._nc.close()
             logger.info("NATS connection closed")
         else:
@@ -96,7 +107,7 @@ class NatsGateway(BaseTransport):
             await self._connect()
 
         if headers:
-            # add these headers to the message
+            # if headers are provided, add them to the message
             for key, value in headers.items():
                 message.headers[key] = value
         else:
@@ -111,21 +122,31 @@ class NatsGateway(BaseTransport):
             # add tracing headers to the message
             message.headers = headers
 
-            if respond:
-                resp = await self._nc.request(
-                    self.santize_topic(topic),
-                    message.serialize(),
-                    headers=headers,
-                    timeout=timeout
-                )
+            try:
+                if respond:
+                    resp = await self._nc.request(
+                        self.santize_topic(topic),
+                        message.serialize(),
+                        headers=headers,
+                        timeout=timeout
+                    )
 
-                message = Message.deserialize(resp.data)
-                return message
-            else:
-                await self._nc.publish(
-                    topic,
-                    message.serialize(),
-                )
+                    message = Message.deserialize(resp.data)
+                    return message
+                else:
+                    await self._nc.publish(
+                        topic,
+                        message.serialize(),
+                    )
+            except nats.errors.TimeoutError:
+                logger.error(f"Timeout while publishing to {topic}")
+                raise
+            except nats.errors.NatsError as e:
+                logger.error(f"NATS error while publishing to {topic}: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error while publishing to {topic}: {e}")
+                raise
 
     async def _message_handler(self, nats_msg):
         """Internal handler for NATS messages."""
@@ -138,3 +159,16 @@ class NatsGateway(BaseTransport):
         # Process the message with the registered handler
         if self._callback:
             await self._callback(message)
+
+    # Callbacks and error handling
+    async def error_cb(self, e):
+        logger.error(f"NATS error: {e}")
+
+    async def closed_cb(self):
+        logger.warning("Connection to NATS is closed.")
+
+    async def disconnected_cb(self):
+        logger.warning("Disconnected from NATS.")
+
+    async def reconnected_cb(self):
+        logger.info(f"Reconnected to NATS at {self._nc.connected_url.netloc}...")
