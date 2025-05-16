@@ -40,6 +40,7 @@ await bridge.start()
 Create an A2A client with a custom network transport:
 ```python
 from gateway_sdk.factory import GatewayFactory
+from gateway_sdk.factory import ProtocolTypes
 
 factory = GatewayFactory()
 
@@ -49,7 +50,7 @@ transport = factory.create_transport("NATS", "localhost:4222", options={})
 client_over_nats = await factory.create_client("A2A", agent_url="http://localhost:9999", transport=transport)
 
 # or connect via agent topic
-client_over_nats = await factory.create_client("A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport)
+client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_topic="Hello_World_Agent_1.0.0", transport=transport)
 ```
 
 ## Testing
@@ -70,7 +71,7 @@ uv run pytest tests/test_a2a.py::test_a2a_factory_client -s
 
 Run a NATS server:
 ```bash
-cd tests && docker-compose up -d
+cd tests/test-infra && docker-compose up
 ```
 
 Run an A2A server with a NATS bridge:

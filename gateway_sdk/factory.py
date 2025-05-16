@@ -15,9 +15,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Dict, Type
+import os
+from enum import Enum
 
-from gateway_sdk.transports.base_transport import BaseTransport
-from gateway_sdk.protocols.base_protocol import BaseAgentProtocol
+from gateway_sdk.transports.transport import BaseTransport
+from gateway_sdk.protocols.protocol import BaseAgentProtocol
 
 from gateway_sdk.transports.agp.gateway import AGPGateway
 from gateway_sdk.transports.nats.gateway import NatsGateway
@@ -26,6 +28,22 @@ from gateway_sdk.protocols.a2a.gateway import A2AProtocol
 from a2a.server import A2AServer
 
 from gateway_sdk.bridge import MessageBridge
+
+from gateway_sdk.common.logging_config import configure_logging, get_logger
+from gateway_sdk.common.tracing import init_tracing
+
+configure_logging()
+logger = get_logger(__name__)
+
+# a utility enum class to define transport types as constants
+class ProtocolTypes(Enum):
+    A2A = "A2A"
+
+# a utility enum class to define transport types as constants
+class TransportTypes(Enum):
+    NATS = "NATS"
+    AGP = "AGP"
+    MQTT = "MQTT"
 
 class GatewayFactory:
     """
@@ -44,6 +62,10 @@ class GatewayFactory:
         self._register_wellknown_transports()
         self._register_wellknown_protocols()
 
+        if self.enable_tracing:
+            os.environ["TRACING_ENABLED"] = "true"
+            logger.info("Tracing enabled for gateway_sdk")
+
     def create_client(
         self, protocol: str, 
         agent_url: str = None,
@@ -57,6 +79,13 @@ class GatewayFactory:
 
         if agent_url is None and agent_topic is None:
             raise ValueError("Either agent_url or agent_topic must be provided")
+        
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            init_tracing(
+                app_name="gateway_client",
+                collector_url=os.environ.get("COLLECTOR_URL", "http://localhost:4318"),
+                disable_batch=True
+            )
        
         # get the protocol class
         protocol_instance = self.create_protocol(protocol)
@@ -80,6 +109,13 @@ class GatewayFactory:
 
         bridge = None
         topic = None
+
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            init_tracing(
+                app_name="gateway_bridge",
+                collector_url=os.environ.get("COLLECTOR_URL", "http://localhost:4318"),
+                disable_batch=True
+            )
 
         # TODO: handle multiple server types and or agent frameworks ie graph
         if isinstance(server, A2AServer):

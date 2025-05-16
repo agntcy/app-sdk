@@ -30,6 +30,7 @@ class Message:
         reply_to: Optional[str] = None,
         route_path: Optional[str] = None,
         method: Optional[str] = None,
+        headers: Optional[dict] = None,
         status_code: Optional[int] = None,
     ):
         self.type = type
@@ -37,6 +38,7 @@ class Message:
         self.reply_to = reply_to
         self.route_path = route_path
         self.method = method
+        self.headers = headers if headers is not None else {}
         self.status_code = status_code
     
     def serialize(self) -> bytes:
@@ -64,6 +66,8 @@ class Message:
             message_dict["route_path"] = self.route_path
         if self.method is not None:
             message_dict["method"] = self.method
+        if self.headers:
+            message_dict["headers"] = self.headers
         if self.status_code is not None:
             message_dict["status_code"] = self.status_code
         if self.reply_to is not None:
@@ -99,6 +103,7 @@ class Message:
         reply_to = message_dict.get("reply_to")
         route_path = message_dict.get("route_path")
         method = message_dict.get("method")
+        headers = message_dict.get("headers", {})
         status_code = message_dict.get("status_code")
         
         # Create and return a new Message instance
@@ -108,5 +113,6 @@ class Message:
             reply_to=reply_to,
             route_path=route_path,
             method=method,
+            headers=headers,
             status_code=status_code,
         )

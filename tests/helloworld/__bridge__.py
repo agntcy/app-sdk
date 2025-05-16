@@ -9,8 +9,8 @@ from a2a.types import (
     AgentSkill,
 )
 import asyncio
+from gateway_sdk.factory import TransportTypes
 from gateway_sdk.factory import GatewayFactory
-from gateway_sdk.transports.nats.gateway import NatsGateway
 
 async def main():
     skill = AgentSkill(
@@ -39,8 +39,8 @@ async def main():
 
     server = A2AServer(agent_card=agent_card, request_handler=request_handler)
 
-    factory = GatewayFactory()
-    transport = factory.create_transport("NATS", "localhost:4222", options={})
+    factory = GatewayFactory(enable_tracing=True)
+    transport = factory.create_transport(TransportTypes.NATS.value, "localhost:4222", options={})
     bridge = factory.create_bridge(server, transport=transport)
     await bridge.start()
 

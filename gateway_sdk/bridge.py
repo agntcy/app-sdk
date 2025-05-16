@@ -14,12 +14,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from gateway_sdk.transports.base_transport import BaseTransport
+from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.protocols.message import Message
-from gateway_sdk.common.logging_config import configure_logging, get_logger
+from gateway_sdk.common.logging_config import get_logger
 from typing import Callable
 
-configure_logging()
 logger = get_logger(__name__)
 
 class MessageBridge:
@@ -60,7 +59,8 @@ class MessageBridge:
                 await self.transport.publish(
                     topic=response.reply_to,
                     message=response,
-                    respond=False
+                    respond=False,
+                    headers=response.headers,
                 )
                 
         except Exception as e:
