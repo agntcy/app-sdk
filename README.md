@@ -1,6 +1,14 @@
 Agent Gateway SDK
 ========================
-A multi-protocol gateway factory with variable transports and observability for agent-to-agent communication.
+A factory package to facilitate agent communcation with different protocols and transports, decoupling the agent protocol from the transport layer. The package aims to provider interoperability between different agent protocols and messaging layers while providing automatic end-to-end observability.
+
+**Supported agent protocols:**
+- A2A ✅
+
+**Supported messaging transports:**
+- NATS ✅
+- MQTT - coming soon
+- AGP - coming soon
 
 ### Architecture
 
@@ -22,7 +30,7 @@ source .venv/bin/activate
 
 ## Getting Started
 
-Create an A2A server bridge with a custom network transport:
+Create an A2A server bridge with your network transport of choice:
 ```python
 from a2a.server import A2AServer
 from gateway_sdk.factory import GatewayFactory
@@ -37,7 +45,7 @@ bridge = factory.create_bridge(server, transport=transport)
 await bridge.start()
 ```
 
-Create an A2A client with a custom network transport:
+Create an A2A client with a transport of your choice:
 ```python
 from gateway_sdk.factory import GatewayFactory
 from gateway_sdk.factory import ProtocolTypes
@@ -52,6 +60,9 @@ client_over_nats = await factory.create_client("A2A", agent_url="http://localhos
 # or connect via agent topic
 client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_topic="Hello_World_Agent_1.0.0", transport=transport)
 ```
+
+View agent traces from jaeger:
+[![architecture](assets/trace.png )]()
 
 ## Testing
 
