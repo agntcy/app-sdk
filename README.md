@@ -69,9 +69,9 @@ uv run pytest tests/test_a2a.py::test_a2a_factory_client -s
 
 **🚀 Test the gateway factory with A2A over NATS transport**
 
-Run a NATS server:
+Run a Nats server and observability stack:
 ```bash
-cd tests/test-infra && docker-compose up
+uv run python gateway_cli/cli.py up
 ```
 
 Run an A2A server with a NATS bridge:
