@@ -14,6 +14,7 @@ dependencies = [
     "traceloop-sdk>=0.40.5",
     "langchain-community>=0.3.24",
     "opentelemetry-instrumentation-starlette>=0.54b0",
+    "click>=8.2.0",
 ]
 
 [dependency-groups]
@@ -33,6 +34,9 @@ dev = [
     "cisco-outshift-agent-utils==0.0.2",
     "langchain-openai>=0.3.14,<0.4",
 ]
+
+[project.scripts]
+gateway-services = "gateway_cli.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
