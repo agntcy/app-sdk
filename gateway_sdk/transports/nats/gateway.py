@@ -32,14 +32,14 @@ Nats implementation of BaseTransport.
 
 class NatsGateway(BaseTransport):
     def __init__(self, endpoint: str, *args, **kwargs):
-        self.type = "NATS"
         self._nc = None
         self.endpoint = endpoint
         self._callback = None
         self.subscriptions = []
 
-    def get_type(self) -> str:
-        return self.type
+    def type(self) -> str:
+        """Return this transport type."""
+        return "NATS"
 
     def santize_topic(self, topic: str) -> str:
         """Sanitize the topic name to ensure it is valid for NATS."""

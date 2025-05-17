@@ -1,5 +1,6 @@
 from gateway_sdk.factory import GatewayFactory
 from gateway_sdk.factory import ProtocolTypes
+from gateway_sdk.protocols.a2a.gateway import A2AClient
 from typing import Any
 import pytest
 

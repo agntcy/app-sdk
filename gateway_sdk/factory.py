@@ -21,8 +21,9 @@ from enum import Enum
 from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.protocols.protocol import BaseAgentProtocol
 
-from gateway_sdk.transports.agp.gateway import AGPGateway
 from gateway_sdk.transports.nats.gateway import NatsGateway
+from gateway_sdk.transports.mqtt.gateway import MQTTGateway
+from gateway_sdk.transports.agp.gateway import AGPGateway
 
 from gateway_sdk.protocols.a2a.gateway import A2AProtocol
 from a2a.server import A2AServer
@@ -120,7 +121,7 @@ class GatewayFactory:
         # TODO: handle multiple server types and or agent frameworks ie graph
         if isinstance(server, A2AServer):
             topic = A2AProtocol.create_agent_topic(server.agent_card)
-            handler = self.create_protocol("A2A").create_ingress_handler(server)
+            handler = self.create_protocol(ProtocolTypes.A2A.value).create_ingress_handler(server)
         else:
             raise ValueError("Unsupported server type")
         
@@ -179,6 +180,7 @@ class GatewayFactory:
         """
         self._transport_registry["AGP"] = AGPGateway
         self._transport_registry["NATS"] = NatsGateway
+        self._transport_registry["MQTT"] = MQTTGateway
 
     def _register_wellknown_protocols(self):
         """

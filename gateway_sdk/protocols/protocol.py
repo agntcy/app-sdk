@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Any, Callable, List, Optional
 from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.protocols.message import Message
 
@@ -23,14 +23,32 @@ class BaseAgentProtocol(ABC):
     """
     Base class for different agent protocols.
     """
+    @staticmethod
     @abstractmethod
-    def get_type(self) -> str:
+    def type(self) -> str:
         """Return the protocol type."""
         pass
 
     @abstractmethod
-    def create_client(self, url: str = None, topic: str = None, transport: BaseTransport = None, **kwargs) -> Any:
+    def create_client(
+        self,
+        url: Optional[str] = None,
+        topic: Optional[str] = None,
+        transport: Optional[BaseTransport] = None,
+        **kwargs
+    ) -> Any:
         """Create a client for the protocol."""
+        pass
+
+    @abstractmethod
+    def create_multicast_client(
+        self,
+        url: Optional[str] = None,
+        topic: Optional[str] = None,
+        transports: Optional[List[BaseTransport]] = None,
+        **kwargs
+    ) -> Any:
+        """Create a multicast client for the protocol."""
         pass
 
     @abstractmethod

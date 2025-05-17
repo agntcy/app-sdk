@@ -14,31 +14,48 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from abc import ABC, abstractmethod
+import asyncio
+import paho.mqtt.client as mqtt
+from gateway_sdk.transports.transport import BaseTransport
+from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.protocols.message import Message
 from typing import Callable, Dict, Optional
-import asyncio
+from opentelemetry.propagate import inject, extract
+from opentelemetry import trace
 
-class BaseTransport(ABC):
-    @abstractmethod
+configure_logging()
+logger = get_logger(__name__)
+
+"""
+MQTT implementation of BaseTransport.
+"""
+
+class MQTTGateway(BaseTransport):
+    def __init__(self, endpoint: str, *args, **kwargs):
+        self.endpoint = endpoint
+        self._callback = None
+
+        self._mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+
+        raise NotImplementedError(
+            "MQTT transport is not implemented yet. Please use NATS transport instead."
+        )
+
+    @staticmethod
     def type(self) -> str:
-        """Return the transport type."""
+        """Return this transport type."""
+        return "MQTT"
+
+    async def close(self) -> None:
         pass
 
-    @abstractmethod
-    async def close(self) -> None:
-        """Close the transport connection."""
-        pass
-    
-    @abstractmethod
-    async def set_callback(
+    def set_callback(
         self, 
-        handler: Callable[[Message], asyncio.Future]
+        callback: Callable[[Message], asyncio.Future]
     ) -> None:
         """Set the message handler function."""
-        pass
+        self._callback = callback
 
-    @abstractmethod
     async def publish(
         self, 
         topic: str, 
@@ -48,8 +65,7 @@ class BaseTransport(ABC):
     ) -> None:
         """Publish a message to a topic."""
         pass
-    
-    @abstractmethod
+
     async def subscribe(self, topic: str) -> None:
         """Subscribe to a topic with a callback."""
         pass

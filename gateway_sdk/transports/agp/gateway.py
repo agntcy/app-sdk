@@ -39,18 +39,6 @@ class AGPGateway(BaseTransport):
         self.endpoint = endpoint
         self.gateway = None
 
-    def get(self, *args: Any, **kwargs: Any) -> None:
-        """
-        This method is not implemented for AGP Gateway.
-        """
-        raise NotImplementedError("AGP Gateway does not support GET requests.")
-    
-    def post(self, *args: Any, **kwargs: Any) -> None:  
-        """
-        This method is not implemented for AGP Gateway.
-        """
-        raise NotImplementedError("AGP Gateway does not support POST requests.")
-
     async def _create_gateway(self, org: str, namespace: str, topic: str) -> None:
         # create new gateway object
         self.gateway = await agp_bindings.Gateway.new(org, namespace, topic)

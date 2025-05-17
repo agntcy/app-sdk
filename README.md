@@ -1,14 +1,26 @@
 Agent Gateway SDK
 ========================
-A factory package to facilitate agent communcation with different protocols and transports, decoupling the agent protocol from the transport layer. The package aims to provider interoperability between different agent protocols and messaging layers while providing automatic end-to-end observability.
+A factory package to facilitate agent communcation with various agent protocols / frameworks and transports, decoupling the agent protocol from the transport layer. The package aims to provider interoperability between different agent protocols and messaging layers while providing automatic end-to-end observability.
 
-**Supported agent protocols:**
-- A2A ✅
+<div align="center" style="margin-bottom: 1rem;">
+  <a href="https://pypi.org/project/your-package-name/" target="_blank" style="margin-right: 0.5rem;">
+    <img src="https://img.shields.io/pypi/v/your-package-name?logo=pypi&logoColor=%23FFFFFF&label=Version&color=%2300BCEB" alt="PyPI version">
+  </a>
+  <a href="./LICENSE" target="_blank">
+    <img src="https://img.shields.io/badge/License-Apache%202.0-blue?color=%2300BCEB" alt="Apache License">
+  </a>
+</div>
 
-**Supported messaging transports:**
-- NATS ✅
-- MQTT - coming soon
-- AGP - coming soon
+---
+
+### 🧠 Supported Agent Protocols
+- [x] A2A
+
+### 📡 Supported Messaging Transports
+- [x] NATS  
+- [ ] AGP *(coming soon)*  
+- [ ] MQTT *(coming soon)*  
+
 
 ### Architecture
 

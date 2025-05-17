@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from starlette.types import Scope
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, List
 import json
 import httpx
 from os import environ
@@ -37,7 +37,8 @@ configure_logging()
 logger = get_logger(__name__)
 
 class A2AProtocol(BaseAgentProtocol):
-    def get_type(self):
+    @staticmethod
+    def type(self):
         return "A2A"
     
     @staticmethod
@@ -81,7 +82,13 @@ class A2AProtocol(BaseAgentProtocol):
         cl.agent_card = card
         return cl
     
-    async def create_client(self, url: str = None, topic: str = None, transport: BaseTransport = None, **kwargs) -> A2AClient:
+    async def create_client(
+        self,
+        url: str = None,
+        topic: str = None,
+        transport: BaseTransport = None,
+        **kwargs
+    ) -> A2AClient:
         """
         Create an A2A client, overriding the default client _send_request method to 
         use the provided transport.
@@ -111,7 +118,7 @@ class A2AProtocol(BaseAgentProtocol):
 
         if transport:
             logger.info(
-                f"Using transport {transport.get_type()} for A2A client {client.agent_card.name}"
+                f"Using transport {transport.type()} for A2A client {client.agent_card.name}"
             )
             topic = self.create_agent_topic(client.agent_card)
 
@@ -139,6 +146,18 @@ class A2AProtocol(BaseAgentProtocol):
             client._send_request = _send_request
 
         return client
+    
+    async def create_multicast_client(
+        self,
+        url: str = None,
+        topic: str = None,
+        transports: List[BaseTransport] = None,
+        **kwargs
+    ) -> A2AClient:
+        """
+        Create a multicast client for the A2A protocol.
+        """
+        raise NotImplementedError("Multicast client is not implemented for A2A protocol")
     
     def message_translator(self, request: A2ARequest) -> Message:
         """
