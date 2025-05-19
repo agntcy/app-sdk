@@ -33,6 +33,11 @@ dev = [
     "langchain-anthropic>=0.3.12,<0.4",
     "cisco-outshift-agent-utils==0.0.2",
     "langchain-openai>=0.3.14,<0.4",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.14",
+    "mkdocs-material-extensions>=1.3.1",
+    "markdown-include>=0.8.1",
+    "pymdown-extensions>=10.15",
 ]
 
 [project.scripts]
