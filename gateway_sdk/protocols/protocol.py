@@ -24,7 +24,7 @@ class BaseAgentProtocol(ABC):
     Base class for different agent protocols.
     """
     @abstractmethod
-    def get_type(self) -> str:
+    def type(self) -> str:
         """Return the protocol type."""
         pass
 

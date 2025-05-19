@@ -37,7 +37,7 @@ configure_logging()
 logger = get_logger(__name__)
 
 class A2AProtocol(BaseAgentProtocol):
-    def get_type(self):
+    def type(self):
         return "A2A"
     
     @staticmethod
@@ -69,6 +69,8 @@ class A2AProtocol(BaseAgentProtocol):
             request,
             respond=True,
         )
+
+        print(f"Response from A2A: {response}")
 
         response.payload = json.loads(response.payload.decode('utf-8'))
         card = AgentCard.model_validate(response.payload)
@@ -111,7 +113,7 @@ class A2AProtocol(BaseAgentProtocol):
 
         if transport:
             logger.info(
-                f"Using transport {transport.get_type()} for A2A client {client.agent_card.name}"
+                f"Using transport {transport.type()} for A2A client {client.agent_card.name}"
             )
             topic = self.create_agent_topic(client.agent_card)
 

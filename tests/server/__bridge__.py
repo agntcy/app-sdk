@@ -9,10 +9,16 @@ from a2a.types import (
     AgentSkill,
 )
 import asyncio
+import argparse
 from gateway_sdk.factory import TransportTypes
 from gateway_sdk.factory import GatewayFactory
 
-async def main():
+async def main(transport_type: str, endpoint: str):
+    """
+    This is a simple example of how to create a bridge between an A2A server and a transport.
+    It creates a Hello World agent and sets up the transport to communicate with it.
+    """
+
     skill = AgentSkill(
         id='hello_world',
         name='Returns hello world',
@@ -40,9 +46,14 @@ async def main():
     server = A2AServer(agent_card=agent_card, request_handler=request_handler)
 
     factory = GatewayFactory(enable_tracing=True)
-    transport = factory.create_transport(TransportTypes.NATS.value, "localhost:4222", options={})
+
+    # Create a transport object
+
+    transport = factory.create_transport(transport_type, endpoint)
     bridge = factory.create_bridge(server, transport=transport)
     await bridge.start()
+
+    print(f"Bridge started with transport type: {transport_type} and endpoint: {endpoint}")
 
     """
     Optional if you want A2A default starllet server running as well
@@ -55,18 +66,6 @@ async def main():
     # Serve the app. This is a coroutine.
     await userver.serve()
 
-
-
-
-
-
-
-
-
-
-
-
-
     try:
         # Keep the bridge running
         print("Bridge is running. Press Ctrl+C to exit.")
@@ -75,9 +74,25 @@ async def main():
     except KeyboardInterrupt:
         print("Shutting down...")
 
-    #await server.start(host="0.0.0.0", port=9999)
-
-
 if __name__ == '__main__':
-    print('Running as main')
-    asyncio.run(main())
+    # get transport type from command line argument
+    parser = argparse.ArgumentParser(description="Run the A2A server with a specified transport type.")
+    parser.add_argument(
+        "--transport",
+        type=str,
+        choices=[t.value for t in TransportTypes],
+        default=TransportTypes.NATS.value,
+        help="Transport type to use (default: NATS)",
+    )
+    parser.add_argument(
+        "--endpoint",
+        type=str,
+        default="localhost:4222",
+        help="Endpoint for the transport (default: localhost:4222)",
+    )
+
+    args = parser.parse_args()
+
+    print(f"Using transport type: {args.transport}")
+    
+    asyncio.run(main(args.transport, args.endpoint))

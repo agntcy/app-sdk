@@ -81,12 +81,12 @@ client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_to
 
 Run a sample agent via an A2A server:
 ```bash
-uv run python tests/helloworld/__main__.py 
+uv run python tests/server/__main__.py 
 ```
 
 In a second terminal, run an A2A test client:
 ```bash
-uv run pytest tests/test_a2a.py::test_a2a_factory_client -s
+uv run pytest tests/test_a2a.py::test_default_client -s
 ```
 
 **🚀 Test the gateway factory with A2A over NATS transport**
@@ -98,17 +98,17 @@ uv run python gateway_cli/cli.py up
 
 Run an A2A server with a NATS bridge:
 ```bash
-uv run python tests/helloworld/__bridge__.py
+uv run python tests/server/__bridge__.py
 ```
 
 In a second terminal, run an A2A test client with a NATS transport:
 ```bash
-uv run pytest tests/test_a2a.py::test_a2a_factory_client_with_transport -s
+uv run pytest tests/test_a2a.py::test_client_with_nats_transport -s
 ```
 
 Run an A2A test client, connecting via a Card topic instead of an agent URL:  
 ```bash
-uv run pytest tests/test_a2a.py::test_a2a_factory_client_from_topic -s
+uv run pytest tests/test_a2a.py::test_client_with_nats_from_topic -s
 ```
 
 **🔎 View the agent traces from the Jaeger UI**

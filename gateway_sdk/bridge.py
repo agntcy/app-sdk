@@ -62,6 +62,8 @@ class MessageBridge:
                     respond=False,
                     headers=response.headers,
                 )
+            else:
+                return response
                 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
@@ -72,4 +74,9 @@ class MessageBridge:
                     payload=str(e),
                     reply_to=message.reply_to
                 )
-                await self.transport.send_response(error_response)
+                await self.transport.publish(
+                    topic=message.reply_to,
+                    message=error_response,
+                    respond=False,
+                    headers=message.headers,
+                )

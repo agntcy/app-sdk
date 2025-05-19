@@ -68,9 +68,9 @@ class GatewayFactory:
 
     def create_client(
         self, protocol: str, 
-        agent_url: str = None,
-        agent_topic: str = None,
-        transport: BaseTransport = None,
+        agent_url: str | None = None,
+        agent_topic: str | None = None,
+        transport: BaseTransport | None = None,
         **kwargs
     ):
         """

@@ -40,6 +40,11 @@ class Message:
         self.method = method
         self.headers = headers if headers is not None else {}
         self.status_code = status_code
+
+    def __repr__(self) -> str:
+        return f"Message(type={self.type}, payload={self.payload}, reply_to={self.reply_to}, route_path={self.route_path}, method={self.method}, headers={self.headers}, status_code={self.status_code})"
+    def __str__(self) -> str:
+        return f"Message(type={self.type}, payload={self.payload}, reply_to={self.reply_to}, route_path={self.route_path}, method={self.method}, headers={self.headers}, status_code={self.status_code})"
     
     def serialize(self) -> bytes:
         """

@@ -16,6 +16,32 @@ services:
       - "8222:8222"
     logging: *logging
 
+  agp:
+    image: ghcr.io/agntcy/agp/gw:0.3.14
+    container_name: agp-gateway
+    ports:
+      - "46357:46357"
+    environment:
+      - PASSWORD=${AGP_GATEWAY_PASSWORD:-dummy_password}
+      - CONFIG_PATH=/config.yaml
+    volumes:
+      - ./configs/agp/server-config.yaml:/config.yaml
+    command: ["/gateway", "--config", "/config.yaml"]
+    networks:
+      - gateway
+
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    container_name: mqtt-broker
+    ports:
+      - "1883:1883"     # MQTT
+      - "9001:9001"     # WebSockets (optional)
+    volumes:
+      - ./configs/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+
   otelcol:
     image: otel/opentelemetry-collector-contrib:0.76.1
     container_name: otel-col

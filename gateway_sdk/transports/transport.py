@@ -21,7 +21,7 @@ import asyncio
 
 class BaseTransport(ABC):
     @abstractmethod
-    def get_type(self) -> str:
+    def type(self) -> str:
         """Return the transport type."""
         pass
 
@@ -31,7 +31,7 @@ class BaseTransport(ABC):
         pass
     
     @abstractmethod
-    async def set_callback(
+    def set_callback(
         self, 
         handler: Callable[[Message], asyncio.Future]
     ) -> None:

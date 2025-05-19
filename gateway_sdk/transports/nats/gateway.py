@@ -16,6 +16,7 @@
 
 import asyncio
 import nats
+from nats.aio.client import Client as NATS
 from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.protocols.message import Message
@@ -31,15 +32,20 @@ Nats implementation of BaseTransport.
 """
 
 class NatsGateway(BaseTransport):
-    def __init__(self, endpoint: str, *args, **kwargs):
-        self.type = "NATS"
-        self._nc = None
+    def __init__(self, endpoint: str, client: Optional[NATS] = None, **kwargs):
+        """
+        Initialize the NATS transport with the given endpoint and client.
+        :param endpoint: The NATS server endpoint.
+        :param client: An optional NATS client instance. If not provided, a new one will be created.
+        """
+
+        self._nc = client
         self.endpoint = endpoint
         self._callback = None
         self.subscriptions = []
 
-    def get_type(self) -> str:
-        return self.type
+    def type(self) -> str:
+        return "NATS"
 
     def santize_topic(self, topic: str) -> str:
         """Sanitize the topic name to ensure it is valid for NATS."""
@@ -48,6 +54,11 @@ class NatsGateway(BaseTransport):
         return sanitized_topic
         
     async def _connect(self):
+        """Connect to the NATS server."""
+        if self._nc:
+            logger.info("Already connected to NATS server")
+            return
+        
         self._nc = await nats.connect(
             self.endpoint,
             reconnect_time_wait=2,             # Time between reconnect attempts
