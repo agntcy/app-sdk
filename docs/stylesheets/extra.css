@@ -1,0 +1,44 @@
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  font-weight: 600;
+}
+
+/* move the "Cog" header to the left */
+[dir="ltr"] .md-header__title {
+  margin-left: 0;
+}
+
+/* Remove the superfluous "Cog" label above the TOC */
+.md-nav__title {
+  display: none;
+}
+
+/* A hack to get mkdocs-render-swagger-plugin to play nice with mkdocs dark
+mode. Gets the job done for now */
+[data-md-color-scheme="slate"] h1, [data-md-color-scheme="slate"] h2, [data-md-color-scheme="slate"] h3 {
+  color: var(--scarf-color-font-light) !important;
+}
+
+[data-md-color-scheme="slate"] .swagger-ui .header-example, [data-md-color-scheme="slate"]  p, [data-md-color-scheme="slate"]  .header-col, [data-md-color-scheme="slate"]  .response-col_status, [data-md-color-scheme="slate"]  .tabitem, [data-md-color-scheme="slate"]  .response-col_links, [data-md-color-scheme="slate"]  .response-col_description, [data-md-color-scheme="slate"]  .response+ .response p, [data-md-color-scheme="slate"]  tr+ tr .parameters-col_name, [data-md-color-scheme="slate"]  .parameter__in, [data-md-color-scheme="slate"]  .required, [data-md-color-scheme="slate"]  .parameter__type, [data-md-color-scheme="slate"]  .col_header, [data-md-color-scheme="slate"]  .model-box, [data-md-color-scheme="slate"]  .model-title__text, [data-md-color-scheme="slate"]  .model-title, [data-md-color-scheme="slate"]  .prop-enum, [data-md-color-scheme="slate"]  .opblock-summary-path, [data-md-color-scheme="slate"]  .opblock-summary-description, [data-md-color-scheme="slate"]  .info__license {
+  color: var(--scarf-color-font-light) !important;
+}
+
+[data-md-color-scheme="default"] .md-typeset a,
+[data-md-color-scheme="default"] .md-nav__link--active {
+  color: var(--md-primary-fg-color--light);
+}
+[data-md-color-scheme="slate"] .md-typeset a,
+[data-md-color-scheme="slate"] .md-nav__link--active {
+  color: var(--md-primary-fg-color--dark);
+}
+
+/* Light mode */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #94a3b8;
+}
+
+/* Dark mode */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: rgb(111, 102, 110);
+}
