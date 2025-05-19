@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 @pytest.mark.asyncio
-async def test_a2a_factory_client():
+async def test_default_client():
     """
     Test the A2A factory client creation.
     """
@@ -33,14 +33,14 @@ async def test_a2a_factory_client():
     print(response.model_dump(mode='json', exclude_none=True))
 
 @pytest.mark.asyncio
-async def test_a2a_factory_client_with_transport():
+async def test_client_with_nats_transport():
     """
     Test the A2A factory client creation with transport.
     """
     factory = GatewayFactory(enable_tracing=True)
 
     # Create a Nats transport
-    transport = factory.create_transport("NATS", "localhost:4222", options={})
+    transport = factory.create_transport("NATS", "localhost:4222")
     # or: transport = await nats.connect(self.endpoint)
     # ie: do we support nats.nc object and wrap in the create_client?
 
@@ -71,13 +71,13 @@ async def test_a2a_factory_client_with_transport():
     print("\n=== Transport Closed ===")
 
 @pytest.mark.asyncio
-async def test_a2a_factory_client_from_topic():
+async def test_client_with_nats_from_topic():
     """
     Test the A2A factory client creation.
     """
     factory = GatewayFactory(enable_tracing=True)
 
-    transport = factory.create_transport("NATS", "localhost:4222", options={})
+    transport = factory.create_transport("NATS", "localhost:4222")
 
     #from gateway_sdk.protocols.a2a.gateway import A2AProtocol
     #topic = A2AProtocol.create_agent_topic(card)
@@ -106,3 +106,39 @@ async def test_a2a_factory_client_from_topic():
     print("\n=== Success ===")
 
     await transport.close()
+
+@pytest.mark.asyncio
+async def test_client_with_mqtt_transport():
+    """
+    Test the A2A factory client creation with transport.
+    """
+    factory = GatewayFactory(enable_tracing=True)
+
+    # Create a MQTT transport
+    transport = factory.create_transport("MQTT", "localhost:1883")
+
+    # Create a client with the transport
+    '''client = await factory.create_client(ProtocolTypes.A2A.value, agent_url="http://localhost:9999", transport=transport)
+    
+    assert client is not None
+
+    send_message_payload: dict[str, Any] = {
+        'message': {
+            'role': 'user',
+            'parts': [
+                {'type': 'text', 'text': 'how much is 10 USD in INR?'}
+            ],
+            'messageId': "1234",
+        },
+    }
+
+    response = await client.send_message(payload=send_message_payload)
+    assert response is not None
+
+    print("remote agent responded with: \n", response.model_dump(mode='json', exclude_none=True))
+
+    print("\n=== Success ===")
+
+    await transport.close()
+
+    print("\n=== Transport Closed ===")'''
