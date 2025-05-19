@@ -14,115 +14,177 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from .agp.gateway import AGPGateway
-from .nats.gateway import NatsGateway
-
-from .a2a.gateway import create_client as create_client_a2a
-from .a2a.gateway import create_receiver as create_receiver_a2a
-
-from .ap.gateway import create_client as create_client_ap
-from .ap.gateway import create_receiver as create_receiver_ap
-
-from .mcp.gateway import create_client as create_client_mcp
-from .mcp.gateway import create_receiver as create_receiver_mcp
-
-from .acp.gateway import create_client as create_client_acp
-from .acp.gateway import create_receiver as create_receiver_acp
-
+from typing import Dict, Type
+import os
 from enum import Enum
 
-class Protocol(Enum):
-    """
-    Enum for supported agent protocols.
-    """
-    A2A = "A2A"
-    AP = "AP"
-    MCP = "MCP"
-    ACP = "ACP"
+from gateway_sdk.transports.transport import BaseTransport
+from gateway_sdk.protocols.protocol import BaseAgentProtocol
 
-class Transport(Enum):
-    """
-    Enum for supported transports.
-    """
-    NONE = ""
-    AGP = "AGP"
+from gateway_sdk.transports.agp.gateway import AGPGateway
+from gateway_sdk.transports.nats.gateway import NatsGateway
+
+from gateway_sdk.protocols.a2a.gateway import A2AProtocol
+from a2a.server import A2AServer
+
+from gateway_sdk.bridge import MessageBridge
+
+from gateway_sdk.common.logging_config import configure_logging, get_logger
+from gateway_sdk.common.tracing import init_tracing
+
+configure_logging()
+logger = get_logger(__name__)
+
+# a utility enum class to define transport types as constants
+class ProtocolTypes(Enum):
+    A2A = "A2A"
+
+# a utility enum class to define transport types as constants
+class TransportTypes(Enum):
     NATS = "NATS"
-    # KAFKA = "KAFKA"  # Uncomment if Kafka transport is implemented
-    # MQTT = "MQTT"    # Uncomment if MQTT transport is implemented
+    AGP = "AGP"
+    MQTT = "MQTT"
 
 class GatewayFactory:
     """
     Factory class to create different types of agent gateway transports and protocols.
     """
-    def __init__(self):
-        _clients = {} # do we need to store clients and receivers?
-        _receivers = {}
+    def __init__(self, enable_logging: bool = True, enable_tracing: bool = False):
+        self.enable_logging = enable_logging
+        self.enable_tracing = enable_tracing
+
+        self._transport_registry: Dict[str, Type[BaseTransport]] = {}
+        self._protocol_registry: Dict[str, Type[BaseAgentProtocol]] = {}
+
+        self._clients = {}
+        self._bridges = {}
+
+        self._register_wellknown_transports()
+        self._register_wellknown_protocols()
+
+        if self.enable_tracing:
+            os.environ["TRACING_ENABLED"] = "true"
+            logger.info("Tracing enabled for gateway_sdk")
 
     def create_client(
         self, protocol: str, 
-        agent_endpoint: str, 
-        gateway_endpoint: str = "", 
-        transport: str = "", 
-        auth=None
+        agent_url: str = None,
+        agent_topic: str = None,
+        transport: BaseTransport = None,
+        **kwargs
     ):
+        """
+        Create a client for the specified transport and protocol.
+        """
 
-        gateway = None
-        client = None
-
-        # if transport is specified, match it and create the corresponding gateway
-        try:
-            transport = Transport(transport.upper())
-        except ValueError:
-            raise ValueError(f"Unsupported transport: {transport}")
-
-        match transport:
-            case Transport.NONE:
-                pass # noop
-            case Transport.AGP:
-                gateway = AGPGateway(gateway_endpoint, auth)
-            case Transport.NATS:
-                gateway = NatsGateway(gateway_endpoint, auth)
-       
-        try:
-            protocol = Protocol(protocol.upper())
-        except ValueError:
-            raise ValueError(f"Unsupported protocol: {protocol}")
+        if agent_url is None and agent_topic is None:
+            raise ValueError("Either agent_url or agent_topic must be provided")
         
-        match protocol:
-            case Protocol.A2A:
-                client = create_client_a2a(agent_endpoint, gateway, auth)
-            case Protocol.AP:
-                client = create_client_ap(agent_endpoint, gateway, auth)
-            case Protocol.MCP:
-                client = create_client_mcp(agent_endpoint, gateway, auth)
-            case Protocol.ACP:
-                client = create_client_acp(agent_endpoint, gateway, auth)
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            init_tracing(
+                app_name="gateway_client",
+                collector_url=os.environ.get("COLLECTOR_URL", "http://localhost:4318"),
+                disable_batch=True
+            )
+       
+        # get the protocol class
+        protocol_instance = self.create_protocol(protocol)
 
+        # create the client
+        client = protocol_instance.create_client(url=agent_url, topic=agent_topic, transport=transport)
+
+        key = agent_url if agent_url else agent_topic
+        self._clients[key] = client
+  
         return client
 
-    def create_receiver(
+    def create_bridge(
         self,
-        protocol: str,
-        onMessage: callable,
-        agent_endpoint: str,
-        gateway_endpoint: str = "",
-        transport: str = "",
-        auth: any = None,
-    ):
+        server, # how to we specify the type of server?
+        transport: BaseTransport,
+    ) -> MessageBridge:
         """
-        Create a receiver for the specified transport and protocol.
-
-        Connects to a gateway and offloads messages using the provided protocol.
-
-        Args:
-            protocol (str): The protocol to use for offloading messages.
-            onMessage (callable): Callback function to handle incoming messages.
-            agent_endpoint (str): Endpoint for the agent.
-            gateway_endpoint (str, optional): Endpoint for the gateway. Defaults to "".
-            transport (str, optional): Transport type (e.g., "websocket", "http"). Defaults to "".
-            auth (any, optional): Optional authentication info or credentials.
-
-        Note:
-            - How do we offload messages? Do we have adapters for each protocol?
+        Create a bridge/receiver for the specified transport and protocol.
         """
-        pass
+
+        bridge = None
+        topic = None
+
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            init_tracing(
+                app_name="gateway_bridge",
+                collector_url=os.environ.get("COLLECTOR_URL", "http://localhost:4318"),
+                disable_batch=True
+            )
+
+        # TODO: handle multiple server types and or agent frameworks ie graph
+        if isinstance(server, A2AServer):
+            topic = A2AProtocol.create_agent_topic(server.agent_card)
+            handler = self.create_protocol("A2A").create_ingress_handler(server)
+        else:
+            raise ValueError("Unsupported server type")
+        
+        bridge = MessageBridge(
+            transport=transport,
+            handler=handler,
+            topic=topic,
+        )
+
+        self._bridges[topic] = bridge
+
+        return bridge
+
+    def create_transport(self, transport: str, gateway_endpoint: str, *args, **kwargs):
+        """
+        Get the transport class for the specified transport type. Enables users to
+        instantiate a transport class with a string name.
+        """
+        gateway_class = self._transport_registry.get(transport)
+        if gateway_class is None:
+            raise ValueError(f"No gateway registered for transport type: {transport}")
+        transport = gateway_class(gateway_endpoint, *args, **kwargs)
+        return transport
+    
+    def create_protocol(self, protocol: str):
+        """
+        Get the protocol class for the specified protocol type. Enables users to 
+        instantiate a protocol class with a string name.
+        """
+        protocol_class = self._protocol_registry.get(protocol)
+        if protocol_class is None:
+            raise ValueError(f"No protocol registered for protocol type: {protocol}")
+        # create the protocol instance
+        protocol_instance = protocol_class()
+        return protocol_instance
+
+    @classmethod
+    def register_transport(cls, transport_type: str):
+        """Decorator to register a new transport implementation."""
+        def decorator(transport_class: Type[BaseTransport]):
+            cls.self._transport_registry[transport_type] = transport_class
+            return transport_class
+        return decorator
+    
+    @classmethod
+    def register_protocol(cls, protocol_type: str):
+        """Decorator to register a new protocol implementation."""
+        def decorator(protocol_class: Type[BaseAgentProtocol]):
+            cls.self._protocol_registry[protocol_type] = protocol_class
+            return protocol_class
+        return decorator
+
+    def _register_wellknown_transports(self):
+        """
+        Register well-known transports. New transports can be registered using the register decorator.
+        """
+        self._transport_registry["AGP"] = AGPGateway
+        self._transport_registry["NATS"] = NatsGateway
+
+    def _register_wellknown_protocols(self):
+        """
+        Register well-known protocols. New protocols can be registered using the register decorator.
+        """
+        self._protocol_registry["A2A"] = A2AProtocol
+            
+        
+            

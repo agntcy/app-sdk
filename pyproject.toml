@@ -10,7 +10,11 @@ dependencies = [
     "nats-py>=2.10.0,<3",
     "cisco-outshift-agent-utils>=0.0.2,<0.0.3",
     "coloredlogs>=15.0.1,<16",
-    "python-a2a>=0.5.4",
+    "a2a",
+    "traceloop-sdk>=0.40.5",
+    "langchain-community>=0.3.24",
+    "opentelemetry-instrumentation-starlette>=0.54b0",
+    "click>=8.2.0",
 ]
 
 [dependency-groups]
@@ -29,8 +33,19 @@ dev = [
     "langchain-anthropic>=0.3.12,<0.4",
     "cisco-outshift-agent-utils==0.0.2",
     "langchain-openai>=0.3.14,<0.4",
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.14",
+    "mkdocs-material-extensions>=1.3.1",
+    "markdown-include>=0.8.1",
+    "pymdown-extensions>=10.15",
 ]
+
+[project.scripts]
+gateway-services = "gateway_cli.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+a2a = { git = "https://github.com/google/A2A", subdirectory = "a2a-python-sdk" }

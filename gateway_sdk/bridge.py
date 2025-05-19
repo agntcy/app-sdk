@@ -14,43 +14,62 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from gateway_sdk.transports.transport import BaseTransport
+from gateway_sdk.protocols.message import Message
+from gateway_sdk.common.logging_config import get_logger
+from typing import Callable
 
-# define utilities for onloading and offloading gateway messages to frameworks / protocols
+logger = get_logger(__name__)
 
-def fastapi_bridge(
-    app: FastAPI,
-    settings: APISettings,
-    gateway: Optional[Gateway] = None,
-) -> None:
+class MessageBridge:
+    """
+    Bridge connecting message transport with request handlers.
+    """
+    def __init__(
+        self,
+        transport: BaseTransport,
+        handler: Callable[[Message], Message],
+        topic: str,
+    ):
+        self.transport = transport
+        self.handler = handler
+        self.topic = topic
     
-    # set fastapi app for each gateway type
-    pass
-
-
-async def agp_connect(app: FastAPI, settings: APISettings):
-    """
-    Attempts to connect to the AGP Gateway, logs errors but does not raise.
-    This ensures the REST server remains available even if AGP fails.
-    """
-    try:
-        AGPConfig.gateway_container.set_config(
-            endpoint=settings.AGP_GATEWAY_ENDPOINT, insecure=True
-        )
-        AGPConfig.gateway_container.set_fastapi_app(app)
-
-        _ = await AGPConfig.gateway_container.connect_with_retry(
-            agent_container=AGPConfig.agent_container,
-            max_duration=10,
-            initial_delay=1,
-            remote_agent="server",  # Connect to the server agent
-        )
-
-        await AGPConfig.gateway_container.start_server(
-            agent_container=AGPConfig.agent_container
-        )
-        logger.info("AGP client connected and running.")
-    except RuntimeError as e:
-        logger.error("AGP RuntimeError: %s", e)
-    except Exception as e:
-        logger.error("AGP client connection failed: %s. Continuing without AGP.", e)
+    async def start(self):
+        """Start all components of the bridge."""
+        # Set up message handling flow
+        self.transport.set_callback(self._process_message)
         
+        # Start all components
+        await self.transport.subscribe(self.topic)
+        
+        logger.info("Message bridge started.")
+    
+    async def _process_message(self, message: Message):
+        """Process an incoming message through the handler and send response."""
+        try:
+            # Handle the request
+            response = await self.handler(message)
+            
+            # Send response if reply is expected
+            if message.reply_to:
+                response.reply_to = message.reply_to
+
+                # Send the response back through the transport using publish
+                await self.transport.publish(
+                    topic=response.reply_to,
+                    message=response,
+                    respond=False,
+                    headers=response.headers,
+                )
+                
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            # Send error response if reply is expected
+            if message.reply_to:
+                error_response = Message(
+                    type="error",
+                    payload=str(e),
+                    reply_to=message.reply_to
+                )
+                await self.transport.send_response(error_response)
