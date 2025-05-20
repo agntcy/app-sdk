@@ -41,7 +41,7 @@ dev = [
 ]
 
 [project.scripts]
-gateway-services = "gateway_cli.cli:cli"
+gateway-infra = "gateway_sdk.__cli__:cli"
 
 [build-system]
 requires = ["hatchling"]

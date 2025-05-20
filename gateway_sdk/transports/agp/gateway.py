@@ -163,7 +163,7 @@ class AGPGateway(BaseTransport):
 
     async def _publish(self, org: str, namespace: str, topic: str, message: Message) -> None:
         if not self.gateway:
-            # TODO: create a hash for the topic so its private since we havnt run subscribe
+            # TODO: create a hash for the topic so its private since subscribe hasnt been called
             await self._create_gateway("default", "default", "default")
 
         payload = message.serialize()

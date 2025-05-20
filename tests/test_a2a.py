@@ -114,7 +114,7 @@ async def test_client_with_agp_transport():
     # Create a AGP transport
     transport = factory.create_transport("AGP", "http://localhost:46357")
 
-    client = await factory.create_client(ProtocolTypes.A2A.value, agent_topic="Hello_World_Agent_1.0.0", transport=transport)
+    client = await factory.create_client("A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport)
 
     send_message_payload: dict[str, Any] = {
         'message': {

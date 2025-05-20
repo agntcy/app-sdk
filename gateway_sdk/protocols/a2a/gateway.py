@@ -70,8 +70,6 @@ class A2AProtocol(BaseAgentProtocol):
             respond=True,
         )
 
-        print(f"Response from A2A: {response}")
-
         response.payload = json.loads(response.payload.decode('utf-8'))
         card = AgentCard.model_validate(response.payload)
 
