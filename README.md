@@ -93,7 +93,7 @@ uv run pytest tests/test_a2a.py::test_default_client -s
 
 Run a Nats server and observability stack:
 ```bash
-uv run python gateway_cli/cli.py up
+uv run gateway-infra up
 ```
 
 Run an A2A server with a NATS bridge:
