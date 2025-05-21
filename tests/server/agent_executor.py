@@ -23,12 +23,12 @@ class HelloWorldAgent:
     """Hello World Agent."""
 
     async def invoke(self):
-        return 'Hello World'
+        return "Hello World"
 
     async def stream(self) -> AsyncGenerator[dict[str, Any], None]:
-        yield {'content': 'Hello ', 'done': False}
+        yield {"content": "Hello ", "done": False}
         await asyncio.sleep(2)
-        yield {'content': 'World', 'done': True}
+        yield {"content": "World", "done": True}
 
 
 class HelloWorldAgentExecutor(BaseAgentExecutor):
@@ -63,8 +63,8 @@ class HelloWorldAgentExecutor(BaseAgentExecutor):
         async for chunk in self.agent.stream():
             message: Message = Message(
                 role=Role.agent,
-                parts=[Part(TextPart(text=chunk['content']))],
+                parts=[Part(TextPart(text=chunk["content"]))],
                 messageId=str(uuid4()),
-                final=chunk['done'],
+                final=chunk["done"],
             )
             event_queue.enqueue_event(message)

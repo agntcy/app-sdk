@@ -19,17 +19,25 @@ from typing import Any, Callable
 from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.protocols.message import Message
 
+
 class BaseAgentProtocol(ABC):
     """
     Base class for different agent protocols.
     """
+
     @abstractmethod
     def type(self) -> str:
         """Return the protocol type."""
         pass
 
     @abstractmethod
-    def create_client(self, url: str = None, topic: str = None, transport: BaseTransport = None, **kwargs) -> Any:
+    def create_client(
+        self,
+        url: str = None,
+        topic: str = None,
+        transport: BaseTransport = None,
+        **kwargs,
+    ) -> Any:
         """Create a client for the protocol."""
         pass
 

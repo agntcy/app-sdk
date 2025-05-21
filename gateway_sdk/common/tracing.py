@@ -19,11 +19,10 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from opentelemetry.propagate import set_global_textmap
 from os import environ
 
+
 def init_tracing(
-        app_name: str, 
-        collector_url="http://localhost:4318", 
-        disable_batch: bool = True
-    ) -> None:
+    app_name: str, collector_url="http://localhost:4318", disable_batch: bool = True
+) -> None:
     """
     Initialize Traceloop for observability.
     This function sets up the Traceloop SDK for tracing and observability.
@@ -31,7 +30,7 @@ def init_tracing(
         app_name (str): The name of the application for which tracing is being initialized.
         disable_batch (bool): If True, disables batch processing of traces. Defaults to True.
     """
-    
+
     # Initialize Traceloop for observability
     environ["TRACELOOP_BASE_URL"] = collector_url
     Traceloop.init(app_name=app_name, disable_batch=disable_batch)

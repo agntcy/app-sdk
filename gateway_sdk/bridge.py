@@ -21,10 +21,12 @@ from typing import Callable
 
 logger = get_logger(__name__)
 
+
 class MessageBridge:
     """
     Bridge connecting message transport with request handlers.
     """
+
     def __init__(
         self,
         transport: BaseTransport,
@@ -34,23 +36,23 @@ class MessageBridge:
         self.transport = transport
         self.handler = handler
         self.topic = topic
-    
+
     async def start(self):
         """Start all components of the bridge."""
         # Set up message handling flow
         self.transport.set_callback(self._process_message)
-        
+
         # Start all components
         await self.transport.subscribe(self.topic)
-        
+
         logger.info("Message bridge started.")
-    
+
     async def _process_message(self, message: Message):
         """Process an incoming message through the handler and send response."""
         try:
             # Handle the request
             response = await self.handler(message)
-            
+
             # Send response if reply is expected
             if message.reply_to:
                 response.reply_to = message.reply_to
@@ -64,15 +66,13 @@ class MessageBridge:
                 )
             else:
                 return response
-                
+
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             # Send error response if reply is expected
             if message.reply_to:
                 error_response = Message(
-                    type="error",
-                    payload=str(e),
-                    reply_to=message.reply_to
+                    type="error", payload=str(e), reply_to=message.reply_to
                 )
                 await self.transport.publish(
                     topic=message.reply_to,

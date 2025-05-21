@@ -19,7 +19,6 @@ import agp_bindings
 from agp_bindings import GatewayConfig
 import asyncio
 import inspect
-import json
 from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.transports.transport import BaseTransport, Message
 
@@ -31,18 +30,19 @@ Implementations of the BaseGateway class for different protocols.
 These classes should implement the abstract methods defined in BaseGateway.
 """
 
+
 class AGPGateway(BaseTransport):
     """
     AGP Gateway implementation using the agp_bindings library.
     """
+
     def __init__(
-        self, 
-        client = None,
+        self,
+        client=None,
         endpoint: Optional[str] = None,
-        default_org: str = "default", 
-        default_namespace: str = "default"
+        default_org: str = "default",
+        default_namespace: str = "default",
     ) -> None:
-        
         self._endpoint = endpoint
         self._gateway = client
         self._callback = None
@@ -59,14 +59,10 @@ class AGPGateway(BaseTransport):
     def from_client(cls, client, org="default", namespace="default") -> "AGPGateway":
         # Optionally validate client
         return cls(client=client, default_org=org, default_namespace=namespace)
-    
+
     @classmethod
     def from_config(
-        cls,
-        endpoint: str,
-        org: str = "default",
-        namespace: str = "default",
-        **kwargs
+        cls, endpoint: str, org: str = "default", namespace: str = "default", **kwargs
     ) -> "AGPGateway":
         """
         Create a AGP transport instance from a configuration.
@@ -75,28 +71,27 @@ class AGPGateway(BaseTransport):
         :param namespace: The namespace name.
         :param kwargs: Additional configuration parameters.
         """
-        return cls(endpoint=endpoint, default_org=org, default_namespace=namespace, **kwargs)
+        return cls(
+            endpoint=endpoint, default_org=org, default_namespace=namespace, **kwargs
+        )
 
     def type(self) -> str:
         """Return the transport type."""
         return "AGP"
 
     async def close(self) -> None:
-       pass
+        pass
 
-    def set_callback(
-        self, 
-        handler: Callable[[Message], asyncio.Future]
-    ) -> None:
+    def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
         self._callback = handler
 
     async def publish(
-        self, 
-        topic: str, 
-        message: Message, 
+        self,
+        topic: str,
+        message: Message,
         respond: Optional[bool] = False,
-        headers: Optional[Dict[str, str]] = None
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Publish a message to a topic."""
         topic = self.santize_topic(topic)
@@ -104,7 +99,7 @@ class AGPGateway(BaseTransport):
         logger.debug(f"Publishing {message.payload} to topic: {topic}")
 
         if respond:
-            message.reply_to = topic # TODO: set this appropriately
+            message.reply_to = topic  # TODO: set this appropriately
 
         resp = await self._publish(
             org=self._default_org,
@@ -140,7 +135,9 @@ class AGPGateway(BaseTransport):
 
     async def _create_gateway(self, org: str, namespace: str, topic: str) -> None:
         # create new gateway object
-        logger.info(f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}")
+        logger.info(
+            f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}"
+        )
         self._gateway = await agp_bindings.Gateway.new(org, namespace, topic)
 
         # Configure gateway
@@ -165,13 +162,13 @@ class AGPGateway(BaseTransport):
                     while True:
                         # Receive the message from the session
                         session, msg = await self._gateway.receive(session=session_id)
-                        
+
                         msg = Message.deserialize(msg)
 
                         logger.debug(f"Received message: {msg}")
 
                         reply_to = msg.reply_to
-                        msg.reply_to = None # we will handle reply with the session
+                        msg.reply_to = None  # we will handle reply with the session
 
                         if inspect.iscoroutinefunction(self._callback):
                             output = await self._callback(msg)
@@ -183,9 +180,11 @@ class AGPGateway(BaseTransport):
 
                 asyncio.create_task(background_task(session_info.id))
 
-    async def _publish(self, org: str, namespace: str, topic: str, message: Message) -> None:
+    async def _publish(
+        self, org: str, namespace: str, topic: str, message: Message
+    ) -> None:
         if not self._gateway:
-            # TODO: create a hash for the topic so its private since subscribe hasnt been called
+            # TODO: create a hash for the topic so its private since subscribe hasn't been called
             await self._create_gateway("default", "default", "default")
 
         payload = message.serialize()
@@ -196,13 +195,15 @@ class AGPGateway(BaseTransport):
             await self._gateway.set_route(org, namespace, topic)
 
             # create a session
-            session = await self._gateway.create_ff_session(agp_bindings.PyFireAndForgetConfiguration())
+            session = await self._gateway.create_ff_session(
+                agp_bindings.PyFireAndForgetConfiguration()
+            )
 
             # Send the message
             await self._gateway.publish(
                 session,
                 message.serialize(),
-                org,    
+                org,
                 namespace,
                 topic,
             )

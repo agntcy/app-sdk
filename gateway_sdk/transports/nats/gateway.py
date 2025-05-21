@@ -31,8 +31,11 @@ logger = get_logger(__name__)
 Nats implementation of BaseTransport.
 """
 
+
 class NatsGateway(BaseTransport):
-    def __init__(self, client: Optional[NATS] = None, endpoint: Optional[str] = None, **kwargs):
+    def __init__(
+        self, client: Optional[NATS] = None, endpoint: Optional[str] = None, **kwargs
+    ):
         """
         Initialize the NATS transport with the given endpoint and client.
         :param endpoint: The NATS server endpoint.
@@ -53,7 +56,7 @@ class NatsGateway(BaseTransport):
     def from_client(cls, client: NATS) -> "NatsGateway":
         # Optionally validate client
         return cls(client=client)
-    
+
     @classmethod
     def from_config(cls, endpoint: str, **kwargs) -> "NatsGateway":
         """
@@ -71,17 +74,17 @@ class NatsGateway(BaseTransport):
         # NATS topics should not contain spaces or special characters
         sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
-        
+
     async def _connect(self):
         """Connect to the NATS server."""
         if self._nc is not None and self._nc.is_connected:
             logger.info("Already connected to NATS server")
             return
-        
+
         self._nc = await nats.connect(
             self.endpoint,
-            reconnect_time_wait=2,             # Time between reconnect attempts
-            max_reconnect_attempts=30,         # Retry for 2 minutes before giving up
+            reconnect_time_wait=2,  # Time between reconnect attempts
+            max_reconnect_attempts=30,  # Retry for 2 minutes before giving up
             error_cb=self.error_cb,
             closed_cb=self.closed_cb,
             disconnected_cb=self.disconnected_cb,
@@ -100,10 +103,7 @@ class NatsGateway(BaseTransport):
         else:
             logger.warning("No NATS connection to close")
 
-    def set_callback(
-        self, 
-        callback: Callable[[Message], asyncio.Future]
-    ) -> None:
+    def set_callback(self, callback: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
         self._callback = callback
 
@@ -113,21 +113,21 @@ class NatsGateway(BaseTransport):
         """Subscribe to a topic with a callback."""
         if self._nc is None:
             await self._connect()
-        
+
         if not self._callback:
             raise ValueError("Message handler must be set before starting transport")
-        
+
         sub = await self._nc.subscribe(topic, cb=self._message_handler)
         self.subscriptions.append(sub)
         logger.info(f"Subscribed to topic: {topic}")
 
     async def publish(
-        self, 
-        topic: str, 
-        message: Message, 
+        self,
+        topic: str,
+        message: Message,
         respond: Optional[bool] = False,
         headers: Optional[Dict[str, str]] = None,
-        timeout = 5
+        timeout=5,
     ) -> None:
         """Publish a message to a topic."""
         topic = self.santize_topic(topic)
@@ -146,7 +146,6 @@ class NatsGateway(BaseTransport):
         ctx = extract(message.headers)
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("nats_publish", context=ctx):
-
             inject(carrier=headers)
 
             # add tracing headers to the message
@@ -158,7 +157,7 @@ class NatsGateway(BaseTransport):
                         self.santize_topic(topic),
                         message.serialize(),
                         headers=headers,
-                        timeout=timeout
+                        timeout=timeout,
                     )
 
                     message = Message.deserialize(resp.data)
@@ -171,9 +170,6 @@ class NatsGateway(BaseTransport):
             except nats.errors.TimeoutError:
                 logger.error(f"Timeout while publishing to {topic}")
                 raise
-            except nats.errors.NatsError as e:
-                logger.error(f"NATS error while publishing to {topic}: {e}")
-                raise
             except Exception as e:
                 logger.error(f"Unexpected error while publishing to {topic}: {e}")
                 raise
@@ -181,11 +177,11 @@ class NatsGateway(BaseTransport):
     async def _message_handler(self, nats_msg):
         """Internal handler for NATS messages."""
         message = Message.deserialize(nats_msg.data)
-        
+
         # Add reply_to from NATS message if not in payload
         if nats_msg.reply and not message.reply_to:
             message.reply_to = nats_msg.reply
-            
+
         # Process the message with the registered handler
         if self._callback:
             await self._callback(message)

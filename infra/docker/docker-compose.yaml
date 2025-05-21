@@ -5,7 +5,6 @@ x-default-logging: &logging
     max-file: "2"
 
 services:
-
   nats:
     image: nats:latest
     container_name: nats
@@ -34,8 +33,8 @@ services:
     image: eclipse-mosquitto:2.0
     container_name: mqtt-broker
     ports:
-      - "1883:1883"     # MQTT
-      - "9001:9001"     # WebSockets (optional)
+      - "1883:1883" # MQTT
+      - "9001:9001" # WebSockets (optional)
     volumes:
       - ./configs/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/data:/mosquitto/data
@@ -50,16 +49,16 @@ services:
         limits:
           memory: 125M
     restart: unless-stopped
-    command: [ "--config=/etc/otelcol-config.yml" ]
+    command: ["--config=/etc/otelcol-config.yml"]
     environment:
       - JAEGER_SERVICE_HOST=jaeger
     volumes:
       - ./configs/otelcollector/otelcol-config.yml:/etc/otelcol-config.yml
     ports:
-      - "4317:4317"     # OTLP over gRPC receiver
-      - "4318:4318"     # OTLP over HTTP receiver
-      - "9464"          # Prometheus exporter
-      - "8888"          # metrics endpoint
+      - "4317:4317" # OTLP over gRPC receiver
+      - "4318:4318" # OTLP over HTTP receiver
+      - "9464" # Prometheus exporter
+      - "8888" # metrics endpoint
     networks:
       - gateway
     depends_on:
@@ -87,7 +86,7 @@ services:
     networks:
       - gateway
     ports:
-      - "9090:9090"     # Prometheus UI
+      - "9090:9090" # Prometheus UI
     logging: *logging
 
   jaeger:
@@ -109,7 +108,7 @@ services:
       - gateway
     ports:
       - "16686:16686" # Jaeger UI
-      - "4317"                           # OTLP gRPC default port
+      - "4317" # OTLP gRPC default port
     environment:
       - COLLECTOR_OTLP_ENABLED=true
       - METRICS_STORAGE_TYPE=prometheus
