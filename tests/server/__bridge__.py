@@ -48,12 +48,9 @@ async def main(transport_type: str, endpoint: str):
     factory = GatewayFactory(enable_tracing=True)
 
     # Create a transport object
-
-    transport = factory.create_transport(transport_type, endpoint)
+    transport = factory.create_transport(transport_type, endpoint=endpoint)
     bridge = factory.create_bridge(server, transport=transport)
     await bridge.start()
-
-    print(f"Bridge started with transport type: {transport_type} and endpoint: {endpoint}")
 
     """
     Optional if you want A2A default starllet server running as well

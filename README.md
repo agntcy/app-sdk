@@ -20,8 +20,9 @@ A factory package designed to simplify agent communication across various protoc
 **📡 Supported Messaging Transports**  
 
 - [x] NATS  
-- [ ] AGP *(coming soon)*  
+- [x] AGP
 - [ ] MQTT *(coming soon)*  
+- [ ] WebSocket *(coming soon)*  
 
 
 ### Architecture

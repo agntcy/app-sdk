@@ -32,17 +32,36 @@ Nats implementation of BaseTransport.
 """
 
 class NatsGateway(BaseTransport):
-    def __init__(self, endpoint: str, client: Optional[NATS] = None, **kwargs):
+    def __init__(self, client: Optional[NATS] = None, endpoint: Optional[str] = None, **kwargs):
         """
         Initialize the NATS transport with the given endpoint and client.
         :param endpoint: The NATS server endpoint.
         :param client: An optional NATS client instance. If not provided, a new one will be created.
         """
 
+        if not endpoint and not client:
+            raise ValueError("Either endpoint or client must be provided")
+        if client and not isinstance(client, NATS):
+            raise ValueError("Client must be an instance of nats.aio.client.Client")
+
         self._nc = client
         self.endpoint = endpoint
         self._callback = None
         self.subscriptions = []
+
+    @classmethod
+    def from_client(cls, client: NATS) -> "NatsGateway":
+        # Optionally validate client
+        return cls(client=client)
+    
+    @classmethod
+    def from_config(cls, endpoint: str, **kwargs) -> "NatsGateway":
+        """
+        Create a NATS transport instance from a configuration.
+        :param gateway_endpoint: The NATS server endpoint.
+        :param kwargs: Additional configuration parameters.
+        """
+        return cls(endpoint=endpoint, **kwargs)
 
     def type(self) -> str:
         return "NATS"
@@ -55,7 +74,7 @@ class NatsGateway(BaseTransport):
         
     async def _connect(self):
         """Connect to the NATS server."""
-        if self._nc:
+        if self._nc is not None and self._nc.is_connected:
             logger.info("Already connected to NATS server")
             return
         

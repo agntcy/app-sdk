@@ -17,9 +17,30 @@
 from abc import ABC, abstractmethod
 from gateway_sdk.protocols.message import Message
 from typing import Callable, Dict, Optional
+from typing import Any, TypeVar, Type
 import asyncio
 
+T = TypeVar("T", bound="BaseTransport")
+
 class BaseTransport(ABC):
+    """
+    Abstract base class for transport protocols.
+    This class defines the interface for different transport protocols
+    such as AGP, NATS, MQTT, etc.
+    """
+
+    @classmethod
+    @abstractmethod
+    def from_client(cls: Type[T], client: Any) -> T:
+        """Create a transport instance from a client."""
+        pass
+
+    @classmethod
+    @abstractmethod
+    def from_config(cls: Type[T], endpoint: str, **kwargs) -> T:
+        """Create a transport instance from a configuration."""
+        pass
+    
     @abstractmethod
     def type(self) -> str:
         """Return the transport type."""

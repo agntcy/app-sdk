@@ -40,7 +40,7 @@ async def test_client_with_nats_transport():
     factory = GatewayFactory(enable_tracing=True)
 
     # Create a Nats transport
-    transport = factory.create_transport("NATS", "localhost:4222")
+    transport = factory.create_transport("NATS", endpoint="localhost:4222")
     # or: transport = await nats.connect(self.endpoint)
     # ie: do we support nats.nc object and wrap in the create_client?
 
@@ -77,7 +77,7 @@ async def test_client_with_nats_from_topic():
     """
     factory = GatewayFactory(enable_tracing=True)
 
-    transport = factory.create_transport("NATS", "localhost:4222")
+    transport = factory.create_transport("NATS", endpoint="localhost:4222")
 
     #from gateway_sdk.protocols.a2a.gateway import A2AProtocol
     #topic = A2AProtocol.create_agent_topic(card)
@@ -112,7 +112,7 @@ async def test_client_with_agp_transport():
     factory = GatewayFactory()
 
     # Create a AGP transport
-    transport = factory.create_transport("AGP", "http://localhost:46357")
+    transport = factory.create_transport("AGP", endpoint="http://localhost:46357")
 
     client = await factory.create_client("A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport)
 

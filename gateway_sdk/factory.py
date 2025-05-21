@@ -41,8 +41,8 @@ class ProtocolTypes(Enum):
 
 # a utility enum class to define transport types as constants
 class TransportTypes(Enum):
-    NATS = "NATS"
     AGP = "AGP"
+    NATS = "NATS"
     MQTT = "MQTT"
 
 class GatewayFactory:
@@ -117,6 +117,8 @@ class GatewayFactory:
                 disable_batch=True
             )
 
+        # TODO: handle litserve integration
+
         # TODO: handle multiple server types and or agent frameworks ie graph
         if isinstance(server, A2AServer):
             topic = A2AProtocol.create_agent_topic(server.agent_card)
@@ -134,15 +136,24 @@ class GatewayFactory:
 
         return bridge
 
-    def create_transport(self, transport: str, gateway_endpoint: str, *args, **kwargs):
+    def create_transport(self, transport: str, client=None, endpoint: str = None):
         """
         Get the transport class for the specified transport type. Enables users to
-        instantiate a transport class with a string name.
+        instantiate a transport class with a string name or a client instance.
         """
+        if not client and not endpoint:
+            raise ValueError("Either client or endpoint must be provided")
+
         gateway_class = self._transport_registry.get(transport)
         if gateway_class is None:
             raise ValueError(f"No gateway registered for transport type: {transport}")
-        transport = gateway_class(gateway_endpoint, *args, **kwargs)
+        
+        if client:
+            # create the transport instance from the client
+            transport = gateway_class.from_client(client)
+        else:
+            transport = gateway_class.from_config(endpoint)
+
         return transport
     
     def create_protocol(self, protocol: str):

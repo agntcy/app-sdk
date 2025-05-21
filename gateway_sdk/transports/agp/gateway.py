@@ -37,14 +37,14 @@ class AGPGateway(BaseTransport):
     """
     def __init__(
         self, 
-        endpoint: str, 
-        gateway=None, 
+        client = None,
+        endpoint: Optional[str] = None,
         default_org: str = "default", 
         default_namespace: str = "default"
     ) -> None:
         
-        self.endpoint = endpoint
-        self.gateway = None
+        self._endpoint = endpoint
+        self._gateway = client
         self._callback = None
         self._default_org = default_org
         self._default_namespace = default_namespace
@@ -54,6 +54,28 @@ class AGPGateway(BaseTransport):
     # ###################################################
     # BaseTransport interface methods
     # ###################################################
+
+    @classmethod
+    def from_client(cls, client, org="default", namespace="default") -> "AGPGateway":
+        # Optionally validate client
+        return cls(client=client, default_org=org, default_namespace=namespace)
+    
+    @classmethod
+    def from_config(
+        cls,
+        endpoint: str,
+        org: str = "default",
+        namespace: str = "default",
+        **kwargs
+    ) -> "AGPGateway":
+        """
+        Create a AGP transport instance from a configuration.
+        :param endpoint: The AGP server endpoint.
+        :param org: The organization name.
+        :param namespace: The namespace name.
+        :param kwargs: Additional configuration parameters.
+        """
+        return cls(endpoint=endpoint, default_org=org, default_namespace=namespace, **kwargs)
 
     def type(self) -> str:
         """Return the transport type."""
@@ -119,30 +141,30 @@ class AGPGateway(BaseTransport):
     async def _create_gateway(self, org: str, namespace: str, topic: str) -> None:
         # create new gateway object
         logger.info(f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}")
-        self.gateway = await agp_bindings.Gateway.new(org, namespace, topic)
+        self._gateway = await agp_bindings.Gateway.new(org, namespace, topic)
 
         # Configure gateway
-        config = GatewayConfig(endpoint=self.endpoint, insecure=True)
-        self.gateway.configure(config)
+        config = GatewayConfig(endpoint=self._endpoint, insecure=True)
+        self._gateway.configure(config)
 
         # Connect to remote gateway server
-        _ = await self.gateway.connect()
+        _ = await self._gateway.connect()
 
-        logger.info(f"connected to gateway @{self.endpoint}")
+        logger.info(f"connected to gateway @{self._endpoint}")
 
     async def _subscribe(self, org: str, namespace: str, topic: str) -> None:
-        if not self.gateway:
+        if not self._gateway:
             await self._create_gateway(org, namespace, topic)
 
-        async with self.gateway:
+        async with self._gateway:
             # Wait for a message and reply in a loop
             while True:
-                session_info, _ = await self.gateway.receive()
+                session_info, _ = await self._gateway.receive()
 
                 async def background_task(session_id):
                     while True:
                         # Receive the message from the session
-                        session, msg = await self.gateway.receive(session=session_id)
+                        session, msg = await self._gateway.receive(session=session_id)
                         
                         msg = Message.deserialize(msg)
 
@@ -157,27 +179,27 @@ class AGPGateway(BaseTransport):
                             output = self._callback(msg)
 
                         if reply_to:
-                            await self.gateway.publish_to(session, output.serialize())
+                            await self._gateway.publish_to(session, output.serialize())
 
                 asyncio.create_task(background_task(session_info.id))
 
     async def _publish(self, org: str, namespace: str, topic: str, message: Message) -> None:
-        if not self.gateway:
+        if not self._gateway:
             # TODO: create a hash for the topic so its private since subscribe hasnt been called
             await self._create_gateway("default", "default", "default")
 
         payload = message.serialize()
         logger.debug(f"Publishing {payload} to topic: {topic}")
 
-        async with self.gateway:
+        async with self._gateway:
             # Create a route to the remote ID
-            await self.gateway.set_route(org, namespace, topic)
+            await self._gateway.set_route(org, namespace, topic)
 
             # create a session
-            session = await self.gateway.create_ff_session(agp_bindings.PyFireAndForgetConfiguration())
+            session = await self._gateway.create_ff_session(agp_bindings.PyFireAndForgetConfiguration())
 
             # Send the message
-            await self.gateway.publish(
+            await self._gateway.publish(
                 session,
                 message.serialize(),
                 org,    
@@ -186,6 +208,6 @@ class AGPGateway(BaseTransport):
             )
 
             if message.reply_to:
-                session_info, msg = await self.gateway.receive(session=session.id)
+                session_info, msg = await self._gateway.receive(session=session.id)
                 response = Message.deserialize(msg)
                 return response
