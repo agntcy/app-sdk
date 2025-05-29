@@ -25,7 +25,7 @@ from gateway_sdk.transports.agp.gateway import AGPGateway
 from gateway_sdk.transports.nats.gateway import NatsGateway
 
 from gateway_sdk.protocols.a2a.gateway import A2AProtocol
-from a2a.server import A2AServer
+from a2a.server.apps import A2AStarletteApplication
 
 from gateway_sdk.bridge import MessageBridge
 
@@ -107,7 +107,7 @@ class GatewayFactory:
 
     def create_bridge(
         self,
-        server,  # how to we specify the type of server?
+        server,  # add type hints for server, e.g., A2AStarletteApplication
         transport: BaseTransport,
     ) -> MessageBridge:
         """
@@ -127,7 +127,7 @@ class GatewayFactory:
         # TODO: handle litserve integration
 
         # TODO: handle multiple server types and or agent frameworks ie graph
-        if isinstance(server, A2AServer):
+        if isinstance(server, A2AStarletteApplication):
             topic = A2AProtocol.create_agent_topic(server.agent_card)
             handler = self.create_protocol("A2A").create_ingress_handler(server)
         else:

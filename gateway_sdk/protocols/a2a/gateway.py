@@ -24,8 +24,8 @@ from opentelemetry.propagate import inject, extract
 from opentelemetry import trace
 
 from a2a.client import A2AClient, A2ACardResolver
-from a2a.server import A2AServer
-from a2a.types import A2ARequest, AgentCard
+from a2a.server.apps import A2AStarletteApplication
+from a2a.types import AgentCard
 
 from gateway_sdk.protocols.protocol import BaseAgentProtocol
 from gateway_sdk.transports.transport import BaseTransport
@@ -122,50 +122,49 @@ class A2AProtocol(BaseAgentProtocol):
             )
             topic = self.create_agent_topic(client.agent_card)
 
-            async def _send_request(request: A2ARequest) -> None:
+            async def _send_request(
+                rpc_request_payload: dict[str, Any],
+                http_kwargs: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
                 """
                 Send a request using the provided transport.
                 """
-                headers = {}
-                tracer = trace.get_tracer(__name__)
-                with tracer.start_as_current_span("a2a_send_request"):
-                    # add tracing headers to the message
-                    inject(carrier=headers)
+                response = await transport.publish(
+                    topic,
+                    self.message_translator(request=rpc_request_payload),
+                    respond=True,
+                    headers={},
+                )
 
-                    response = await transport.publish(
-                        topic,
-                        self.message_translator(request),
-                        respond=True,
-                        headers=headers,
-                    )
-
-                    response.payload = json.loads(response.payload.decode("utf-8"))
-                    return response.payload
+                response.payload = json.loads(response.payload.decode("utf-8"))
+                return response.payload
 
             # override the _send_request method to use the provided transport
             client._send_request = _send_request
 
         return client
 
-    def message_translator(self, request: A2ARequest) -> Message:
+    def message_translator(self, request: dict[str, Any]) -> Message:
         """
         Translate an A2A request into our internal Message object.
         """
         message = Message(
             type="A2ARequest",
-            payload=json.dumps(request.root.model_dump(mode="json")),
+            payload=json.dumps(request),
             route_path="/",  # json-rpc path
             method="POST",  # A2A json-rpc will always use POST
         )
 
         return message
 
-    def create_ingress_handler(self, server: A2AServer) -> Callable[[Message], Message]:
+    def create_ingress_handler(
+        self, server: A2AStarletteApplication
+    ) -> Callable[[Message], Message]:
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.
         """
         # Create an ASGI adapter
-        self._app = server.app()
+        self._app = server.build()
 
         if environ.get("TRACING_ENABLED", "false").lower() == "true":
             StarletteInstrumentor().instrument_app(self._app)

@@ -16,6 +16,7 @@
 
 from typing import Optional, Dict, Callable
 import agp_bindings
+from agp_bindings import GatewayConfig
 import asyncio
 import inspect
 from gateway_sdk.common.logging_config import configure_logging, get_logger
@@ -39,22 +40,14 @@ class AGPGateway(BaseTransport):
         self,
         client=None,
         endpoint: Optional[str] = None,
-        local_id: Optional[str] = None,
+        default_org: str = "default",
+        default_namespace: str = "default",
     ) -> None:
         self._endpoint = endpoint
-        self._participant = client
+        self._gateway = client
         self._callback = None
-
-        if not local_id:
-            raise ValueError(
-                "local_id must be provided in the format 'organization/namespace/agent'"
-            )
-
-        local_organization, local_namespace, local_agent = self.split_id(local_id)
-
-        self._local_org = local_organization
-        self._local_namespace = local_namespace
-        self._local_agent = local_agent
+        self._default_org = default_org
+        self._default_namespace = default_namespace
 
         logger.info(f"AGPGateway initialized with endpoint: {endpoint}")
 
@@ -63,21 +56,24 @@ class AGPGateway(BaseTransport):
     # ###################################################
 
     @classmethod
-    def from_client(cls, client) -> "AGPGateway":
+    def from_client(cls, client, org="default", namespace="default") -> "AGPGateway":
         # Optionally validate client
-        return cls(client=client)
+        return cls(client=client, default_org=org, default_namespace=namespace)
 
     @classmethod
     def from_config(
-        cls, endpoint: str, local_id: str, enable_tracing: bool = False, **kwargs
+        cls, endpoint: str, org: str = "default", namespace: str = "default", **kwargs
     ) -> "AGPGateway":
         """
         Create a AGP transport instance from a configuration.
         :param endpoint: The AGP server endpoint.
-        :param local_id: The local identifier for the gateway, in the format "organization/namespace/agent".
+        :param org: The organization name.
+        :param namespace: The namespace name.
         :param kwargs: Additional configuration parameters.
         """
-        return cls(endpoint=endpoint, local_id=local_id, **kwargs)
+        return cls(
+            endpoint=endpoint, default_org=org, default_namespace=namespace, **kwargs
+        )
 
     def type(self) -> str:
         """Return the transport type."""
@@ -89,18 +85,6 @@ class AGPGateway(BaseTransport):
     def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
         self._callback = handler
-
-    async def subscribe(self, topic: str) -> None:
-        """Subscribe to a topic with a callback."""
-        topic = self.santize_topic(topic)
-
-        await self._subscribe(
-            org=self._default_org,
-            namespace=self._default_namespace,
-            topic=topic,
-        )
-
-        logger.info(f"Subscribed to topic: {topic}")
 
     async def publish(
         self,
@@ -127,21 +111,21 @@ class AGPGateway(BaseTransport):
         if respond:
             return resp
 
+    async def subscribe(self, topic: str) -> None:
+        """Subscribe to a topic with a callback."""
+        topic = self.santize_topic(topic)
+
+        await self._subscribe(
+            org=self._default_org,
+            namespace=self._default_namespace,
+            topic=topic,
+        )
+
+        logger.info(f"Subscribed to topic: {topic}")
+
     # ###################################################
     # AGP specific methods
     # ###################################################
-
-    def split_id(self, id):
-        # Split the IDs into their respective components
-        try:
-            local_organization, local_namespace, local_agent = id.split("/")
-        except ValueError as e:
-            logger.error(
-                "Error: IDs must be in the format organization/namespace/agent."
-            )
-            raise e
-
-        return local_organization, local_namespace, local_agent
 
     def santize_topic(self, topic: str) -> str:
         """Sanitize the topic name to ensure it is valid for NATS."""
@@ -149,32 +133,25 @@ class AGPGateway(BaseTransport):
         sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
 
-    async def _create_gateway_participant(
-        self, org: str, namespace: str, topic: str
-    ) -> None:
-        """"""
-
+    async def _create_gateway(self, org: str, namespace: str, topic: str) -> None:
+        # create new gateway object
         logger.info(
-            f"Creating new gateway participant for org: {org}, namespace: {namespace}, topic: {topic}"
+            f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}"
         )
+        self._gateway = await agp_bindings.Gateway.new(org, namespace, topic)
 
-        self._participant = await agp_bindings.Gateway.new(org, namespace, topic)
+        # Configure gateway
+        config = GatewayConfig(endpoint=self._endpoint, insecure=True)
+        self._gateway.configure(config)
 
-        # Connect to gateway server
-        _ = await self._participant.connect(
-            {
-                "endpoint": self._endpoint,
-                "tls": {"insecure": True},
-            }  # TDO: Add TLS configuration from kwargs
-        )
+        # Connect to remote gateway server
+        _ = await self._gateway.connect()
 
         logger.info(f"connected to gateway @{self._endpoint}")
 
     async def _subscribe(self, org: str, namespace: str, topic: str) -> None:
-        # if not self._gateway:
-        #    await self._create_gateway(org, namespace, topic)
-        if not self._participant:
-            await self._create_gateway_participant(org, namespace, topic)
+        if not self._gateway:
+            await self._create_gateway(org, namespace, topic)
 
         async with self._gateway:
             # Wait for a message and reply in a loop

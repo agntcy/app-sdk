@@ -1,70 +1,28 @@
-import asyncio
-
-from collections.abc import AsyncGenerator
-from typing import Any
-from uuid import uuid4
-
-from typing_extensions import override
-
-from a2a.server.agent_execution import BaseAgentExecutor
+from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.types import (
-    Message,
-    Part,
-    Role,
-    SendMessageRequest,
-    SendStreamingMessageRequest,
-    Task,
-    TextPart,
-)
+from a2a.utils import new_agent_text_message
 
 
 class HelloWorldAgent:
     """Hello World Agent."""
 
-    async def invoke(self):
+    async def invoke(self) -> str:
         return "Hello World"
 
-    async def stream(self) -> AsyncGenerator[dict[str, Any], None]:
-        yield {"content": "Hello ", "done": False}
-        await asyncio.sleep(2)
-        yield {"content": "World", "done": True}
 
-
-class HelloWorldAgentExecutor(BaseAgentExecutor):
+class HelloWorldAgentExecutor(AgentExecutor):
     """Test AgentProxy Implementation."""
 
     def __init__(self):
         self.agent = HelloWorldAgent()
 
-    @override
-    async def on_message_send(
+    async def execute(
         self,
-        request: SendMessageRequest,
+        context: RequestContext,
         event_queue: EventQueue,
-        task: Task | None,
     ) -> None:
         result = await self.agent.invoke()
+        event_queue.enqueue_event(new_agent_text_message(result))
 
-        message: Message = Message(
-            role=Role.agent,
-            parts=[Part(TextPart(text=result))],
-            messageId=str(uuid4()),
-        )
-        event_queue.enqueue_event(message)
-
-    @override
-    async def on_message_stream(
-        self,
-        request: SendStreamingMessageRequest,
-        event_queue: EventQueue,
-        task: Task | None,
-    ) -> None:
-        async for chunk in self.agent.stream():
-            message: Message = Message(
-                role=Role.agent,
-                parts=[Part(TextPart(text=chunk["content"]))],
-                messageId=str(uuid4()),
-                final=chunk["done"],
-            )
-            event_queue.enqueue_event(message)
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise Exception("cancel not supported")

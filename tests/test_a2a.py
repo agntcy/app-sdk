@@ -1,6 +1,11 @@
 from gateway_sdk.factory import GatewayFactory
 from gateway_sdk.factory import ProtocolTypes
+from a2a.types import (
+    MessageSendParams,
+    SendMessageRequest,
+)
 from typing import Any
+from uuid import uuid4
 import pytest
 
 
@@ -27,7 +32,11 @@ async def test_default_client():
         },
     }
 
-    response = await client.send_message(payload=send_message_payload)
+    request = SendMessageRequest(
+        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
+    )
+
+    response = await client.send_message(request)
     print(response.model_dump(mode="json", exclude_none=True))
 
 
@@ -36,7 +45,7 @@ async def test_client_with_nats_transport():
     """
     Test the A2A factory client creation with transport.
     """
-    factory = GatewayFactory(enable_tracing=True)
+    factory = GatewayFactory()
 
     # Create a Nats transport
     transport = factory.create_transport("NATS", endpoint="localhost:4222")
@@ -58,7 +67,11 @@ async def test_client_with_nats_transport():
         },
     }
 
-    response = await client.send_message(payload=send_message_payload)
+    request = SendMessageRequest(
+        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
+    )
+
+    response = await client.send_message(request)
     assert response is not None
 
     print(
@@ -78,7 +91,7 @@ async def test_client_with_nats_from_topic():
     """
     Test the A2A factory client creation.
     """
-    factory = GatewayFactory(enable_tracing=True)
+    factory = GatewayFactory()
 
     transport = factory.create_transport("NATS", endpoint="localhost:4222")
 
@@ -103,7 +116,11 @@ async def test_client_with_nats_from_topic():
         },
     }
 
-    response = await client.send_message(payload=send_message_payload)
+    request = SendMessageRequest(
+        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
+    )
+
+    response = await client.send_message(request)
     print(response.model_dump(mode="json", exclude_none=True))
 
     print("\n=== Success ===")
@@ -130,7 +147,11 @@ async def test_client_with_agp_transport():
         },
     }
 
-    response = await client.send_message(payload=send_message_payload)
+    request = SendMessageRequest(
+        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
+    )
+
+    response = await client.send_message(request)
     assert response is not None
 
     print(

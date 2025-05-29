@@ -1,9 +1,11 @@
-from agent_executor import HelloWorldAgentExecutor
+from agent_executor import (
+    HelloWorldAgentExecutor,  # type: ignore[import-untyped]
+)
 
-from a2a.server import A2AServer
-from a2a.server.request_handlers import DefaultA2ARequestHandler
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
-    AgentAuthentication,
     AgentCapabilities,
     AgentCard,
     AgentSkill,
@@ -35,16 +37,21 @@ async def main(transport_type: str, endpoint: str):
         version="1.0.0",
         defaultInputModes=["text"],
         defaultOutputModes=["text"],
-        capabilities=AgentCapabilities(),
-        skills=[skill],
-        authentication=AgentAuthentication(schemes=["public"]),
+        capabilities=AgentCapabilities(streaming=True),
+        skills=[skill],  # Only the basic skill for the public card
+        supportsAuthenticatedExtendedCard=False,
     )
 
-    request_handler = DefaultA2ARequestHandler(agent_executor=HelloWorldAgentExecutor())
+    request_handler = DefaultRequestHandler(
+        agent_executor=HelloWorldAgentExecutor(),
+        task_store=InMemoryTaskStore(),
+    )
 
-    server = A2AServer(agent_card=agent_card, request_handler=request_handler)
+    server = A2AStarletteApplication(
+        agent_card=agent_card, http_handler=request_handler
+    )
 
-    factory = GatewayFactory(enable_tracing=True)
+    factory = GatewayFactory()
 
     # Create a transport object
     transport = factory.create_transport(transport_type, endpoint=endpoint)
@@ -57,7 +64,7 @@ async def main(transport_type: str, endpoint: str):
 
     from uvicorn import Config, Server
 
-    config = Config(app=server.app(), host="0.0.0.0", port=9999, loop="asyncio")
+    config = Config(app=server.build(), host="0.0.0.0", port=9999, loop="asyncio")
     userver = Server(config)
 
     # Serve the app. This is a coroutine.
