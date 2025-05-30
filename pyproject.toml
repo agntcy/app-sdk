@@ -6,7 +6,7 @@ authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = "~=3.12"
 readme = "README.md"
 dependencies = [
-    "a2a-sdk>=0.2.5",
+    "a2a-sdk==0.2.5",
     "agp-bindings>=0.2.4,<0.3",
     "nats-py>=2.10.0,<3",
     "cisco-outshift-agent-utils>=0.0.2,<0.0.3",

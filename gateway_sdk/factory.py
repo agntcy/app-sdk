@@ -153,7 +153,8 @@ class GatewayFactory:
 
         gateway_class = self._transport_registry.get(transport)
         if gateway_class is None:
-            raise ValueError(f"No gateway registered for transport type: {transport}")
+            logger.warning(f"No gateway registered for transport type: {transport}")
+            return None
 
         if client:
             # create the transport instance from the client

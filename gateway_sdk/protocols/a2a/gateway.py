@@ -98,11 +98,8 @@ class A2AProtocol(BaseAgentProtocol):
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
 
-        # If a topic is provided, use it to get the agent card using the transport
-        if topic:
-            if transport is None:
-                raise ValueError("Transport must be provided when using a topic")
-
+        # if a transport and a topic are provided, bypass the URL and use the topic
+        if topic and transport:
             client = await self.get_client_from_agent_card_topic(topic, transport)
         else:
             httpx_client = httpx.AsyncClient()

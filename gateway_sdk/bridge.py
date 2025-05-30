@@ -18,6 +18,7 @@ from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.protocols.message import Message
 from gateway_sdk.common.logging_config import get_logger
 from typing import Callable
+import asyncio
 
 logger = get_logger(__name__)
 
@@ -37,7 +38,7 @@ class MessageBridge:
         self.handler = handler
         self.topic = topic
 
-    async def start(self):
+    async def start(self, blocking: bool = False):
         """Start all components of the bridge."""
         # Set up message handling flow
         self.transport.set_callback(self._process_message)
@@ -46,6 +47,23 @@ class MessageBridge:
         await self.transport.subscribe(self.topic)
 
         logger.info("Message bridge started.")
+
+        if blocking:
+            # Run the loop forever if blocking is True
+            await self.loop_forever()
+
+    async def loop_forever(self):
+        """Run the bridge indefinitely."""
+        logger.info("Message bridge is running. Waiting for messages...")
+        while True:
+            try:
+                # Wait for messages to be processed
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                logger.info("Message bridge loop cancelled.")
+                break
+            except Exception as e:
+                logger.error(f"Error in message bridge loop: {e}")
 
     async def _process_message(self, message: Message):
         """Process an incoming message through the handler and send response."""
