@@ -6,11 +6,11 @@ authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = "~=3.12"
 readme = "README.md"
 dependencies = [
+    "a2a-sdk==0.2.5",
     "agp-bindings>=0.2.4,<0.3",
     "nats-py>=2.10.0,<3",
     "cisco-outshift-agent-utils>=0.0.2,<0.0.3",
     "coloredlogs>=15.0.1,<16",
-    "a2a",
     "traceloop-sdk>=0.40.5",
     "langchain-community>=0.3.24",
     "opentelemetry-instrumentation-starlette>=0.54b0",
@@ -41,11 +41,8 @@ dev = [
 ]
 
 [project.scripts]
-gateway-services = "gateway_cli.cli:cli"
+gateway-infra = "gateway_sdk.__cli__:cli"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.uv.sources]
-a2a = { git = "https://github.com/google/A2A", subdirectory = "a2a-python-sdk" }

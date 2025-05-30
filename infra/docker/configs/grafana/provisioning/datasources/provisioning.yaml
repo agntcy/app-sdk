@@ -11,7 +11,7 @@ datasources:
       httpMethod: POST
       manageAlerts: true
       prometheusType: Prometheus
-      cacheLevel: 'High'
+      cacheLevel: "High"
       disableRecordingRules: false
       incrementalQueryOverlapWindow: 10m
   - name: Jaeger
@@ -25,25 +25,25 @@ datasources:
       tracesToLogsV2:
         # Field with an internal link pointing to a logs data source in Grafana.
         # datasourceUid value must match the uid value of the logs data source.
-        spanStartTimeShift: '1h'
-        spanEndTimeShift: '-1h'
+        spanStartTimeShift: "1h"
+        spanEndTimeShift: "-1h"
         filterByTraceID: false
         filterBySpanID: false
         customQuery: true
         query: 'method="${__span.tags.method}"'
       tracesToMetrics:
-        datasourceUid: 'prom'
-        spanStartTimeShift: '1h'
-        spanEndTimeShift: '-1h'
-        tags: [{ key: 'service.name', value: 'service' }, { key: 'job' }]
+        datasourceUid: "prom"
+        spanStartTimeShift: "1h"
+        spanEndTimeShift: "-1h"
+        tags: [{ key: "service.name", value: "service" }, { key: "job" }]
         queries:
-          - name: 'Sample query'
-            query: 'sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m]))'
+          - name: "Sample query"
+            query: "sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m]))"
       nodeGraph:
         enabled: true
       traceQuery:
         timeShiftEnabled: true
-        spanStartTimeShift: '1h'
-        spanEndTimeShift: '-1h'
+        spanStartTimeShift: "1h"
+        spanEndTimeShift: "-1h"
       spanBar:
-        type: 'None'
+        type: "None"

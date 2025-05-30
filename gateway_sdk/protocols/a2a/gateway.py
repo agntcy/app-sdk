@@ -24,8 +24,8 @@ from opentelemetry.propagate import inject, extract
 from opentelemetry import trace
 
 from a2a.client import A2AClient, A2ACardResolver
-from a2a.server import A2AServer
-from a2a.types import A2ARequest, AgentCard
+from a2a.server.apps import A2AStarletteApplication
+from a2a.types import AgentCard
 
 from gateway_sdk.protocols.protocol import BaseAgentProtocol
 from gateway_sdk.transports.transport import BaseTransport
@@ -36,19 +36,21 @@ from gateway_sdk.common.logging_config import configure_logging, get_logger
 configure_logging()
 logger = get_logger(__name__)
 
+
 class A2AProtocol(BaseAgentProtocol):
-    def get_type(self):
+    def type(self):
         return "A2A"
-    
+
     @staticmethod
-    def create_agent_topic(
-        agent_card: AgentCard) -> str:
+    def create_agent_topic(agent_card: AgentCard) -> str:
         """
         Create a topic for the agent card metadata.
         """
         return f"{agent_card.name}_{agent_card.version}"
-    
-    async def get_client_from_agent_card_topic(self, topic: str, transport: BaseTransport) -> A2AClient:
+
+    async def get_client_from_agent_card_topic(
+        self, topic: str, transport: BaseTransport
+    ) -> A2AClient:
         """
         Create an A2A client from the agent card topic, bypassing all need for a URLs.
         """
@@ -62,7 +64,7 @@ class A2AProtocol(BaseAgentProtocol):
             payload=json.dumps({"path": path, "method": method}),
             route_path=path,
             method=method,
-        )   
+        )
 
         response = await transport.publish(
             topic,
@@ -70,7 +72,7 @@ class A2AProtocol(BaseAgentProtocol):
             respond=True,
         )
 
-        response.payload = json.loads(response.payload.decode('utf-8'))
+        response.payload = json.loads(response.payload.decode("utf-8"))
         card = AgentCard.model_validate(response.payload)
 
         cl = A2AClient(
@@ -80,92 +82,93 @@ class A2AProtocol(BaseAgentProtocol):
         )
         cl.agent_card = card
         return cl
-    
-    async def create_client(self, url: str = None, topic: str = None, transport: BaseTransport = None, **kwargs) -> A2AClient:
+
+    async def create_client(
+        self,
+        url: str = None,
+        topic: str = None,
+        transport: BaseTransport = None,
+        **kwargs,
+    ) -> A2AClient:
         """
-        Create an A2A client, overriding the default client _send_request method to 
+        Create an A2A client, overriding the default client _send_request method to
         use the provided transport.
         """
 
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
 
-        # If a topic is provided, use it to get the agent card using the transport
-        if topic:
-            if transport is None:
-                raise ValueError("Transport must be provided when using a topic")
-            
+        # if a transport and a topic are provided, bypass the URL and use the topic
+        if topic and transport:
             client = await self.get_client_from_agent_card_topic(topic, transport)
         else:
             httpx_client = httpx.AsyncClient()
-            client = await A2AClient.get_client_from_agent_card_url(
-                httpx_client, url
-            )
+            client = await A2AClient.get_client_from_agent_card_url(httpx_client, url)
 
         # fix bug in A2AClient.get_client_from_agent_card_url where the card is not being set
         if not hasattr(client, "agent_card"):
             agent_card = await A2ACardResolver(
-                httpx_client, base_url=url,
+                httpx_client,
+                base_url=url,
             ).get_agent_card()
             client.agent_card = agent_card
 
         if transport:
             logger.info(
-                f"Using transport {transport.get_type()} for A2A client {client.agent_card.name}"
+                f"Using transport {transport.type()} for A2A client {client.agent_card.name}"
             )
             topic = self.create_agent_topic(client.agent_card)
 
-            async def _send_request(request: A2ARequest) -> None:
+            async def _send_request(
+                rpc_request_payload: dict[str, Any],
+                http_kwargs: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
                 """
                 Send a request using the provided transport.
                 """
-                headers = {}
-                tracer = trace.get_tracer(__name__)
-                with tracer.start_as_current_span("a2a_send_request"):
-                    # add tracing headers to the message
-                    inject(carrier=headers)
-                    
-                    response = await transport.publish(
-                        topic,
-                        self.message_translator(request),
-                        respond=True,
-                        headers=headers,
-                    )
+                response = await transport.publish(
+                    topic,
+                    self.message_translator(request=rpc_request_payload),
+                    respond=True,
+                    headers={},
+                )
 
-                    response.payload = json.loads(response.payload.decode('utf-8'))
-                    return response.payload
+                response.payload = json.loads(response.payload.decode("utf-8"))
+                return response.payload
 
             # override the _send_request method to use the provided transport
             client._send_request = _send_request
 
         return client
-    
-    def message_translator(self, request: A2ARequest) -> Message:
+
+    def message_translator(self, request: dict[str, Any]) -> Message:
         """
         Translate an A2A request into our internal Message object.
         """
         message = Message(
             type="A2ARequest",
-            payload=json.dumps(request.root.model_dump(mode='json')),
-            route_path="/", # json-rpc path
+            payload=json.dumps(request),
+            route_path="/",  # json-rpc path
             method="POST",  # A2A json-rpc will always use POST
         )
 
         return message
 
-    def create_ingress_handler(self, server: A2AServer) -> Callable[[Message], Message]:
+    def create_ingress_handler(
+        self, server: A2AStarletteApplication
+    ) -> Callable[[Message], Message]:
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.
         """
         # Create an ASGI adapter
-        self._app = server.app()
+        self._app = server.build()
 
         if environ.get("TRACING_ENABLED", "false").lower() == "true":
             StarletteInstrumentor().instrument_app(self._app)
             logger.info("Tracing enabled for ASGI app")
 
         return self.handle_incoming_request
-    
+
     async def handle_incoming_request(self, message: Message) -> Message:
         """
         Handle an incoming request and return a response.
@@ -173,7 +176,11 @@ class A2AProtocol(BaseAgentProtocol):
         assert self._app is not None, "ASGI app is not set up"
 
         body = message.payload
-        route_path = message.route_path if message.route_path.startswith('/') else f'/{message.route_path}'
+        route_path = (
+            message.route_path
+            if message.route_path.startswith("/")
+            else f"/{message.route_path}"
+        )
         method = message.method
 
         headers = []
@@ -188,18 +195,18 @@ class A2AProtocol(BaseAgentProtocol):
         # Set up ASGI scope
         scope: Scope = {
             "type": "http",
-            'asgi': {'version': '3.0', 'spec_version': '2.1'},
+            "asgi": {"version": "3.0", "spec_version": "2.1"},
             "http_version": "1.1",
             "method": method,
             "scheme": "http",
             "path": route_path,
-            "raw_path": route_path.encode('utf-8'),
+            "raw_path": route_path.encode("utf-8"),
             "query_string": b"",
             "headers": headers,
             "client": ("nats-bridge", 0),
             "server": ("nats-bridge", 0),
         }
-        
+
         # Create the receive channel that will yield request body
         async def receive() -> Dict[str, Any]:
             return {
@@ -207,33 +214,31 @@ class A2AProtocol(BaseAgentProtocol):
                 "body": body,
                 "more_body": False,
             }
-        
+
         # Create the send channel that will receive responses
         response_data = {
             "status": None,
             "headers": None,
             "body": bytearray(),
         }
-        
+
         async def send(message: Dict[str, Any]) -> None:
             message_type = message["type"]
-            
+
             if message_type == "http.response.start":
                 response_data["status"] = message["status"]
                 response_data["headers"] = message.get("headers", [])
-                
+
             elif message_type == "http.response.body":
                 if "body" in message:
                     response_data["body"].extend(message["body"])
 
-        
         ctx = extract(message.headers)
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("server_run", context=ctx):
-            
             # Call the ASGI application with our scope, receive, and send
             await self._app(scope, receive, send)
-            
+
             # Parse the body
             body = bytes(response_data["body"])
             try:
@@ -251,6 +256,3 @@ class A2AProtocol(BaseAgentProtocol):
                 reply_to=message.reply_to,
                 headers=headers,
             )
-
-
-    

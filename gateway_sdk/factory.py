@@ -25,7 +25,7 @@ from gateway_sdk.transports.agp.gateway import AGPGateway
 from gateway_sdk.transports.nats.gateway import NatsGateway
 
 from gateway_sdk.protocols.a2a.gateway import A2AProtocol
-from a2a.server import A2AServer
+from a2a.server.apps import A2AStarletteApplication
 
 from gateway_sdk.bridge import MessageBridge
 
@@ -35,20 +35,24 @@ from gateway_sdk.common.tracing import init_tracing
 configure_logging()
 logger = get_logger(__name__)
 
+
 # a utility enum class to define transport types as constants
 class ProtocolTypes(Enum):
     A2A = "A2A"
 
+
 # a utility enum class to define transport types as constants
 class TransportTypes(Enum):
-    NATS = "NATS"
     AGP = "AGP"
+    NATS = "NATS"
     MQTT = "MQTT"
+
 
 class GatewayFactory:
     """
     Factory class to create different types of agent gateway transports and protocols.
     """
+
     def __init__(self, enable_logging: bool = True, enable_tracing: bool = False):
         self.enable_logging = enable_logging
         self.enable_tracing = enable_tracing
@@ -67,11 +71,12 @@ class GatewayFactory:
             logger.info("Tracing enabled for gateway_sdk")
 
     def create_client(
-        self, protocol: str, 
-        agent_url: str = None,
-        agent_topic: str = None,
-        transport: BaseTransport = None,
-        **kwargs
+        self,
+        protocol: str,
+        agent_url: str | None = None,
+        agent_topic: str | None = None,
+        transport: BaseTransport | None = None,
+        **kwargs,
     ):
         """
         Create a client for the specified transport and protocol.
@@ -79,28 +84,30 @@ class GatewayFactory:
 
         if agent_url is None and agent_topic is None:
             raise ValueError("Either agent_url or agent_topic must be provided")
-        
+
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             init_tracing(
                 app_name="gateway_client",
                 collector_url=os.environ.get("COLLECTOR_URL", "http://localhost:4318"),
-                disable_batch=True
+                disable_batch=True,
             )
-       
+
         # get the protocol class
         protocol_instance = self.create_protocol(protocol)
 
         # create the client
-        client = protocol_instance.create_client(url=agent_url, topic=agent_topic, transport=transport)
+        client = protocol_instance.create_client(
+            url=agent_url, topic=agent_topic, transport=transport
+        )
 
         key = agent_url if agent_url else agent_topic
         self._clients[key] = client
-  
+
         return client
 
     def create_bridge(
         self,
-        server, # how to we specify the type of server?
+        server,  # add type hints for server, e.g., A2AStarletteApplication
         transport: BaseTransport,
     ) -> MessageBridge:
         """
@@ -114,16 +121,18 @@ class GatewayFactory:
             init_tracing(
                 app_name="gateway_bridge",
                 collector_url=os.environ.get("COLLECTOR_URL", "http://localhost:4318"),
-                disable_batch=True
+                disable_batch=True,
             )
 
+        # TODO: handle litserve integration
+
         # TODO: handle multiple server types and or agent frameworks ie graph
-        if isinstance(server, A2AServer):
+        if isinstance(server, A2AStarletteApplication):
             topic = A2AProtocol.create_agent_topic(server.agent_card)
             handler = self.create_protocol("A2A").create_ingress_handler(server)
         else:
             raise ValueError("Unsupported server type")
-        
+
         bridge = MessageBridge(
             transport=transport,
             handler=handler,
@@ -134,20 +143,30 @@ class GatewayFactory:
 
         return bridge
 
-    def create_transport(self, transport: str, gateway_endpoint: str, *args, **kwargs):
+    def create_transport(self, transport: str, client=None, endpoint: str = None):
         """
         Get the transport class for the specified transport type. Enables users to
-        instantiate a transport class with a string name.
+        instantiate a transport class with a string name or a client instance.
         """
+        if not client and not endpoint:
+            raise ValueError("Either client or endpoint must be provided")
+
         gateway_class = self._transport_registry.get(transport)
         if gateway_class is None:
-            raise ValueError(f"No gateway registered for transport type: {transport}")
-        transport = gateway_class(gateway_endpoint, *args, **kwargs)
+            logger.warning(f"No gateway registered for transport type: {transport}")
+            return None
+
+        if client:
+            # create the transport instance from the client
+            transport = gateway_class.from_client(client)
+        else:
+            transport = gateway_class.from_config(endpoint)
+
         return transport
-    
+
     def create_protocol(self, protocol: str):
         """
-        Get the protocol class for the specified protocol type. Enables users to 
+        Get the protocol class for the specified protocol type. Enables users to
         instantiate a protocol class with a string name.
         """
         protocol_class = self._protocol_registry.get(protocol)
@@ -160,17 +179,21 @@ class GatewayFactory:
     @classmethod
     def register_transport(cls, transport_type: str):
         """Decorator to register a new transport implementation."""
+
         def decorator(transport_class: Type[BaseTransport]):
             cls.self._transport_registry[transport_type] = transport_class
             return transport_class
+
         return decorator
-    
+
     @classmethod
     def register_protocol(cls, protocol_type: str):
         """Decorator to register a new protocol implementation."""
+
         def decorator(protocol_class: Type[BaseAgentProtocol]):
             cls.self._protocol_registry[protocol_type] = protocol_class
             return protocol_class
+
         return decorator
 
     def _register_wellknown_transports(self):
@@ -185,6 +208,3 @@ class GatewayFactory:
         Register well-known protocols. New protocols can be registered using the register decorator.
         """
         self._protocol_registry["A2A"] = A2AProtocol
-            
-        
-            

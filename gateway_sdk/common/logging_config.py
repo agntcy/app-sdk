@@ -148,6 +148,7 @@ class JSONFormatter(logging.Formatter):
 # Helper functions
 # ---------------------------------------------------------------------------
 
+
 def _log_dir() -> Path:
     """Return *logs/* directory path, creating it if required."""
     path = Path(__file__).resolve().parent.parent / "logs"
@@ -209,10 +210,26 @@ def _build_config(log_file: Path | None, log_level: str) -> Mapping[str, object]
         },
         "handlers": handlers,
         "loggers": {
-            "uvicorn": {"handlers": common_handler_names, "level": log_level, "propagate": False},
-            "fastapi": {"handlers": common_handler_names, "level": log_level, "propagate": False},
-            "app": {"handlers": common_handler_names, "level": log_level, "propagate": False},
-            "requests.packages.urllib3": {"handlers": ["console"], "level": log_level, "propagate": True},
+            "uvicorn": {
+                "handlers": common_handler_names,
+                "level": log_level,
+                "propagate": False,
+            },
+            "fastapi": {
+                "handlers": common_handler_names,
+                "level": log_level,
+                "propagate": False,
+            },
+            "app": {
+                "handlers": common_handler_names,
+                "level": log_level,
+                "propagate": False,
+            },
+            "requests.packages.urllib3": {
+                "handlers": ["console"],
+                "level": log_level,
+                "propagate": True,
+            },
         },
         "root": {"handlers": common_handler_names, "level": log_level},
     }
@@ -221,6 +238,7 @@ def _build_config(log_file: Path | None, log_level: str) -> Mapping[str, object]
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def configure_logging(*, install_coloredlogs: bool = True) -> None:
     """Configure global logging based on environment variables.
@@ -248,7 +266,9 @@ def configure_logging(*, install_coloredlogs: bool = True) -> None:
             fmt="%(asctime)s [%(name)s] [%(levelname)s] [%(funcName)s:%(lineno)d] %(message)s",
         )
 
-    logging.getLogger(__name__).debug("Logging configured (level=%s, file=%s)", log_level, log_file)
+    logging.getLogger(__name__).debug(
+        "Logging configured (level=%s, file=%s)", log_level, log_file
+    )
 
 
 def get_logger(name: str | None = None) -> logging.Logger:

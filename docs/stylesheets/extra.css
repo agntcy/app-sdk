@@ -16,11 +16,32 @@
 
 /* A hack to get mkdocs-render-swagger-plugin to play nice with mkdocs dark
 mode. Gets the job done for now */
-[data-md-color-scheme="slate"] h1, [data-md-color-scheme="slate"] h2, [data-md-color-scheme="slate"] h3 {
+[data-md-color-scheme="slate"] h1,
+[data-md-color-scheme="slate"] h2,
+[data-md-color-scheme="slate"] h3 {
   color: var(--scarf-color-font-light) !important;
 }
 
-[data-md-color-scheme="slate"] .swagger-ui .header-example, [data-md-color-scheme="slate"]  p, [data-md-color-scheme="slate"]  .header-col, [data-md-color-scheme="slate"]  .response-col_status, [data-md-color-scheme="slate"]  .tabitem, [data-md-color-scheme="slate"]  .response-col_links, [data-md-color-scheme="slate"]  .response-col_description, [data-md-color-scheme="slate"]  .response+ .response p, [data-md-color-scheme="slate"]  tr+ tr .parameters-col_name, [data-md-color-scheme="slate"]  .parameter__in, [data-md-color-scheme="slate"]  .required, [data-md-color-scheme="slate"]  .parameter__type, [data-md-color-scheme="slate"]  .col_header, [data-md-color-scheme="slate"]  .model-box, [data-md-color-scheme="slate"]  .model-title__text, [data-md-color-scheme="slate"]  .model-title, [data-md-color-scheme="slate"]  .prop-enum, [data-md-color-scheme="slate"]  .opblock-summary-path, [data-md-color-scheme="slate"]  .opblock-summary-description, [data-md-color-scheme="slate"]  .info__license {
+[data-md-color-scheme="slate"] .swagger-ui .header-example,
+[data-md-color-scheme="slate"] p,
+[data-md-color-scheme="slate"] .header-col,
+[data-md-color-scheme="slate"] .response-col_status,
+[data-md-color-scheme="slate"] .tabitem,
+[data-md-color-scheme="slate"] .response-col_links,
+[data-md-color-scheme="slate"] .response-col_description,
+[data-md-color-scheme="slate"] .response + .response p,
+[data-md-color-scheme="slate"] tr + tr .parameters-col_name,
+[data-md-color-scheme="slate"] .parameter__in,
+[data-md-color-scheme="slate"] .required,
+[data-md-color-scheme="slate"] .parameter__type,
+[data-md-color-scheme="slate"] .col_header,
+[data-md-color-scheme="slate"] .model-box,
+[data-md-color-scheme="slate"] .model-title__text,
+[data-md-color-scheme="slate"] .model-title,
+[data-md-color-scheme="slate"] .prop-enum,
+[data-md-color-scheme="slate"] .opblock-summary-path,
+[data-md-color-scheme="slate"] .opblock-summary-description,
+[data-md-color-scheme="slate"] .info__license {
   color: var(--scarf-color-font-light) !important;
 }
 

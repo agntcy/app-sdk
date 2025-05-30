@@ -19,8 +19,10 @@ from ..logging_config import configure_logging, get_logger
 configure_logging()
 logger = get_logger(__name__)
 
+
 def create_client(url):
     pass
+
 
 def create_receiver():
     """
