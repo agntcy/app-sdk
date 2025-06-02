@@ -7,6 +7,8 @@ from a2a.types import (
 from typing import Any
 from uuid import uuid4
 import pytest
+import os
+import signal
 
 
 @pytest.mark.asyncio
@@ -38,6 +40,50 @@ async def test_default_client():
 
     response = await client.send_message(request)
     print(response.model_dump(mode="json", exclude_none=True))
+
+
+@pytest.mark.asyncio
+async def test_hello_world(run_server):
+    """
+    Test the A2A factory client creation.
+    """
+    factory = GatewayFactory()
+
+    transport = factory.create_transport("NATS", endpoint="localhost:4222")
+
+    # from gateway_sdk.protocols.a2a.gateway import A2AProtocol
+    # topic = A2AProtocol.create_agent_topic(card)
+
+    client = await factory.create_client(
+        "A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport
+    )
+    assert client is not None
+
+    print("\n=== Agent Information ===")
+    print(f"Name: {client.agent_card}")
+
+    assert client is not None
+
+    send_message_payload: dict[str, Any] = {
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
+            "messageId": "1234",
+        },
+    }
+
+    request = SendMessageRequest(
+        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
+    )
+
+    response = await client.send_message(request)
+    print(response.model_dump(mode="json", exclude_none=True))
+
+    print("\n=== Success ===")
+
+    await transport.close()
+
+    os.killpg(os.getpgid(run_server.pid), signal.SIGTERM)
 
 
 @pytest.mark.asyncio

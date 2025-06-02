@@ -1,7 +1,6 @@
 from agent_executor import (
     HelloWorldAgentExecutor,  # type: ignore[import-untyped]
 )
-
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
@@ -12,8 +11,11 @@ from a2a.types import (
 )
 import asyncio
 import argparse
+from uvicorn import Config, Server
 from gateway_sdk.factory import TransportTypes
 from gateway_sdk.factory import GatewayFactory
+
+factory = GatewayFactory()
 
 
 async def main(transport_type: str, endpoint: str):
@@ -51,32 +53,14 @@ async def main(transport_type: str, endpoint: str):
         agent_card=agent_card, http_handler=request_handler
     )
 
-    factory = GatewayFactory()
-
-    # Create a transport object
-    transport = factory.create_transport(transport_type, endpoint=endpoint)
-    bridge = factory.create_bridge(server, transport=transport)
-    await bridge.start()
-
-    """
-    Optional if you want A2A default starllet server running as well
-    """
-
-    from uvicorn import Config, Server
-
-    config = Config(app=server.build(), host="0.0.0.0", port=9999, loop="asyncio")
-    userver = Server(config)
-
-    # Serve the app. This is a coroutine.
-    await userver.serve()
-
-    try:
-        # Keep the bridge running
-        print("Bridge is running. Press Ctrl+C to exit.")
-        while True:
-            await asyncio.sleep(1)
-    except KeyboardInterrupt:
-        print("Shutting down...")
+    if transport_type == "A2A":
+        config = Config(app=server.build(), host="0.0.0.0", port=9999, loop="asyncio")
+        userver = Server(config)
+        await userver.serve()
+    else:
+        transport = factory.create_transport(transport_type, endpoint=endpoint)
+        bridge = factory.create_bridge(server, transport=transport)
+        await bridge.start(blocking=True)
 
 
 if __name__ == "__main__":
@@ -99,7 +83,5 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
-    print(f"Using transport type: {args.transport}")
 
     asyncio.run(main(args.transport, args.endpoint))

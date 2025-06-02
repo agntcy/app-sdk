@@ -15,6 +15,7 @@ dependencies = [
     "langchain-community>=0.3.24",
     "opentelemetry-instrumentation-starlette>=0.54b0",
     "click>=8.2.0",
+    "uvicorn>=0.34.3",
 ]
 
 [dependency-groups]
