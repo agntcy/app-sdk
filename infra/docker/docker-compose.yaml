@@ -29,18 +29,6 @@ services:
     networks:
       - gateway
 
-  mqtt:
-    image: eclipse-mosquitto:2.0
-    container_name: mqtt-broker
-    ports:
-      - "1883:1883" # MQTT
-      - "9001:9001" # WebSockets (optional)
-    volumes:
-      - ./configs/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./mosquitto/data:/mosquitto/data
-      - ./mosquitto/log:/mosquitto/log
-    restart: unless-stopped
-
   otelcol:
     image: otel/opentelemetry-collector-contrib:0.76.1
     container_name: otel-col
@@ -61,57 +49,6 @@ services:
       - "8888" # metrics endpoint
     networks:
       - gateway
-    depends_on:
-      - jaeger
-    logging: *logging
-
-  prometheus:
-    image: quay.io/prometheus/prometheus:v2.43.0
-    container_name: prometheus
-    command:
-      - --web.console.templates=/etc/prometheus/consoles
-      - --web.console.libraries=/etc/prometheus/console_libraries
-      - --storage.tsdb.retention.time=1h
-      - --config.file=/etc/prometheus/prometheus-config.yaml
-      - --storage.tsdb.path=/prometheus
-      - --web.enable-lifecycle
-      - --web.route-prefix=/
-      - --enable-feature=exemplar-storage
-    volumes:
-      - ./configs/prometheus/prometheus-config.yaml:/etc/prometheus/prometheus-config.yaml
-    deploy:
-      resources:
-        limits:
-          memory: 300M
-    networks:
-      - gateway
-    ports:
-      - "9090:9090" # Prometheus UI
-    logging: *logging
-
-  jaeger:
-    image: jaegertracing/all-in-one
-    container_name: jaeger
-    command:
-      - "--memory.max-traces"
-      - "10000"
-      - "--query.base-path"
-      - "/jaeger"
-      - "--prometheus.server-url"
-      - "http://prometheus:9090"
-    deploy:
-      resources:
-        limits:
-          memory: 300M
-    restart: unless-stopped
-    networks:
-      - gateway
-    ports:
-      - "16686:16686" # Jaeger UI
-      - "4317" # OTLP gRPC default port
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
-      - METRICS_STORAGE_TYPE=prometheus
     logging: *logging
 
 networks:
