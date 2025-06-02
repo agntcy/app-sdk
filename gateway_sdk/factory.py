@@ -43,6 +43,7 @@ class ProtocolTypes(Enum):
 
 # a utility enum class to define transport types as constants
 class TransportTypes(Enum):
+    A2A = "A2A"
     AGP = "AGP"
     NATS = "NATS"
     MQTT = "MQTT"

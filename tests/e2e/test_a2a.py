@@ -1,159 +1,50 @@
 from gateway_sdk.factory import GatewayFactory
-from gateway_sdk.factory import ProtocolTypes
 from a2a.types import (
     MessageSendParams,
     SendMessageRequest,
 )
 from typing import Any
-from uuid import uuid4
+import uuid
 import pytest
-import os
-import signal
+from tests.e2e.conftest import TRANSPORT_CONFIGS
+
+pytest_plugins = "pytest_asyncio"
 
 
+@pytest.mark.parametrize(
+    "transport,endpoint", list(TRANSPORT_CONFIGS.items()), ids=lambda val: val[0]
+)
 @pytest.mark.asyncio
-async def test_default_client():
+async def test_client(run_server, transport, endpoint):
     """
-    Test the A2A factory client creation.
+    End-to-end test for the A2A factory client over different transports.
     """
-    factory = GatewayFactory()
-
-    client = await factory.create_client("A2A", agent_url="http://localhost:9999")
-    assert client is not None
-
-    print("\n=== Agent Information ===")
-    print(f"Name: {client.agent_card}")
-
-    assert client is not None
-
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
-            "messageId": "1234",
-        },
-    }
-
-    request = SendMessageRequest(
-        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
-    response = await client.send_message(request)
-    print(response.model_dump(mode="json", exclude_none=True))
-
-
-@pytest.mark.asyncio
-async def test_hello_world(run_server):
-    """
-    Test the A2A factory client creation.
-    """
-    factory = GatewayFactory()
-
-    transport = factory.create_transport("NATS", endpoint="localhost:4222")
-
-    # from gateway_sdk.protocols.a2a.gateway import A2AProtocol
-    # topic = A2AProtocol.create_agent_topic(card)
-
-    client = await factory.create_client(
-        "A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport
-    )
-    assert client is not None
-
-    print("\n=== Agent Information ===")
-    print(f"Name: {client.agent_card}")
-
-    assert client is not None
-
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
-            "messageId": "1234",
-        },
-    }
-
-    request = SendMessageRequest(
-        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
-    response = await client.send_message(request)
-    print(response.model_dump(mode="json", exclude_none=True))
-
-    print("\n=== Success ===")
-
-    await transport.close()
-
-    os.killpg(os.getpgid(run_server.pid), signal.SIGTERM)
-
-
-@pytest.mark.asyncio
-async def test_client_with_nats_transport():
-    """
-    Test the A2A factory client creation with transport.
-    """
-    factory = GatewayFactory()
-
-    # Create a Nats transport
-    transport = factory.create_transport("NATS", endpoint="localhost:4222")
-    # or: transport = await nats.connect(self.endpoint)
-    # ie: do we support nats.nc object and wrap in the create_client?
-
-    # Create a client with the transport
-    client = await factory.create_client(
-        ProtocolTypes.A2A.value, agent_url="http://localhost:9999", transport=transport
-    )
-
-    assert client is not None
-
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
-            "messageId": "1234",
-        },
-    }
-
-    request = SendMessageRequest(
-        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
-    response = await client.send_message(request)
-    assert response is not None
 
     print(
-        "remote agent responded with: \n",
-        response.model_dump(mode="json", exclude_none=True),
+        f"\n--- Starting test: test_client | Transport: {transport} | Endpoint: {endpoint} ---"
     )
 
-    print("\n=== Success ===")
+    # Start the mock/test server
+    print("[setup] Launching test server...")
+    run_server(transport, endpoint)
 
-    await transport.close()
-
-    print("\n=== Transport Closed ===")
-
-
-@pytest.mark.asyncio
-async def test_client_with_nats_from_topic():
-    """
-    Test the A2A factory client creation.
-    """
+    # Create factory and transport
+    print("[setup] Initializing client factory and transport...")
     factory = GatewayFactory()
+    transport_instance = factory.create_transport(transport, endpoint=endpoint)
 
-    transport = factory.create_transport("NATS", endpoint="localhost:4222")
-
-    # from gateway_sdk.protocols.a2a.gateway import A2AProtocol
-    # topic = A2AProtocol.create_agent_topic(card)
-
+    # Create A2A client
+    print("[test] Creating A2A client...")
     client = await factory.create_client(
-        "A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport
+        "A2A",
+        agent_url=endpoint,
+        agent_topic="Hello_World_Agent_1.0.0",  # Used if transport is provided
+        transport=transport_instance,
     )
-    assert client is not None
+    assert client is not None, "Client was not created"
 
-    print("\n=== Agent Information ===")
-    print(f"Name: {client.agent_card}")
-
-    assert client is not None
-
+    # Build message request
+    print("[test] Sending test message...")
     send_message_payload: dict[str, Any] = {
         "message": {
             "role": "user",
@@ -161,52 +52,31 @@ async def test_client_with_nats_from_topic():
             "messageId": "1234",
         },
     }
-
     request = SendMessageRequest(
-        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
+        id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
     )
 
+    # Send and validate response
     response = await client.send_message(request)
-    print(response.model_dump(mode="json", exclude_none=True))
+    assert response is not None, "Response was None"
 
-    print("\n=== Success ===")
+    response = response.model_dump(mode="json", exclude_none=True)
 
-    await transport.close()
+    print(f"[debug] Raw response: {response}")
 
+    assert response["jsonrpc"] == "2.0"
+    assert response["result"]["kind"] == "message"
+    assert response["result"]["role"] == "agent"
 
-@pytest.mark.asyncio
-async def test_client_with_agp_transport():
-    factory = GatewayFactory()
+    parts = response["result"]["parts"]
+    assert isinstance(parts, list)
+    assert parts[0]["kind"] == "text"
+    assert parts[0]["text"] == "Hello World"
 
-    # Create a AGP transport
-    transport = factory.create_transport("AGP", endpoint="http://localhost:46357")
+    print(f"[result] Agent responded with: {parts[0]['text']}")
 
-    client = await factory.create_client(
-        "A2A", agent_topic="Hello_World_Agent_1.0.0", transport=transport
-    )
+    if transport_instance:
+        print("[teardown] Closing transport...")
+        await transport_instance.close()
 
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
-            "messageId": "1234",
-        },
-    }
-
-    request = SendMessageRequest(
-        id=str(uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
-    response = await client.send_message(request)
-    assert response is not None
-
-    print(
-        "remote agent responded with: \n",
-        response.model_dump(mode="json", exclude_none=True),
-    )
-
-    print("\n=== Success ===")
-
-    await transport.close()
-
-    print("\n=== Transport Closed ===")
+    print(f"=== ✅ Test passed for transport: {transport} ===\n")
