@@ -21,7 +21,7 @@ from enum import Enum
 from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.protocols.protocol import BaseAgentProtocol
 
-from gateway_sdk.transports.agp.gateway import AGPGateway
+from gateway_sdk.transports.slim.gateway import SLIMGateway
 from gateway_sdk.transports.nats.gateway import NatsGateway
 
 from gateway_sdk.protocols.a2a.gateway import A2AProtocol
@@ -44,7 +44,7 @@ class ProtocolTypes(Enum):
 # a utility enum class to define transport types as constants
 class TransportTypes(Enum):
     A2A = "A2A"
-    AGP = "AGP"
+    SLIM = "SLIM"
     NATS = "NATS"
     MQTT = "MQTT"
 
@@ -201,7 +201,7 @@ class GatewayFactory:
         """
         Register well-known transports. New transports can be registered using the register decorator.
         """
-        self._transport_registry["AGP"] = AGPGateway
+        self._transport_registry["SLIM"] = SLIMGateway
         self._transport_registry["NATS"] = NatsGateway
 
     def _register_wellknown_protocols(self):

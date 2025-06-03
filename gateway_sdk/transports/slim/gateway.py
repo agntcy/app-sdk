@@ -15,10 +15,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional, Dict, Callable
-import agp_bindings
-from agp_bindings import GatewayConfig
+import slim_bindings
 import asyncio
 import inspect
+import datetime
 from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.transports.transport import BaseTransport, Message
 
@@ -31,9 +31,9 @@ These classes should implement the abstract methods defined in BaseGateway.
 """
 
 
-class AGPGateway(BaseTransport):
+class SLIMGateway(BaseTransport):
     """
-    AGP Gateway implementation using the agp_bindings library.
+    SLIM Gateway implementation using the slim_bindings library.
     """
 
     def __init__(
@@ -49,24 +49,26 @@ class AGPGateway(BaseTransport):
         self._default_org = default_org
         self._default_namespace = default_namespace
 
-        logger.info(f"AGPGateway initialized with endpoint: {endpoint}")
+        self._sessions = {}
+
+        logger.info(f"SLIMGateway initialized with endpoint: {endpoint}")
 
     # ###################################################
     # BaseTransport interface methods
     # ###################################################
 
     @classmethod
-    def from_client(cls, client, org="default", namespace="default") -> "AGPGateway":
+    def from_client(cls, client, org="default", namespace="default") -> "SLIMGateway":
         # Optionally validate client
         return cls(client=client, default_org=org, default_namespace=namespace)
 
     @classmethod
     def from_config(
         cls, endpoint: str, org: str = "default", namespace: str = "default", **kwargs
-    ) -> "AGPGateway":
+    ) -> "SLIMGateway":
         """
-        Create a AGP transport instance from a configuration.
-        :param endpoint: The AGP server endpoint.
+        Create a SLIM transport instance from a configuration.
+        :param endpoint: The SLIM server endpoint.
         :param org: The organization name.
         :param namespace: The namespace name.
         :param kwargs: Additional configuration parameters.
@@ -77,7 +79,7 @@ class AGPGateway(BaseTransport):
 
     def type(self) -> str:
         """Return the transport type."""
-        return "AGP"
+        return "SLIM"
 
     async def close(self) -> None:
         pass
@@ -124,7 +126,7 @@ class AGPGateway(BaseTransport):
         logger.info(f"Subscribed to topic: {topic}")
 
     # ###################################################
-    # AGP specific methods
+    # SLIM specific methods
     # ###################################################
 
     def santize_topic(self, topic: str) -> str:
@@ -138,14 +140,16 @@ class AGPGateway(BaseTransport):
         logger.info(
             f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}"
         )
-        self._gateway = await agp_bindings.Gateway.new(org, namespace, topic)
 
-        # Configure gateway
-        config = GatewayConfig(endpoint=self._endpoint, insecure=True)
-        self._gateway.configure(config)
+        self._gateway = await slim_bindings.Slim.new(org, namespace, topic)
 
-        # Connect to remote gateway server
-        _ = await self._gateway.connect()
+        # Connect to slim server
+        _ = await self._gateway.connect(
+            {
+                "endpoint": self._endpoint,
+                "tls": {"insecure": True},
+            }  # TODO: handle with config input
+        )
 
         logger.info(f"connected to gateway @{self._endpoint}")
 
@@ -153,32 +157,29 @@ class AGPGateway(BaseTransport):
         if not self._gateway:
             await self._create_gateway(org, namespace, topic)
 
+        await self._gateway.subscribe(org, namespace, topic)
+
+        session_info = await self._get_session(org, namespace, topic, "pubsub")
+
         async with self._gateway:
-            # Wait for a message and reply in a loop
             while True:
-                session_info, _ = await self._gateway.receive()
+                # Receive the message from the session
+                recv_session, msg = await self._gateway.receive(session=session_info.id)
 
-                async def background_task(session_id):
-                    while True:
-                        # Receive the message from the session
-                        session, msg = await self._gateway.receive(session=session_id)
+                msg = Message.deserialize(msg)
 
-                        msg = Message.deserialize(msg)
+                logger.info(f"Received message: {msg}")
 
-                        logger.debug(f"Received message: {msg}")
+                reply_to = msg.reply_to
+                msg.reply_to = None  # we will handle reply with the session
 
-                        reply_to = msg.reply_to
-                        msg.reply_to = None  # we will handle reply with the session
+                if inspect.iscoroutinefunction(self._callback):
+                    output = await self._callback(msg)
+                else:
+                    output = self._callback(msg)
 
-                        if inspect.iscoroutinefunction(self._callback):
-                            output = await self._callback(msg)
-                        else:
-                            output = self._callback(msg)
-
-                        if reply_to:
-                            await self._gateway.publish_to(session, output.serialize())
-
-                asyncio.create_task(background_task(session_info.id))
+                if reply_to:
+                    await self._gateway.publish_to(recv_session, output.serialize())
 
     async def _publish(
         self, org: str, namespace: str, topic: str, message: Message
@@ -190,18 +191,14 @@ class AGPGateway(BaseTransport):
         payload = message.serialize()
         logger.debug(f"Publishing {payload} to topic: {topic}")
 
+        await self._gateway.set_route(org, namespace, topic)
+
+        session_info = await self._get_session(org, namespace, topic, "pubsub")
+
         async with self._gateway:
-            # Create a route to the remote ID
-            await self._gateway.set_route(org, namespace, topic)
-
-            # create a session
-            session = await self._gateway.create_ff_session(
-                agp_bindings.PyFireAndForgetConfiguration()
-            )
-
             # Send the message
             await self._gateway.publish(
-                session,
+                session_info,
                 message.serialize(),
                 org,
                 namespace,
@@ -209,6 +206,25 @@ class AGPGateway(BaseTransport):
             )
 
             if message.reply_to:
-                session_info, msg = await self._gateway.receive(session=session.id)
+                session_info, msg = await self._gateway.receive(session=session_info.id)
                 response = Message.deserialize(msg)
                 return response
+
+    async def _get_session(self, org, namespace, topic, session_type):
+        session_key = f"{org}_{namespace}_{topic}_{session_type}"
+
+        # TODO: handle different session types
+        if session_key in self._sessions:
+            session_info = self._sessions[session_key]
+        else:
+            session_info = await self._gateway.create_session(
+                slim_bindings.PySessionConfiguration.Streaming(
+                    slim_bindings.PySessionDirection.BIDIRECTIONAL,
+                    topic=slim_bindings.PyAgentType(org, namespace, topic),
+                    max_retries=5,  # TODO: set this from config
+                    timeout=datetime.timedelta(seconds=5),
+                )
+            )
+            self._sessions[session_key] = session_info
+
+        return session_info
