@@ -125,8 +125,6 @@ class GatewayFactory:
                 disable_batch=True,
             )
 
-        # TODO: handle litserve integration
-
         # TODO: handle multiple server types and or agent frameworks ie graph
         if isinstance(server, A2AStarletteApplication):
             topic = A2AProtocol.create_agent_topic(server.agent_card)

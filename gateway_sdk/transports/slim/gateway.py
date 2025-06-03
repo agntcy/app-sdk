@@ -172,34 +172,39 @@ class SLIMGateway(BaseTransport):
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
 
-        async with self._gateway:
-            while True:
-                # Receive the message from the session
-                recv_session, msg = await self._gateway.receive(session=session_info.id)
+        async def background_task():
+            async with self._gateway:
+                while True:
+                    # Receive the message from the session
+                    recv_session, msg = await self._gateway.receive(
+                        session=session_info.id
+                    )
 
-                msg = Message.deserialize(msg)
+                    msg = Message.deserialize(msg)
 
-                logger.debug(f"Received message: {msg}")
+                    logger.debug(f"Received message: {msg}")
 
-                reply_to = msg.reply_to
-                # We will utilize SLIM's publish_to method to send a response
-                # signal to the callback handler that it does not need to reply using high level publish
-                msg.reply_to = None
+                    reply_to = msg.reply_to
+                    # We will utilize SLIM's publish_to method to send a response
+                    # signal to the callback handler that it does not need to reply using high level publish
+                    msg.reply_to = None
 
-                if inspect.iscoroutinefunction(self._callback):
-                    output = await self._callback(msg)
-                else:
-                    output = self._callback(msg)
-
-                if reply_to:
-                    if output:
-                        payload = output.serialize()
+                    if inspect.iscoroutinefunction(self._callback):
+                        output = await self._callback(msg)
                     else:
-                        logger.warning(
-                            f"No response from handler for message: {msg}, sending empty response."
-                        )
-                        payload = b""
-                    await self._gateway.publish_to(recv_session, payload)
+                        output = self._callback(msg)
+
+                    if reply_to:
+                        if output:
+                            payload = output.serialize()
+                        else:
+                            logger.warning(
+                                f"No response from handler for message: {msg}, sending empty response."
+                            )
+                            payload = b""
+                        await self._gateway.publish_to(recv_session, payload)
+
+        asyncio.create_task(background_task())
 
     async def _publish(
         self, org: str, namespace: str, topic: str, message: Message

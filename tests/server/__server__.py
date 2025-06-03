@@ -18,7 +18,7 @@ from gateway_sdk.factory import GatewayFactory
 factory = GatewayFactory()
 
 
-async def main(transport_type: str, endpoint: str):
+async def main(transport_type: str, endpoint: str, block: bool = True):
     """
     This is a simple example of how to create a bridge between an A2A server and a transport.
     It creates a Hello World agent and sets up the transport to communicate with it.
@@ -60,7 +60,7 @@ async def main(transport_type: str, endpoint: str):
     else:
         transport = factory.create_transport(transport_type, endpoint=endpoint)
         bridge = factory.create_bridge(server, transport=transport)
-        await bridge.start(blocking=True)
+        await bridge.start(blocking=block)
 
 
 if __name__ == "__main__":
@@ -81,7 +81,13 @@ if __name__ == "__main__":
         default="localhost:4222",
         help="Endpoint for the transport (default: localhost:4222)",
     )
+    parser.add_argument(
+        "--non-blocking",
+        action="store_false",
+        dest="block",
+        help="Run the server in non-blocking mode (default: blocking)",
+    )
 
     args = parser.parse_args()
 
-    asyncio.run(main(args.transport, args.endpoint))
+    asyncio.run(main(args.transport, args.endpoint, args.block))
