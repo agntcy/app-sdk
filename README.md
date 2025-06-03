@@ -56,7 +56,7 @@ from gateway_sdk.factory import GatewayFactory
 server = A2AServer(agent_card=agent_card, request_handler=request_handler)
 
 factory = GatewayFactory()
-transport = factory.create_transport("NATS", "localhost:4222", options={})
+transport = factory.create_transport("NATS", "localhost:4222")
 bridge = factory.create_bridge(server, transport=transport)
 
 await bridge.start()
@@ -70,7 +70,7 @@ from gateway_sdk.factory import ProtocolTypes
 
 factory = GatewayFactory()
 
-transport = factory.create_transport("NATS", "localhost:4222", options={})
+transport = factory.create_transport("NATS", "localhost:4222")
 
 # connect via agent URL
 client_over_nats = await factory.create_client("A2A", agent_url="http://localhost:9999", transport=transport)
@@ -81,44 +81,22 @@ client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_to
 
 ## Testing
 
-**✅ Test the gateway factory with default A2A client/server**
+The `/tests` directory contains e2e tests for the gateway factory, including A2A client and various transports.
 
-Run a sample agent via an A2A server:
+### Prerequisites
+
+Run the required message bus services:
 
 ```bash
-uv run python tests/server/__main__.py
+docker-compose -f infra/docker/docker-compose.yaml up
 ```
 
-In a second terminal, run an A2A test client:
+**✅ Test the gateway factory with A2A client and all available transports**
+
+Run the parameterized e2e test for the A2A client across all transports:
 
 ```bash
-uv run pytest tests/test_a2a.py::test_default_client -s
-```
-
-**🚀 Test the gateway factory with A2A over NATS transport**
-
-Run a Nats server and observability stack:
-
-```bash
-uv run gateway-infra up
-```
-
-Run an A2A server with a NATS bridge:
-
-```bash
-uv run python tests/server/__bridge__.py
-```
-
-In a second terminal, run an A2A test client with a NATS transport:
-
-```bash
-uv run pytest tests/test_a2a.py::test_client_with_nats_transport -s
-```
-
-Run an A2A test client, connecting via a Card topic instead of an agent URL:
-
-```bash
-uv run pytest tests/test_a2a.py::test_client_with_nats_from_topic -s
+uv run pytest tests/e2e/test_a2a.py::test_client -s
 ```
 
 ## Development
