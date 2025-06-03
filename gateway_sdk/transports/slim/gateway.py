@@ -135,7 +135,9 @@ class SLIMGateway(BaseTransport):
         sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
 
-    async def _create_gateway(self, org: str, namespace: str, topic: str) -> None:
+    async def _create_gateway(
+        self, org: str, namespace: str, topic: str, retries=3
+    ) -> None:
         # create new gateway object
         logger.info(
             f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}"
@@ -143,15 +145,24 @@ class SLIMGateway(BaseTransport):
 
         self._gateway = await slim_bindings.Slim.new(org, namespace, topic)
 
-        # Connect to slim server
-        _ = await self._gateway.connect(
-            {
-                "endpoint": self._endpoint,
-                "tls": {"insecure": True},
-            }  # TODO: handle with config input
-        )
+        for _ in range(retries):
+            try:
+                # Attempt to connect to the SLIM server
+                # Connect to slim server
+                _ = await self._gateway.connect(
+                    {
+                        "endpoint": self._endpoint,
+                        "tls": {"insecure": True},
+                    }  # TODO: handle with config input
+                )
 
-        logger.info(f"connected to gateway @{self._endpoint}")
+                logger.info(f"connected to gateway @{self._endpoint}")
+                return  # Successfully connected, exit the loop
+            except Exception as e:
+                logger.error(f"Failed to connect to SLIM server: {e}")
+                await asyncio.sleep(1)
+
+        raise RuntimeError(f"Failed to connect to SLIM server after {retries} retries.")
 
     async def _subscribe(self, org: str, namespace: str, topic: str) -> None:
         if not self._gateway:
@@ -168,10 +179,12 @@ class SLIMGateway(BaseTransport):
 
                 msg = Message.deserialize(msg)
 
-                logger.info(f"Received message: {msg}")
+                logger.debug(f"Received message: {msg}")
 
                 reply_to = msg.reply_to
-                msg.reply_to = None  # we will handle reply with the session
+                # We will utilize SLIM's publish_to method to send a response
+                # signal to the callback handler that it does not need to reply using high level publish
+                msg.reply_to = None
 
                 if inspect.iscoroutinefunction(self._callback):
                     output = await self._callback(msg)
@@ -179,7 +192,14 @@ class SLIMGateway(BaseTransport):
                     output = self._callback(msg)
 
                 if reply_to:
-                    await self._gateway.publish_to(recv_session, output.serialize())
+                    if output:
+                        payload = output.serialize()
+                    else:
+                        logger.warning(
+                            f"No response from handler for message: {msg}, sending empty response."
+                        )
+                        payload = b""
+                    await self._gateway.publish_to(recv_session, payload)
 
     async def _publish(
         self, org: str, namespace: str, topic: str, message: Message
