@@ -69,6 +69,6 @@ class BaseTransport(ABC):
         pass
 
     @abstractmethod
-    async def subscribe(self, topic: str) -> None:
+    async def subscribe(self, topic: str, callback: callable = None) -> None:
         """Subscribe to a topic with a callback."""
         pass

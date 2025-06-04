@@ -110,14 +110,11 @@ class GatewayFactory:
         self,
         server,  # add type hints for server, e.g., A2AStarletteApplication
         transport: BaseTransport,
+        topic: str | None = None,
     ) -> MessageBridge:
         """
         Create a bridge/receiver for the specified transport and protocol.
         """
-
-        bridge = None
-        topic = None
-
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             init_tracing(
                 app_name="gateway_bridge",
@@ -125,9 +122,10 @@ class GatewayFactory:
                 disable_batch=True,
             )
 
-        # TODO: handle multiple server types and or agent frameworks ie graph
+        # TODO: handle multiple server types and or agent frameworks
         if isinstance(server, A2AStarletteApplication):
-            topic = A2AProtocol.create_agent_topic(server.agent_card)
+            if topic is None:
+                topic = A2AProtocol.create_agent_topic(server.agent_card)
             handler = self.create_protocol("A2A").create_ingress_handler(server)
         else:
             raise ValueError("Unsupported server type")
