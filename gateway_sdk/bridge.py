@@ -71,6 +71,10 @@ class MessageBridge:
             # Handle the request
             response = await self.handler(message)
 
+            if not response:
+                logger.warning("Handler returned no response for message.")
+                return
+
             # Send response if reply is expected
             if message.reply_to:
                 response.reply_to = message.reply_to

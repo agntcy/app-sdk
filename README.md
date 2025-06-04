@@ -20,7 +20,7 @@ A factory package designed to simplify agent communication across various protoc
 **📡 Supported Messaging Transports**
 
 - [x] NATS
-- [x] AGP
+- [x] SLIM
 - [ ] MQTT _(coming soon)_
 - [ ] WebSocket _(coming soon)_
 
@@ -99,6 +99,12 @@ Run the parameterized e2e test for the A2A client across all transports:
 uv run pytest tests/e2e/test_a2a.py::test_client -s
 ```
 
+Or run a single transport test:
+
+```bash
+uv run pytest tests/e2e/test_a2a.py::test_client -s -k "SLIM"
+```
+
 ## Development
 
 Run a local documentation server:
@@ -111,8 +117,8 @@ make docs
 
 - [x] Support A2A protocol
 - [x] Support NATS transport
-- [ ] Support AGP transport
+- [ ] Support SLIM transport
 - [ ] Support MQTT transport
 - [x] Support e2e observability via Traceloop and OpenTelemetry
 - [ ] Add authentication and transport security
-- [ ] Add traffic routing via AGP control plane
+- [ ] Add traffic routing via SLIM control plane

@@ -7,7 +7,7 @@ import pytest
 TRANSPORT_CONFIGS = {
     "A2A": "http://localhost:9999",
     "NATS": "localhost:4222",
-    "AGP": "http://localhost:46357",
+    "SLIM": "http://localhost:46357",
 }
 
 

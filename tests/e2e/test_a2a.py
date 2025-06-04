@@ -12,13 +12,15 @@ pytest_plugins = "pytest_asyncio"
 
 
 @pytest.mark.parametrize(
-    "transport,endpoint", list(TRANSPORT_CONFIGS.items()), ids=lambda val: val[0]
+    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_client(run_server, transport, endpoint):
+async def test_client(run_server, transport):
     """
     End-to-end test for the A2A factory client over different transports.
     """
+    # Get the endpoint inside the test using the transport name as a key
+    endpoint = TRANSPORT_CONFIGS[transport]
 
     print(
         f"\n--- Starting test: test_client | Transport: {transport} | Endpoint: {endpoint} ---"

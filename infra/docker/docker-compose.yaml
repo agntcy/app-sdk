@@ -15,41 +15,19 @@ services:
       - "8222:8222"
     logging: *logging
 
-  agp:
-    image: ghcr.io/agntcy/agp/gw:0.3.14
-    container_name: agp-gateway
+  slim:
+    image: ghcr.io/agntcy/slim:0.3.15
+    container_name: slim-dataplane
     ports:
       - "46357:46357"
     environment:
-      - PASSWORD=${AGP_GATEWAY_PASSWORD:-dummy_password}
+      - PASSWORD=${SLIM_GATEWAY_PASSWORD:-dummy_password}
       - CONFIG_PATH=/config.yaml
     volumes:
-      - ./configs/agp/server-config.yaml:/config.yaml
-    command: ["/gateway", "--config", "/config.yaml"]
+      - ./configs/slim/server-config.yaml:/config.yaml
+    command: ["/slim", "--config", "/config.yaml"]
     networks:
       - gateway
-
-  otelcol:
-    image: otel/opentelemetry-collector-contrib:0.76.1
-    container_name: otel-col
-    deploy:
-      resources:
-        limits:
-          memory: 125M
-    restart: unless-stopped
-    command: ["--config=/etc/otelcol-config.yml"]
-    environment:
-      - JAEGER_SERVICE_HOST=jaeger
-    volumes:
-      - ./configs/otelcollector/otelcol-config.yml:/etc/otelcol-config.yml
-    ports:
-      - "4317:4317" # OTLP over gRPC receiver
-      - "4318:4318" # OTLP over HTTP receiver
-      - "9464" # Prometheus exporter
-      - "8888" # metrics endpoint
-    networks:
-      - gateway
-    logging: *logging
 
 networks:
   gateway:
