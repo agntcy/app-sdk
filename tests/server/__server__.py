@@ -23,7 +23,6 @@ async def main(transport_type: str, endpoint: str, block: bool = True):
     This is a simple example of how to create a bridge between an A2A server and a transport.
     It creates a Hello World agent and sets up the transport to communicate with it.
     """
-
     skill = AgentSkill(
         id="hello_world",
         name="Returns hello world",

@@ -17,6 +17,7 @@
 from starlette.types import Scope
 from typing import Dict, Any, Callable
 import json
+import asyncio
 from uuid import uuid4
 import httpx
 from os import environ
@@ -154,17 +155,47 @@ class A2AProtocol(BaseAgentProtocol):
             """
             Broadcast a request using the provided transport.
             """
-
-            # 1. create a response topic
-            # 2. subscribe to the response topic
-            # 3. publish the request to the topic
-            # 4. wait for the response
-
             if not request.id:
                 request.id = str(uuid4())
 
+            # 1. create a temporary response topic/inbox
+            reply_topic = uuid4().hex
+
+            # 2. subscribe to the response topic
+            response_queue: asyncio.Queue = asyncio.Queue()
+
+            async def _response_handler(msg: Message) -> None:
+                await response_queue.put(msg.payload)
+
+            transport.set_callback(_response_handler)
+            await transport.subscribe(topic=reply_topic)
+
+            # 3. publish the request to the topic
+            msg = self.message_translator(
+                request=request.model_dump(mode="json", exclude_none=True)
+            )
+            msg.reply_to = reply_topic
+
+            await transport.publish(
+                topic,
+                msg,
+                respond=False,  # we don't want to respond to this message
+            )
+
+            # 4. wait for the n response or timeout
+            logger.info("collecting broadcast responses...")
+            responses = []
+            for _ in range(limit):
+                payload = await response_queue.get()
+                responses.append(payload)
+                logger.info(f"got the {len(responses)} response(s)")
+
+            # 5. return list of responses
+            return {"responses": responses}
+
         # override the _send_request method to use the provided transport
         client._send_request = _send_request
+        client.broadcast_message = broadcast_message
 
     def message_translator(self, request: dict[str, Any]) -> Message:
         """

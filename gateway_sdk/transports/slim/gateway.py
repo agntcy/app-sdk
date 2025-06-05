@@ -100,14 +100,15 @@ class SLIMGateway(BaseTransport):
 
         logger.debug(f"Publishing {message.payload} to topic: {topic}")
 
-        if respond:
-            message.reply_to = topic  # TODO: set this appropriately
+        if respond and not message.reply_to:
+            message.reply_to = topic
 
         resp = await self._publish(
             org=self._default_org,
             namespace=self._default_namespace,
             topic=topic,
             message=message,
+            respond=respond,
         )
 
         if respond:
@@ -123,7 +124,9 @@ class SLIMGateway(BaseTransport):
             topic=topic,
         )
 
-        logger.info(f"Subscribed to topic: {topic}")
+        logger.info(
+            f"Subscribed to {self._default_org}/{self._default_namespace}/{topic}"
+        )
 
     # ###################################################
     # SLIM specific methods
@@ -182,11 +185,15 @@ class SLIMGateway(BaseTransport):
 
                     msg = Message.deserialize(msg)
 
-                    logger.debug(f"Received message: {msg}")
+                    logger.debug(f"Received message: f{msg}")
+                    print(f"Received message: {msg}")
 
                     reply_to = msg.reply_to
                     # We will utilize SLIM's publish_to method to send a response
                     # signal to the callback handler that it does not need to reply using high level publish
+
+                    # if topic == reply_to:
+                    #    msg.reply_to = None
                     msg.reply_to = None
 
                     if inspect.iscoroutinefunction(self._callback):
@@ -198,16 +205,50 @@ class SLIMGateway(BaseTransport):
                         if output:
                             payload = output.serialize()
                         else:
-                            logger.warning(
-                                f"No response from handler for message: {msg}, sending empty response."
-                            )
+                            logger.warning(f"Empty response for reply_to: {reply_to}")
                             payload = b""
-                        await self._gateway.publish_to(recv_session, payload)
+
+                        if topic == reply_to:
+                            print(f"Responding to sender: {reply_to}")
+                            await self._gateway.publish_to(recv_session, payload)
+                        else:
+                            print(f"Responding to {org}/{namespace}/{reply_to}")
+                            # msg.reply_to = reply_to
+                            """await self._publish(
+                                org=org,
+                                namespace=namespace,
+                                topic=reply_to,
+                                message=output,
+                                respond=False,
+                            )"""
+
+                            logger.debug(f"Publishing {payload} to topic: {topic}")
+
+                            await self._gateway.set_route(org, namespace, reply_to)
+
+                            sess = await self._get_session(
+                                org, namespace, reply_to, "pubsub"
+                            )
+
+                            async with self._gateway:
+                                # Send the message
+                                await self._gateway.publish(
+                                    sess,
+                                    payload,
+                                    org,
+                                    namespace,
+                                    reply_to,
+                                )
 
         asyncio.create_task(background_task())
 
     async def _publish(
-        self, org: str, namespace: str, topic: str, message: Message
+        self,
+        org: str,
+        namespace: str,
+        topic: str,
+        message: Message,
+        respond: bool = False,
     ) -> None:
         if not self._gateway:
             # TODO: create a hash for the topic so its private since subscribe hasn't been called
@@ -230,7 +271,9 @@ class SLIMGateway(BaseTransport):
                 topic,
             )
 
-            if message.reply_to:
+            if respond:
+                logger.info(f"responding to message with reply_to: {message.reply_to}")
+
                 session_info, msg = await self._gateway.receive(session=session_info.id)
                 response = Message.deserialize(msg)
                 return response
@@ -241,6 +284,7 @@ class SLIMGateway(BaseTransport):
         # TODO: handle different session types
         if session_key in self._sessions:
             session_info = self._sessions[session_key]
+            logger.debug(f"Reusing existing session: {session_key}")
         else:
             session_info = await self._gateway.create_session(
                 slim_bindings.PySessionConfiguration.Streaming(
@@ -250,6 +294,7 @@ class SLIMGateway(BaseTransport):
                     timeout=datetime.timedelta(seconds=5),
                 )
             )
+            logger.debug(f"Created new session: {session_key}")
             self._sessions[session_key] = session_info
 
         return session_info
