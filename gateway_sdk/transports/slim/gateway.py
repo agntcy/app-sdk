@@ -260,6 +260,16 @@ class SLIMGateway(BaseTransport):
                 response = Message.deserialize(msg)
                 return response
 
+    async def broadcast(
+        self,
+        topic: str,
+        message: Message,
+        wait_for_n: int = 1,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Broadcast a message to all subscribers of a topic and wait for responses."""
+        pass
+
     async def _get_session(self, org, namespace, topic, session_type):
         session_key = f"{org}_{namespace}_{topic}_{session_type}"
 

@@ -20,9 +20,10 @@ from nats.aio.client import Client as NATS
 from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.protocols.message import Message
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 from opentelemetry.propagate import inject, extract
 from opentelemetry import trace
+from uuid import uuid4
 
 configure_logging()
 logger = get_logger(__name__)
@@ -180,19 +181,42 @@ class NatsGateway(BaseTransport):
         message: Message,
         wait_for_n: int = 1,
         headers: Optional[Dict[str, str]] = None,
-    ) -> None:
+    ) -> List[Message]:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
-        publish_topic = self.santize_topic(topic)
-        logger.debug(f"Broadcasting {message.payload} to topic: {publish_topic}")
-
         if self._nc is None:
             await self._connect()
 
-        def _response_handler(msg):
-            """Internal handler for responses to broadcast messages."""
-            response_message = Message.deserialize(msg.data)
-            if self._callback:
-                asyncio.create_task(self._callback(response_message))
+        publish_topic = self.santize_topic(topic)
+        reply_topic = uuid4().hex
+        message.reply_to = reply_topic
+        logger.info(
+            f"Broadcasting to: {publish_topic} and receiving from: {reply_topic}"
+        )
+
+        response_queue: asyncio.Queue = asyncio.Queue()
+
+        async def _response_handler(nats_msg) -> None:
+            msg = Message.deserialize(nats_msg.data)
+            await response_queue.put(msg)
+
+        # Subscribe to the reply topic to handle responses
+        await self._nc.subscribe(reply_topic, cb=_response_handler)
+        await self.publish(
+            topic,
+            message,
+            respond=False,  # respond to the reply topic
+        )
+
+        # 4. wait for the n response or timeout
+        logger.info("collecting {wait_for_n} broadcast responses...")
+        responses = []
+        for _ in range(wait_for_n):
+            payload = await response_queue.get()
+            responses.append(payload)
+            logger.info(f"got the {len(responses)} response(s)")
+
+        # 5. return list of responses
+        return responses
 
     async def _message_handler(self, nats_msg):
         """Internal handler for NATS messages."""
