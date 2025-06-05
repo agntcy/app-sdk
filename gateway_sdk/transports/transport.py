@@ -72,3 +72,14 @@ class BaseTransport(ABC):
     async def subscribe(self, topic: str, callback: callable = None) -> None:
         """Subscribe to a topic with a callback."""
         pass
+
+    @abstractmethod
+    async def broadcast(
+        self,
+        topic: str,
+        message: Message,
+        wait_for_n: int = 1,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Broadcast a message to all subscribers of a topic and wait for responses."""
+        pass

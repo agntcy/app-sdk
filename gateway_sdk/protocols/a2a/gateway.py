@@ -27,7 +27,7 @@ from opentelemetry import trace
 
 from a2a.client import A2AClient
 from a2a.server.apps import A2AStarletteApplication
-from a2a.types import AgentCard, SendMessageRequest
+from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 
 from gateway_sdk.protocols.protocol import BaseAgentProtocol
 from gateway_sdk.transports.transport import BaseTransport
@@ -115,6 +115,7 @@ class A2AProtocol(BaseAgentProtocol):
             # override the _send_request method to use the provided transport
             self._override_send_methods(client, transport, topic)
 
+        print(f"Created A2A client for agent {client.agent_card.name}")
         return client
 
     def _override_send_methods(
@@ -158,14 +159,15 @@ class A2AProtocol(BaseAgentProtocol):
             if not request.id:
                 request.id = str(uuid4())
 
-            # 1. create a temporary response topic/inbox
+            # 1. create a temporary reply topic/inbox
             reply_topic = uuid4().hex
 
             # 2. subscribe to the response topic
             response_queue: asyncio.Queue = asyncio.Queue()
 
             async def _response_handler(msg: Message) -> None:
-                await response_queue.put(msg.payload)
+                resp = json.loads(msg.payload.decode("utf-8"))
+                await response_queue.put(SendMessageResponse(resp))
 
             transport.set_callback(_response_handler)
             await transport.subscribe(topic=reply_topic)

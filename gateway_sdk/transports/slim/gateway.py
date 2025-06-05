@@ -214,31 +214,13 @@ class SLIMGateway(BaseTransport):
                         else:
                             print(f"Responding to {org}/{namespace}/{reply_to}")
                             # msg.reply_to = reply_to
-                            """await self._publish(
+                            await self._publish(
                                 org=org,
                                 namespace=namespace,
                                 topic=reply_to,
                                 message=output,
                                 respond=False,
-                            )"""
-
-                            logger.debug(f"Publishing {payload} to topic: {topic}")
-
-                            await self._gateway.set_route(org, namespace, reply_to)
-
-                            sess = await self._get_session(
-                                org, namespace, reply_to, "pubsub"
                             )
-
-                            async with self._gateway:
-                                # Send the message
-                                await self._gateway.publish(
-                                    sess,
-                                    payload,
-                                    org,
-                                    namespace,
-                                    reply_to,
-                                )
 
         asyncio.create_task(background_task())
 

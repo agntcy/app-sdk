@@ -174,6 +174,26 @@ class NatsGateway(BaseTransport):
                 logger.error(f"Unexpected error while publishing to {topic}: {e}")
                 raise
 
+    async def broadcast(
+        self,
+        topic: str,
+        message: Message,
+        wait_for_n: int = 1,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Broadcast a message to all subscribers of a topic and wait for responses."""
+        publish_topic = self.santize_topic(topic)
+        logger.debug(f"Broadcasting {message.payload} to topic: {publish_topic}")
+
+        if self._nc is None:
+            await self._connect()
+
+        def _response_handler(msg):
+            """Internal handler for responses to broadcast messages."""
+            response_message = Message.deserialize(msg.data)
+            if self._callback:
+                asyncio.create_task(self._callback(response_message))
+
     async def _message_handler(self, nats_msg):
         """Internal handler for NATS messages."""
         message = Message.deserialize(nats_msg.data)
