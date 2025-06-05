@@ -19,6 +19,7 @@ import slim_bindings
 import asyncio
 import inspect
 import datetime
+import uuid
 from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.transports.transport import BaseTransport, Message
 
@@ -108,11 +109,38 @@ class SLIMGateway(BaseTransport):
             namespace=self._default_namespace,
             topic=topic,
             message=message,
-            respond=respond,
+            wait_for_n=1 if respond else 0,
         )
 
         if respond:
-            return resp
+            return resp[0] if resp else None
+
+    async def broadcast(
+        self,
+        topic: str,
+        message: Message,
+        wait_for_n: int = 1,
+        timeout: Optional[float] = 60.0,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Broadcast a message to all subscribers of a topic and wait for responses."""
+        topic = self.santize_topic(topic)
+
+        logger.info(
+            f"Broadcasting to topic: {topic} and waiting for {wait_for_n} responses"
+        )
+
+        message.reply_to = topic if not message.reply_to else message.reply_to
+
+        responses = await self._publish(
+            org=self._default_org,
+            namespace=self._default_namespace,
+            topic=topic,
+            message=message,
+            wait_for_n=wait_for_n,
+        )
+
+        return responses
 
     async def subscribe(self, topic: str) -> None:
         """Subscribe to a topic with a callback."""
@@ -132,11 +160,125 @@ class SLIMGateway(BaseTransport):
     # SLIM specific methods
     # ###################################################
 
-    def santize_topic(self, topic: str) -> str:
-        """Sanitize the topic name to ensure it is valid for NATS."""
-        # NATS topics should not contain spaces or special characters
-        sanitized_topic = topic.replace(" ", "_")
-        return sanitized_topic
+    async def _subscribe(self, org: str, namespace: str, topic: str) -> None:
+        if not self._gateway:
+            await self._create_gateway(org, namespace, uuid.uuid4().hex)
+
+        await self._gateway.set_route(org, namespace, topic)
+        await self._gateway.subscribe(org, namespace, topic)
+
+        session_info = await self._get_session(org, namespace, topic, "pubsub")
+
+        async def background_task():
+            async with self._gateway:
+                while True:
+                    # Receive the message from the session
+                    recv_session, msg = await self._gateway.receive(
+                        session=session_info.id
+                    )
+
+                    msg = Message.deserialize(msg)
+
+                    # check the sender_id header to see if we sent this message
+                    sender_id = msg.headers.get("sender_id")
+                    if sender_id and sender_id.startswith(f"{org}/{namespace}/{topic}"):
+                        logger.debug(f"Skipping message from self: {msg}")
+                        continue
+
+                    logger.debug(f"Received message: f{msg}")
+
+                    reply_to = msg.reply_to
+                    msg.reply_to = None
+
+                    if inspect.iscoroutinefunction(self._callback):
+                        output = await self._callback(msg)
+                    else:
+                        output = self._callback(msg)
+
+                    if reply_to:
+                        # add a header to the output message called sender_id
+                        output.headers = output.headers or {}
+                        output.headers["sender_id"] = f"{org}/{namespace}/{topic}"
+
+                        payload = output.serialize()
+
+                        await self._gateway.publish(
+                            recv_session,
+                            payload,
+                            org,
+                            namespace,
+                            reply_to,
+                        )
+
+                        logger.debug(f"Replied to {reply_to} with message: {output}")
+
+        asyncio.create_task(background_task())
+
+    async def _publish(
+        self,
+        org: str,
+        namespace: str,
+        topic: str,
+        message: Message,
+        wait_for_n: int = 0,
+    ) -> None:
+        if not self._gateway:
+            # TODO: create a hash for the topic so its private since subscribe hasn't been called
+            await self._create_gateway(org, namespace, uuid.uuid4().hex)
+
+        logger.debug(f"Publishing to topic: {topic}")
+
+        await self._gateway.set_route(org, namespace, topic)
+        await self._gateway.subscribe(
+            org, namespace, topic
+        )  # TODO: only do this if msg.reply_to is set
+
+        session_info = await self._get_session(org, namespace, topic, "pubsub")
+
+        # set the sender_id header to the org/namespace/topic
+        message.headers = message.headers or {}
+        message.headers["sender_id"] = f"{org}/{namespace}/{uuid.uuid4()}"
+
+        async with self._gateway:
+            # Send the message
+            await self._gateway.publish(
+                session_info,
+                message.serialize(),
+                org,
+                namespace,
+                topic,
+            )
+
+            responses = []
+            for _ in range(wait_for_n):
+                # Wait for a response if requested
+                logger.debug(f"Waiting for {wait_for_n} responses...")
+                session_info, msg = await self._gateway.receive(session=session_info.id)
+                response = Message.deserialize(msg)
+                responses.append(response)
+
+            return responses
+
+    async def _get_session(self, org, namespace, topic, session_type):
+        session_key = f"{org}_{namespace}_{topic}_{session_type}"
+
+        # TODO: handle different session types
+        if session_key in self._sessions:
+            session_info = self._sessions[session_key]
+            logger.debug(f"Reusing existing session: {session_key}")
+        else:
+            session_info = await self._gateway.create_session(
+                slim_bindings.PySessionConfiguration.Streaming(
+                    slim_bindings.PySessionDirection.BIDIRECTIONAL,
+                    topic=slim_bindings.PyAgentType(org, namespace, topic),
+                    max_retries=5,  # TODO: set this from config
+                    timeout=datetime.timedelta(seconds=5),
+                )
+            )
+            logger.debug(f"Created new session: {session_key}")
+            self._sessions[session_key] = session_info
+
+        return session_info
 
     async def _create_gateway(
         self, org: str, namespace: str, topic: str, retries=3
@@ -167,126 +309,8 @@ class SLIMGateway(BaseTransport):
 
         raise RuntimeError(f"Failed to connect to SLIM server after {retries} retries.")
 
-    async def _subscribe(self, org: str, namespace: str, topic: str) -> None:
-        if not self._gateway:
-            await self._create_gateway(org, namespace, topic)
-
-        await self._gateway.subscribe(org, namespace, topic)
-
-        session_info = await self._get_session(org, namespace, topic, "pubsub")
-
-        async def background_task():
-            async with self._gateway:
-                while True:
-                    # Receive the message from the session
-                    recv_session, msg = await self._gateway.receive(
-                        session=session_info.id
-                    )
-
-                    msg = Message.deserialize(msg)
-
-                    logger.debug(f"Received message: f{msg}")
-                    print(f"Received message: {msg}")
-
-                    reply_to = msg.reply_to
-                    # We will utilize SLIM's publish_to method to send a response
-                    # signal to the callback handler that it does not need to reply using high level publish
-
-                    # if topic == reply_to:
-                    #    msg.reply_to = None
-                    msg.reply_to = None
-
-                    if inspect.iscoroutinefunction(self._callback):
-                        output = await self._callback(msg)
-                    else:
-                        output = self._callback(msg)
-
-                    if reply_to:
-                        if output:
-                            payload = output.serialize()
-                        else:
-                            logger.warning(f"Empty response for reply_to: {reply_to}")
-                            payload = b""
-
-                        if topic == reply_to:
-                            print(f"Responding to sender: {reply_to}")
-                            await self._gateway.publish_to(recv_session, payload)
-                        else:
-                            print(f"Responding to {org}/{namespace}/{reply_to}")
-                            # msg.reply_to = reply_to
-                            await self._publish(
-                                org=org,
-                                namespace=namespace,
-                                topic=reply_to,
-                                message=output,
-                                respond=False,
-                            )
-
-        asyncio.create_task(background_task())
-
-    async def _publish(
-        self,
-        org: str,
-        namespace: str,
-        topic: str,
-        message: Message,
-        respond: bool = False,
-    ) -> None:
-        if not self._gateway:
-            # TODO: create a hash for the topic so its private since subscribe hasn't been called
-            await self._create_gateway("default", "default", "default")
-
-        payload = message.serialize()
-        logger.debug(f"Publishing {payload} to topic: {topic}")
-
-        await self._gateway.set_route(org, namespace, topic)
-
-        session_info = await self._get_session(org, namespace, topic, "pubsub")
-
-        async with self._gateway:
-            # Send the message
-            await self._gateway.publish(
-                session_info,
-                message.serialize(),
-                org,
-                namespace,
-                topic,
-            )
-
-            if respond:
-                logger.info(f"responding to message with reply_to: {message.reply_to}")
-
-                session_info, msg = await self._gateway.receive(session=session_info.id)
-                response = Message.deserialize(msg)
-                return response
-
-    async def broadcast(
-        self,
-        topic: str,
-        message: Message,
-        wait_for_n: int = 1,
-        headers: Optional[Dict[str, str]] = None,
-    ) -> None:
-        """Broadcast a message to all subscribers of a topic and wait for responses."""
-        pass
-
-    async def _get_session(self, org, namespace, topic, session_type):
-        session_key = f"{org}_{namespace}_{topic}_{session_type}"
-
-        # TODO: handle different session types
-        if session_key in self._sessions:
-            session_info = self._sessions[session_key]
-            logger.debug(f"Reusing existing session: {session_key}")
-        else:
-            session_info = await self._gateway.create_session(
-                slim_bindings.PySessionConfiguration.Streaming(
-                    slim_bindings.PySessionDirection.BIDIRECTIONAL,
-                    topic=slim_bindings.PyAgentType(org, namespace, topic),
-                    max_retries=5,  # TODO: set this from config
-                    timeout=datetime.timedelta(seconds=5),
-                )
-            )
-            logger.debug(f"Created new session: {session_key}")
-            self._sessions[session_key] = session_info
-
-        return session_info
+    def santize_topic(self, topic: str) -> str:
+        """Sanitize the topic name to ensure it is valid for NATS."""
+        # NATS topics should not contain spaces or special characters
+        sanitized_topic = topic.replace(" ", "_")
+        return sanitized_topic

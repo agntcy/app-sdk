@@ -24,7 +24,7 @@ from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 from opentelemetry.propagate import inject, extract
 from opentelemetry import trace
 
-from a2a.client import A2AClient
+from a2a.client import A2AClient, A2ACardResolver
 from a2a.server.apps import A2AStarletteApplication
 from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 
@@ -104,6 +104,13 @@ class A2AProtocol(BaseAgentProtocol):
         else:
             httpx_client = httpx.AsyncClient()
             client = await A2AClient.get_client_from_agent_card_url(httpx_client, url)
+            # fix: bug in A2AClient.get_client_from_agent_card_url where the card is not being set
+            if not hasattr(client, "agent_card"):
+                agent_card = await A2ACardResolver(
+                    httpx_client,
+                    base_url=url,
+                ).get_agent_card()
+                client.agent_card = agent_card
 
         if transport:
             logger.info(
@@ -114,7 +121,6 @@ class A2AProtocol(BaseAgentProtocol):
             # override the _send_request method to use the provided transport
             self._override_send_methods(client, transport, topic)
 
-        print(f"Created A2A client for agent {client.agent_card.name}")
         return client
 
     def _override_send_methods(
@@ -168,10 +174,14 @@ class A2AProtocol(BaseAgentProtocol):
                 wait_for_n=limit,
             )
 
-            responses = [
-                SendMessageResponse(json.loads(resp.payload.decode("utf-8")))
-                for resp in responses
-            ]
+            try:
+                responses = [
+                    SendMessageResponse(json.loads(resp.payload.decode("utf-8")))
+                    for resp in responses
+                ]
+            except Exception as e:
+                logger.error(f"Error decoding JSON response: {e}")
+                return []
 
             return responses
 
