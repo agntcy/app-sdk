@@ -229,9 +229,9 @@ class SLIMGateway(BaseTransport):
         logger.debug(f"Publishing to topic: {topic}")
 
         await self._gateway.set_route(org, namespace, topic)
-        await self._gateway.subscribe(
-            org, namespace, topic
-        )  # TODO: only do this if msg.reply_to is set
+        if message.reply_to:
+            topic = message.reply_to
+            await self._gateway.subscribe(org, namespace, topic)
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
 
