@@ -116,7 +116,8 @@ class A2AProtocol(BaseAgentProtocol):
             logger.info(
                 f"Using transport {transport.type()} for A2A client {client.agent_card.name}"
             )
-            topic = self.create_agent_topic(client.agent_card)
+            if not topic:
+                topic = self.create_agent_topic(client.agent_card)
 
             # override the _send_request method to use the provided transport
             self._override_send_methods(client, transport, topic)
@@ -168,11 +169,17 @@ class A2AProtocol(BaseAgentProtocol):
                 request=request.model_dump(mode="json", exclude_none=True)
             )
 
-            responses = await transport.broadcast(
-                topic,
-                msg,
-                wait_for_n=limit,
-            )
+            try:
+                responses = await transport.broadcast(
+                    topic,
+                    msg,
+                    wait_for_n=limit,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error broadcasting A2A request with transport {transport.type()}: {e}"
+                )
+                return []
 
             try:
                 responses = [

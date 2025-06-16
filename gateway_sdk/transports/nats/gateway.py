@@ -208,7 +208,7 @@ class NatsGateway(BaseTransport):
         )
 
         # 4. wait for the n response or timeout
-        logger.info("collecting {wait_for_n} broadcast responses...")
+        logger.info(f"collecting {wait_for_n} broadcast responses...")
         responses = []
         for _ in range(wait_for_n):
             payload = await response_queue.get()
