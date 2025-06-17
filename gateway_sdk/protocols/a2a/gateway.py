@@ -114,7 +114,7 @@ class A2AProtocol(BaseAgentProtocol):
 
         if transport:
             logger.info(
-                f"Using transport {transport.type()} for A2A client {client.agent_card.name}"
+                f"Using transport {transport.type()} for A2A client {topic or client.agent_card.name}"
             )
             if not topic:
                 topic = self.create_agent_topic(client.agent_card)
@@ -156,7 +156,7 @@ class A2AProtocol(BaseAgentProtocol):
 
         async def broadcast_message(
             request: SendMessageRequest,
-            limit: int = 1,
+            expected_responses: int = 1,
             timeout: float = 10.0,
         ) -> dict[str, Any]:
             """
@@ -173,7 +173,8 @@ class A2AProtocol(BaseAgentProtocol):
                 responses = await transport.broadcast(
                     topic,
                     msg,
-                    wait_for_n=limit,
+                    expected_responses=expected_responses,
+                    timeout=timeout,
                 )
             except Exception as e:
                 logger.error(
@@ -181,16 +182,16 @@ class A2AProtocol(BaseAgentProtocol):
                 )
                 return []
 
-            try:
-                responses = [
-                    SendMessageResponse(json.loads(resp.payload.decode("utf-8")))
-                    for resp in responses
-                ]
-            except Exception as e:
-                logger.error(f"Error decoding JSON response: {e}")
-                return []
+            broadcast_responses = []
+            for raw_resp in responses:
+                try:
+                    resp = json.loads(raw_resp.payload.decode("utf-8"))
+                    broadcast_responses.append(SendMessageResponse(resp))
+                except Exception as e:
+                    logger.error(f"Error decoding JSON response: {e}")
+                    continue
 
-            return responses
+            return broadcast_responses
 
         # override the _send_request method to use the provided transport
         client._send_request = _send_request

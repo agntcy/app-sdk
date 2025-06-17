@@ -104,12 +104,18 @@ class SLIMGateway(BaseTransport):
         if respond and not message.reply_to:
             message.reply_to = topic
 
+        # set the sender_id header to the org/namespace/topic
+        message.headers = message.headers or {}
+        message.headers[
+            "sender_id"
+        ] = f"{self._default_org}/{self._default_namespace}/{uuid.uuid4()}"
+
         resp = await self._publish(
             org=self._default_org,
             namespace=self._default_namespace,
             topic=topic,
             message=message,
-            wait_for_n=1 if respond else 0,
+            expected_responses=1 if respond else 0,
         )
 
         if respond:
@@ -119,25 +125,32 @@ class SLIMGateway(BaseTransport):
         self,
         topic: str,
         message: Message,
-        wait_for_n: int = 1,
-        timeout: Optional[float] = 60.0,
+        expected_responses: int = 1,
+        timeout: Optional[float] = 30.0,
         headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         topic = self.santize_topic(topic)
 
         logger.info(
-            f"Broadcasting to topic: {topic} and waiting for {wait_for_n} responses"
+            f"Broadcasting to topic: {topic} and waiting for {expected_responses} responses"
         )
 
         message.reply_to = topic if not message.reply_to else message.reply_to
+
+        # set the sender_id header to the org/namespace/topic
+        message.headers = message.headers or {}
+        message.headers[
+            "sender_id"
+        ] = f"{self._default_org}/{self._default_namespace}/{uuid.uuid4()}"
+        message.headers["broadcast_id"] = str(uuid.uuid4())
 
         responses = await self._publish(
             org=self._default_org,
             namespace=self._default_namespace,
             topic=topic,
             message=message,
-            wait_for_n=wait_for_n,
+            expected_responses=expected_responses,
         )
 
         return responses
@@ -185,7 +198,7 @@ class SLIMGateway(BaseTransport):
                         logger.debug(f"Skipping message from self: {msg}")
                         continue
 
-                    logger.debug(f"Received message: f{msg}")
+                    logger.debug(f"Received message: {msg}")
 
                     reply_to = msg.reply_to
                     msg.reply_to = None
@@ -199,6 +212,9 @@ class SLIMGateway(BaseTransport):
                         # add a header to the output message called sender_id
                         output.headers = output.headers or {}
                         output.headers["sender_id"] = f"{org}/{namespace}/{topic}"
+                        output.headers["broadcast_id"] = msg.headers.get(
+                            "broadcast_id", str(uuid.uuid4())
+                        )
 
                         payload = output.serialize()
 
@@ -220,7 +236,7 @@ class SLIMGateway(BaseTransport):
         namespace: str,
         topic: str,
         message: Message,
-        wait_for_n: int = 0,
+        expected_responses: int = 0,
     ) -> None:
         if not self._gateway:
             # TODO: create a hash for the topic so its private since subscribe hasn't been called
@@ -228,16 +244,18 @@ class SLIMGateway(BaseTransport):
 
         logger.debug(f"Publishing to topic: {topic}")
 
+        # Set a slim route to this topic
         await self._gateway.set_route(org, namespace, topic)
         if message.reply_to:
-            topic = message.reply_to
-            await self._gateway.subscribe(org, namespace, topic)
+            logger.debug(f"Setting reply_to topic: {message.reply_to}")
+            if message.reply_to != topic:
+                logger.warning(
+                    f"Reply-to topic {message.reply_to} is different from the main topic {topic}. This may lead to unexpected behavior."
+                )
+            # to get responses, we need to subscribe to the reply_to topic
+            await self._gateway.subscribe(org, namespace, message.reply_to)
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
-
-        # set the sender_id header to the org/namespace/topic
-        message.headers = message.headers or {}
-        message.headers["sender_id"] = f"{org}/{namespace}/{uuid.uuid4()}"
 
         async with self._gateway:
             # Send the message
@@ -250,11 +268,21 @@ class SLIMGateway(BaseTransport):
             )
 
             responses = []
-            for _ in range(wait_for_n):
+            while len(responses) < expected_responses and expected_responses > 0:
                 # Wait for a response if requested
-                logger.debug(f"Waiting for {wait_for_n} responses...")
                 session_info, msg = await self._gateway.receive(session=session_info.id)
                 response = Message.deserialize(msg)
+
+                # Check if the response is from the same broadcast
+                broadcast_id = message.headers.get("broadcast_id")
+                if (
+                    broadcast_id
+                    and response.headers.get("broadcast_id") != broadcast_id
+                ):
+                    logger.warning(
+                        f"Received response with different broadcast_id: {response.headers.get('broadcast_id')}"
+                    )
+                    continue
                 responses.append(response)
 
             return responses

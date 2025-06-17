@@ -111,6 +111,7 @@ async def test_broadcast(run_server, transport):
     print("[setup] Launching test server...")
     run_server(transport, endpoint)
     run_server(transport, endpoint)
+    run_server(transport, endpoint)
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
@@ -142,49 +143,7 @@ async def test_broadcast(run_server, transport):
 
     responses = await client.broadcast_message(
         request,
-        limit=2,
-    )
-
-    print(f"[debug] Broadcast responses: {responses}")
-
-    if transport_instance:
-        print("[teardown] Closing transport...")
-        await transport_instance.close()
-    print(
-        f"\n--- Starting test: test_client | Transport: {transport} | Endpoint: {endpoint} ---"
-    )
-
-    # Create factory and transport
-    print("[setup] Initializing client factory and transport...")
-    factory = GatewayFactory()
-    transport_instance = factory.create_transport(transport, endpoint=endpoint)
-
-    # Create A2A client
-    print("[test] Creating A2A client...")
-    client = await factory.create_client(
-        "A2A",
-        agent_url=endpoint,
-        agent_topic="Hello_World_Agent_1.0.0",  # Used if transport is provided
-        transport=transport_instance,
-    )
-    assert client is not None, "Client was not created"
-
-    # Build message request
-    print("[test] Sending test message...")
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
-            "messageId": "1234",
-        },
-    }
-    request = SendMessageRequest(
-        id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
-    responses = await client.broadcast_message(
-        request,
-        limit=2,
+        expected_responses=3,  # Expecting 3 responses from the broadcast
     )
 
     print(f"[debug] Broadcast responses: {responses}")

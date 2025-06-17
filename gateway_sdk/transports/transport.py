@@ -78,7 +78,8 @@ class BaseTransport(ABC):
         self,
         topic: str,
         message: Message,
-        wait_for_n: int = 1,
+        expected_responses: int = 1,
+        timeout: Optional[float] = 30.0,
         headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""

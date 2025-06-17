@@ -21,8 +21,6 @@ from gateway_sdk.transports.transport import BaseTransport
 from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.protocols.message import Message
 from typing import Callable, Dict, List, Optional
-from opentelemetry.propagate import inject, extract
-from opentelemetry import trace
 from uuid import uuid4
 
 configure_logging()
@@ -144,42 +142,38 @@ class NatsGateway(BaseTransport):
         else:
             headers = message.headers
 
-        ctx = extract(message.headers)
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("nats_publish", context=ctx):
-            inject(carrier=headers)
+        # add tracing headers to the message
+        message.headers = headers
 
-            # add tracing headers to the message
-            message.headers = headers
+        try:
+            if respond:
+                resp = await self._nc.request(
+                    self.santize_topic(topic),
+                    message.serialize(),
+                    headers=headers,
+                    timeout=timeout,
+                )
 
-            try:
-                if respond:
-                    resp = await self._nc.request(
-                        self.santize_topic(topic),
-                        message.serialize(),
-                        headers=headers,
-                        timeout=timeout,
-                    )
-
-                    message = Message.deserialize(resp.data)
-                    return message
-                else:
-                    await self._nc.publish(
-                        topic,
-                        message.serialize(),
-                    )
-            except nats.errors.TimeoutError:
-                logger.error(f"Timeout while publishing to {topic}")
-                raise
-            except Exception as e:
-                logger.error(f"Unexpected error while publishing to {topic}: {e}")
-                raise
+                message = Message.deserialize(resp.data)
+                return message
+            else:
+                await self._nc.publish(
+                    topic,
+                    message.serialize(),
+                )
+        except nats.errors.TimeoutError:
+            logger.error(f"Timeout while publishing to {topic}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error while publishing to {topic}: {e}")
+            raise
 
     async def broadcast(
         self,
         topic: str,
         message: Message,
-        wait_for_n: int = 1,
+        expected_responses: int = 1,
+        timeout: Optional[float] = 30.0,
         headers: Optional[Dict[str, str]] = None,
     ) -> List[Message]:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
@@ -208,9 +202,9 @@ class NatsGateway(BaseTransport):
         )
 
         # 4. wait for the n response or timeout
-        logger.info(f"collecting {wait_for_n} broadcast responses...")
+        logger.info(f"collecting {expected_responses} broadcast responses...")
         responses = []
-        for _ in range(wait_for_n):
+        for _ in range(expected_responses):
             payload = await response_queue.get()
             responses.append(payload)
             logger.info(f"got the {len(responses)} response(s)")

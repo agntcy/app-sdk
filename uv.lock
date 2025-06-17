@@ -540,7 +540,7 @@ wheels = [
 
 [[package]]
 name = "gateway-sdk"
-version = "0.1.0"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },

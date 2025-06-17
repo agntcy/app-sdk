@@ -1,6 +1,6 @@
 [project]
 name = "gateway-sdk"
-version = "0.1.0"
+version = "0.1.2"
 description = ""
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = "~=3.12"
