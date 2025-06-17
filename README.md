@@ -1,6 +1,6 @@
-# Agent Gateway SDK
+# Agntcy SDK
 
-A factory package designed to simplify agent communication across various protocols and network transports. It enables interoperability between agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
+The Agntcy SDK provides a factory and set of interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
 
 <div align="center" style="margin-bottom: 1rem;">
   <a href="https://pypi.org/project/your-package-name/" target="_blank" style="margin-right: 0.5rem;">
@@ -16,11 +16,12 @@ A factory package designed to simplify agent communication across various protoc
 **🧠 Supported Agent Protocols**
 
 - [x] A2A
+- [ ] MCP _(coming soon)_
 
 **📡 Supported Messaging Transports**
 
-- [x] NATS
 - [x] SLIM
+- [x] NATS
 - [ ] MQTT _(coming soon)_
 - [ ] WebSocket _(coming soon)_
 
