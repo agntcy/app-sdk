@@ -145,15 +145,23 @@ class SLIMGateway(BaseTransport):
         ] = f"{self._default_org}/{self._default_namespace}/{uuid.uuid4()}"
         message.headers["broadcast_id"] = str(uuid.uuid4())
 
-        responses = await self._publish(
-            org=self._default_org,
-            namespace=self._default_namespace,
-            topic=topic,
-            message=message,
-            expected_responses=expected_responses,
-        )
-
-        return responses
+        try:
+            responses = await asyncio.wait_for(
+                self._publish(
+                    org=self._default_org,
+                    namespace=self._default_namespace,
+                    topic=topic,
+                    message=message,
+                    expected_responses=expected_responses,
+                ),
+                timeout=timeout,
+            )
+            return responses
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Broadcast to topic {topic} timed out after {timeout} seconds"
+            )
+            return []
 
     async def subscribe(self, topic: str) -> None:
         """Subscribe to a topic with a callback."""
@@ -170,7 +178,7 @@ class SLIMGateway(BaseTransport):
         )
 
     # ###################################################
-    # SLIM specific methods
+    # SLIM sub methods
     # ###################################################
 
     async def _subscribe(self, org: str, namespace: str, topic: str) -> None:

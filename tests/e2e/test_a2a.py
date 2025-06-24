@@ -148,6 +148,15 @@ async def test_broadcast(run_server, transport):
 
     print(f"[debug] Broadcast responses: {responses}")
 
+    # test a broadcast timeout
+    responses = await client.broadcast_message(
+        request,
+        expected_responses=3,  # Expecting 3 responses from the broadcast
+        timeout=0.001,  # Set a short timeout to test timeout handling
+    )
+
+    assert len(responses) == 0, "Broadcast should have timed out"
+
     if transport_instance:
         print("[teardown] Closing transport...")
         await transport_instance.close()

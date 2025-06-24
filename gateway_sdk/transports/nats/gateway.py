@@ -194,22 +194,37 @@ class NatsGateway(BaseTransport):
             await response_queue.put(msg)
 
         # Subscribe to the reply topic to handle responses
-        await self._nc.subscribe(reply_topic, cb=_response_handler)
+        sub = await self._nc.subscribe(reply_topic, cb=_response_handler)
         await self.publish(
             topic,
             message,
-            respond=False,  # respond to the reply topic
+            respond=False,  # tell receivers to reply to the reply_topic
         )
 
-        # 4. wait for the n response or timeout
-        logger.info(f"collecting {expected_responses} broadcast responses...")
-        responses = []
-        for _ in range(expected_responses):
-            payload = await response_queue.get()
-            responses.append(payload)
-            logger.info(f"got the {len(responses)} response(s)")
+        logger.info(
+            f"Collecting up to {expected_responses} response(s) with timeout={timeout}s..."
+        )
+        responses: List[Message] = []
 
-        # 5. return list of responses
+        try:
+            # Use a timeout to collect responses
+            async def collect_responses():
+                while len(responses) < expected_responses:
+                    msg = await asyncio.wait_for(response_queue.get(), timeout=timeout)
+                    responses.append(msg)
+                    logger.info(f"Received {len(responses)} response(s)")
+
+            await collect_responses()
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Timeout reached after {timeout}s; collected {len(responses)} response(s)"
+            )
+
+        finally:
+            # Clean up subscription to avoid memory leaks
+            await sub.unsubscribe()
+
         return responses
 
     async def _message_handler(self, nats_msg):
