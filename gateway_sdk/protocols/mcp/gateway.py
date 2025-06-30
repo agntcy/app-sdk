@@ -16,23 +16,23 @@
 
 from typing import Any
 
-import asyncio
 from mcp.client.streamable_http import streamablehttp_client
 
 from gateway_sdk.common.logging_config import configure_logging, get_logger
 from gateway_sdk.protocols.message import Message
-from gateway_sdk.protocols.protocol import BaseAgentProtocol
-from gateway_sdk.transports.transport import BaseTransport 
-from gateway_sdk.transports.streamable_http.gateway import StreamableHTTPGateway 
+from gateway_sdk.transports.transport import BaseTransport
+from gateway_sdk.transports.streamable_http.gateway import StreamableHTTPGateway
 
 configure_logging()
 logger = get_logger(__name__)
+
 
 class MCPProtocol:
     """
     MCPProtocol is a placeholder for the MCP protocol implementation.
     It should define methods to create clients, receivers, and handle messages.
     """
+
     def type(self):
         return "MCP"
 
@@ -48,7 +48,7 @@ class MCPProtocol:
         logger.info(f"Creating MCP client with URL: {url}")
         if not url:
             raise ValueError("MCP Server URL must be provided to create an MCP client")
-        
+
         # overrides the transport to use StreamableHTTPGateway
         transport = StreamableHTTPGateway(endpoint=url)
 
@@ -61,7 +61,7 @@ class MCPProtocol:
             await transport.close()
             logger.error(f"Failed to create MCP client: {e}")
             raise
-    
+
     def message_translator(self, request: Any) -> Message:
         """
         Translate a request into a Message object.
@@ -71,7 +71,7 @@ class MCPProtocol:
         raise NotImplementedError(
             "Message translation is not implemented for MCP protocol"
         )
-    
+
     def create_ingress_handler(self, *args, **kwargs) -> Any:
         """
         Create an ingress handler for the MCP protocol.
@@ -80,7 +80,3 @@ class MCPProtocol:
         raise NotImplementedError(
             "Ingress handler creation is not implemented for MCP protocol"
         )
-
-
-
-

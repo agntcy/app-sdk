@@ -1,4 +1,3 @@
-import argparse
 from typing import Any
 
 import httpx
@@ -16,14 +15,15 @@ mcp = FastMCP()
 # Standard request headers
 HEADERS_NWS = {
     "Accept": "application/geo+json",
-    "User-Agent": "ColombiaCoffeeFarmAgent/1.0"
+    "User-Agent": "ColombiaCoffeeFarmAgent/1.0",
 }
 
-HEADERS_NOMINATIM = {
-    "User-Agent": "ColombiaCoffeeFarmAgent/1.0"
-}
+HEADERS_NOMINATIM = {"User-Agent": "ColombiaCoffeeFarmAgent/1.0"}
 
-async def make_request(url: str, headers: dict[str, str], params: dict[str, str] = None) -> dict[str, Any] | None:
+
+async def make_request(
+    url: str, headers: dict[str, str], params: dict[str, str] = None
+) -> dict[str, Any] | None:
     """Make a GET request with error handling."""
     async with httpx.AsyncClient() as client:
         try:
@@ -34,19 +34,17 @@ async def make_request(url: str, headers: dict[str, str], params: dict[str, str]
             print(f"Request error at {url}: {e}")
             return None
 
+
 async def geocode_location(location: str) -> tuple[float, float] | None:
     """Convert location name to (lat, lon) using Nominatim."""
-    params = {
-        "q": location,
-        "format": "json",
-        "limit": "1"
-    }
+    params = {"q": location, "format": "json", "limit": "1"}
     data = await make_request(NOMINATIM_BASE, headers=HEADERS_NOMINATIM, params=params)
     if data and len(data) > 0:
         lat = float(data[0]["lat"])
         lon = float(data[0]["lon"])
         return lat, lon
     return None
+
 
 @mcp.tool()
 async def get_forecast(location: str) -> str:
@@ -55,11 +53,7 @@ async def get_forecast(location: str) -> str:
         return f"Could not determine coordinates for location: {location}"
     lat, lon = coords
 
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "current_weather": "true"
-    }
+    params = {"latitude": lat, "longitude": lon, "current_weather": "true"}
 
     data = await make_request(OPEN_METEO_BASE, {}, params=params)
     if not data or "current_weather" not in data:
@@ -71,6 +65,7 @@ async def get_forecast(location: str) -> str:
         f"Wind speed: {cw['windspeed']} m/s\n"
         f"Wind direction: {cw['winddirection']}°"
     )
+
 
 if __name__ == "__main__":
     app = mcp.streamable_http_app()

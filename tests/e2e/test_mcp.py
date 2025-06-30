@@ -1,10 +1,4 @@
 from gateway_sdk.factory import GatewayFactory
-from a2a.types import (
-    MessageSendParams,
-    SendMessageRequest,
-)
-from typing import Any
-import uuid
 import pytest
 
 pytest_plugins = "pytest_asyncio"
@@ -27,7 +21,9 @@ async def test_client():
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
     factory = GatewayFactory()
-    transport_instance = factory.create_transport(transport=transport, endpoint=endpoint)
+    transport_instance = factory.create_transport(
+        transport=transport, endpoint=endpoint
+    )
 
     # Create A2A client
     print("[test] Creating MCP client...")
@@ -44,9 +40,9 @@ async def test_client():
     print("[test] Sending test message...")
     try:
         result = await client.session.call_tool(
-                    name="get_forecast",
-                    arguments={"location": "Colombia"},
-                )
+            name="get_forecast",
+            arguments={"location": "Colombia"},
+        )
         print(f"Tool call result: {result}")
 
         response = ""
