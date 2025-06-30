@@ -87,5 +87,11 @@ class StreamableHTTPGateway(BaseTransport):
         raise NotImplementedError(
             "Subscribe method is not implemented for Streamable HTTP transport"
         ) 
+    
+    async def broadcast(self, topic, message, expected_responses = 1, timeout = 30, headers = None):
+        """Broadcast a message to all subscribers of a topic."""
+        raise NotImplementedError(
+            "Broadcast method is not implemented for Streamable HTTP transport"
+        )
         
     
