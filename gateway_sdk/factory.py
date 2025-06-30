@@ -50,7 +50,7 @@ class TransportTypes(Enum):
     SLIM = "SLIM"
     NATS = "NATS"
     MQTT = "MQTT"
-    StreamableHTTP = "StreamableHTTP"
+    STREAMABLE_HTTP = "StreamableHTTP"
 
 
 class GatewayFactory:
@@ -205,7 +205,7 @@ class GatewayFactory:
         """
         self._transport_registry["SLIM"] = SLIMGateway
         self._transport_registry["NATS"] = NatsGateway
-        self._transport_registry["StreamableHTTP"] = StreamableHTTPGateway
+        self._transport_registry["STREAMABLE_HTTP"] = StreamableHTTPGateway
 
     def _register_wellknown_protocols(self):
         """

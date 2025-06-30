@@ -18,7 +18,7 @@ async def test_client():
 
     # Endpoint for local test mcp server
     endpoint = "http://localhost:8123/mcp"
-    transport = "SLIM"
+    transport = "STREAMABLE_HTTP"
 
     print(
         f"\n--- Starting test: test_client | Transport: {transport} | Endpoint: {endpoint} ---"
