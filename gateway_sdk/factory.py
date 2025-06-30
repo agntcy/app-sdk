@@ -23,8 +23,10 @@ from gateway_sdk.protocols.protocol import BaseAgentProtocol
 
 from gateway_sdk.transports.slim.gateway import SLIMGateway
 from gateway_sdk.transports.nats.gateway import NatsGateway
+from gateway_sdk.transports.streamable_http.gateway import StreamableHTTPGateway
 
 from gateway_sdk.protocols.a2a.gateway import A2AProtocol
+from gateway_sdk.protocols.mcp.gateway import MCPProtocol
 from a2a.server.apps import A2AStarletteApplication
 
 from gateway_sdk.bridge import MessageBridge
@@ -39,6 +41,7 @@ logger = get_logger(__name__)
 # a utility enum class to define transport types as constants
 class ProtocolTypes(Enum):
     A2A = "A2A"
+    MCP = "MCP"
 
 
 # a utility enum class to define transport types as constants
@@ -47,6 +50,7 @@ class TransportTypes(Enum):
     SLIM = "SLIM"
     NATS = "NATS"
     MQTT = "MQTT"
+    STREAMABLE_HTTP = "StreamableHTTP"
 
 
 class GatewayFactory:
@@ -201,9 +205,11 @@ class GatewayFactory:
         """
         self._transport_registry["SLIM"] = SLIMGateway
         self._transport_registry["NATS"] = NatsGateway
+        self._transport_registry["STREAMABLE_HTTP"] = StreamableHTTPGateway
 
     def _register_wellknown_protocols(self):
         """
         Register well-known protocols. New protocols can be registered using the register decorator.
         """
         self._protocol_registry["A2A"] = A2AProtocol
+        self._protocol_registry["MCP"] = MCPProtocol
