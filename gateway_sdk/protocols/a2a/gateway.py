@@ -17,6 +17,7 @@
 from starlette.types import Scope
 from typing import Dict, Any, Callable
 import json
+from uuid import uuid4
 import httpx
 from os import environ
 from opentelemetry.instrumentation.starlette import StarletteInstrumentor
@@ -25,7 +26,7 @@ from opentelemetry import trace
 
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.server.apps import A2AStarletteApplication
-from a2a.types import AgentCard
+from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 
 from gateway_sdk.protocols.protocol import BaseAgentProtocol
 from gateway_sdk.transports.transport import BaseTransport
@@ -94,7 +95,6 @@ class A2AProtocol(BaseAgentProtocol):
         Create an A2A client, overriding the default client _send_request method to
         use the provided transport.
         """
-
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
 
@@ -104,28 +104,41 @@ class A2AProtocol(BaseAgentProtocol):
         else:
             httpx_client = httpx.AsyncClient()
             client = await A2AClient.get_client_from_agent_card_url(httpx_client, url)
-
-        # fix bug in A2AClient.get_client_from_agent_card_url where the card is not being set
-        if not hasattr(client, "agent_card"):
-            agent_card = await A2ACardResolver(
-                httpx_client,
-                base_url=url,
-            ).get_agent_card()
-            client.agent_card = agent_card
+            # fix: bug in A2AClient.get_client_from_agent_card_url where the card is not being set
+            if not hasattr(client, "agent_card"):
+                agent_card = await A2ACardResolver(
+                    httpx_client,
+                    base_url=url,
+                ).get_agent_card()
+                client.agent_card = agent_card
 
         if transport:
             logger.info(
-                f"Using transport {transport.type()} for A2A client {client.agent_card.name}"
+                f"Using transport {transport.type()} for A2A client {topic or client.agent_card.name}"
             )
-            topic = self.create_agent_topic(client.agent_card)
+            if not topic:
+                topic = self.create_agent_topic(client.agent_card)
 
-            async def _send_request(
-                rpc_request_payload: dict[str, Any],
-                http_kwargs: dict[str, Any] | None = None,
-            ) -> dict[str, Any]:
-                """
-                Send a request using the provided transport.
-                """
+            # override the _send_request method to use the provided transport
+            self._override_send_methods(client, transport, topic)
+
+        return client
+
+    def _override_send_methods(
+        self, client: A2AClient, transport: BaseTransport, topic: str
+    ) -> None:
+        """
+        Register the send methods for the A2A client.
+        """
+
+        async def _send_request(
+            rpc_request_payload: dict[str, Any],
+            http_kwargs: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """
+            Send a request using the provided transport.
+            """
+            try:
                 response = await transport.publish(
                     topic,
                     self.message_translator(request=rpc_request_payload),
@@ -135,11 +148,54 @@ class A2AProtocol(BaseAgentProtocol):
 
                 response.payload = json.loads(response.payload.decode("utf-8"))
                 return response.payload
+            except Exception as e:
+                logger.error(
+                    f"Error sending A2A request with transport {transport.type()}: {e}"
+                )
+                raise e  # TODO: handle errors more gracefully
 
-            # override the _send_request method to use the provided transport
-            client._send_request = _send_request
+        async def broadcast_message(
+            request: SendMessageRequest,
+            expected_responses: int = 1,
+            timeout: float = 10.0,
+        ) -> dict[str, Any]:
+            """
+            Broadcast a request using the provided transport.
+            """
+            if not request.id:
+                request.id = str(uuid4())
 
-        return client
+            msg = self.message_translator(
+                request=request.model_dump(mode="json", exclude_none=True)
+            )
+
+            try:
+                responses = await transport.broadcast(
+                    topic,
+                    msg,
+                    expected_responses=expected_responses,
+                    timeout=timeout,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error broadcasting A2A request with transport {transport.type()}: {e}"
+                )
+                return []
+
+            broadcast_responses = []
+            for raw_resp in responses:
+                try:
+                    resp = json.loads(raw_resp.payload.decode("utf-8"))
+                    broadcast_responses.append(SendMessageResponse(resp))
+                except Exception as e:
+                    logger.error(f"Error decoding JSON response: {e}")
+                    continue
+
+            return broadcast_responses
+
+        # override the _send_request method to use the provided transport
+        client._send_request = _send_request
+        client.broadcast_message = broadcast_message
 
     def message_translator(self, request: dict[str, Any]) -> Message:
         """
