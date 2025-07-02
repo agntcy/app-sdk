@@ -16,14 +16,13 @@ The Agntcy SDK provides a factory and set of interfaces for creating agentic com
 **🧠 Supported Agent Protocols**
 
 - [x] A2A
-- [ ] MCP _(coming soon)_
+- [x] MCP
 
 **📡 Supported Messaging Transports**
 
 - [x] SLIM
 - [x] NATS
 - [ ] MQTT _(coming soon)_
-- [ ] WebSocket _(coming soon)_
 
 ### Architecture
 

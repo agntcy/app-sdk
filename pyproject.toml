@@ -1,6 +1,6 @@
 [project]
 name = "gateway-sdk"
-version = "0.1.2"
+version = "0.1.4"
 description = ""
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = "~=3.12"
@@ -10,10 +10,7 @@ dependencies = [
     "nats-py>=2.10.0,<3",
     "cisco-outshift-agent-utils>=0.0.2,<0.0.3",
     "coloredlogs>=15.0.1,<16",
-    "traceloop-sdk>=0.40.5",
     "langchain-community>=0.3.24",
-    "opentelemetry-instrumentation-starlette>=0.54b0",
-    "click>=8.2.0",
     "uvicorn>=0.34.3",
     "slim-bindings==0.3.6",
     "mcp[cli]>=1.10.1",

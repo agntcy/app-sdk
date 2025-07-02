@@ -19,10 +19,6 @@ from typing import Dict, Any, Callable
 import json
 from uuid import uuid4
 import httpx
-from os import environ
-from opentelemetry.instrumentation.starlette import StarletteInstrumentor
-from opentelemetry.propagate import inject, extract
-from opentelemetry import trace
 
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.server.apps import A2AStarletteApplication
@@ -219,10 +215,6 @@ class A2AProtocol(BaseAgentProtocol):
         # Create an ASGI adapter
         self._app = server.build()
 
-        if environ.get("TRACING_ENABLED", "false").lower() == "true":
-            StarletteInstrumentor().instrument_app(self._app)
-            logger.info("Tracing enabled for ASGI app")
-
         return self.handle_incoming_request
 
     async def handle_incoming_request(self, message: Message) -> Message:
@@ -289,26 +281,19 @@ class A2AProtocol(BaseAgentProtocol):
                 if "body" in message:
                     response_data["body"].extend(message["body"])
 
-        ctx = extract(message.headers)
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("server_run", context=ctx):
-            # Call the ASGI application with our scope, receive, and send
-            await self._app(scope, receive, send)
+        # Call the ASGI application with our scope, receive, and send
+        await self._app(scope, receive, send)
 
-            # Parse the body
-            body = bytes(response_data["body"])
-            try:
-                body_obj = json.loads(body.decode("utf-8"))
-                payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                payload = body  # raw bytes
+        # Parse the body
+        body = bytes(response_data["body"])
+        try:
+            body_obj = json.loads(body.decode("utf-8"))
+            payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            payload = body  # raw bytes
 
-            headers = {}
-            inject(carrier=headers)
-
-            return Message(
-                type="A2AResponse",
-                payload=payload,
-                reply_to=message.reply_to,
-                headers=headers,
-            )
+        return Message(
+            type="A2AResponse",
+            payload=payload,
+            reply_to=message.reply_to,
+        )
