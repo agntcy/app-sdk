@@ -17,20 +17,20 @@
 from typing import Dict, Type
 from enum import Enum
 
-from gateway_sdk.transports.transport import BaseTransport
-from gateway_sdk.protocols.protocol import BaseAgentProtocol
+from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 
-from gateway_sdk.transports.slim.gateway import SLIMGateway
-from gateway_sdk.transports.nats.gateway import NatsGateway
-from gateway_sdk.transports.streamable_http.gateway import StreamableHTTPGateway
+from agntcy_app_sdk.transports.slim.gateway import SLIMGateway
+from agntcy_app_sdk.transports.nats.gateway import NatsGateway
+from agntcy_app_sdk.transports.streamable_http.gateway import StreamableHTTPGateway
 
-from gateway_sdk.protocols.a2a.gateway import A2AProtocol
-from gateway_sdk.protocols.mcp.gateway import MCPProtocol
+from agntcy_app_sdk.protocols.a2a.gateway import A2AProtocol
+from agntcy_app_sdk.protocols.mcp.gateway import MCPProtocol
 from a2a.server.apps import A2AStarletteApplication
 
-from gateway_sdk.bridge import MessageBridge
+from agntcy_app_sdk.bridge import MessageBridge
 
-from gateway_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
 configure_logging()
 logger = get_logger(__name__)

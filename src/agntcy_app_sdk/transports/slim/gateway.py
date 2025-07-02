@@ -20,8 +20,8 @@ import asyncio
 import inspect
 import datetime
 import uuid
-from gateway_sdk.common.logging_config import configure_logging, get_logger
-from gateway_sdk.transports.transport import BaseTransport, Message
+from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.transports.transport import BaseTransport, Message
 
 configure_logging()
 logger = get_logger(__name__)

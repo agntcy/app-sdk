@@ -1,4 +1,4 @@
-from gateway_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import GatewayFactory
 import pytest
 
 pytest_plugins = "pytest_asyncio"

@@ -13,19 +13,3 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-
-from ..logging_config import configure_logging, get_logger
-
-configure_logging()
-logger = get_logger(__name__)
-
-
-def create_client(url):
-    pass
-
-
-def create_receiver():
-    """
-    A receiver should connect to a gateway and then offload messages to A2A agents
-    """
-    pass

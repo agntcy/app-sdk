@@ -1,6 +1,6 @@
 # Agntcy SDK
 
-The Agntcy SDK provides a factory and set of interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
+The Agntcy Application SDK provides a factory and set of interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
 
 <div align="center" style="margin-bottom: 1rem;">
   <a href="https://pypi.org/project/your-package-name/" target="_blank" style="margin-right: 0.5rem;">
@@ -20,8 +20,8 @@ The Agntcy SDK provides a factory and set of interfaces for creating agentic com
 
 **📡 Supported Messaging Transports**
 
-- [x] SLIM
 - [x] NATS
+- [x] SLIM
 - [ ] MQTT _(coming soon)_
 
 ### Architecture
@@ -50,7 +50,7 @@ Create an A2A server bridge with your network transport of choice:
 
 ```python
 from a2a.server import A2AServer
-from gateway_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import GatewayFactory
 
 ...
 server = A2AServer(agent_card=agent_card, request_handler=request_handler)
@@ -65,8 +65,8 @@ await bridge.start()
 Create an A2A client with a transport of your choice:
 
 ```python
-from gateway_sdk.factory import GatewayFactory
-from gateway_sdk.factory import ProtocolTypes
+from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import ProtocolTypes
 
 factory = GatewayFactory()
 

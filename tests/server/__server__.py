@@ -12,8 +12,8 @@ from a2a.types import (
 import asyncio
 import argparse
 from uvicorn import Config, Server
-from gateway_sdk.factory import TransportTypes
-from gateway_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import TransportTypes
+from agntcy_app_sdk.factory import GatewayFactory
 
 factory = GatewayFactory()
 

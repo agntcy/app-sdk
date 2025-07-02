@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from gateway_sdk.protocols.message import Message
+from agntcy_app_sdk.protocols.message import Message
 from typing import Callable, Dict, Optional
 from typing import Any, TypeVar, Type
 import asyncio

@@ -24,11 +24,11 @@ from a2a.client import A2AClient, A2ACardResolver
 from a2a.server.apps import A2AStarletteApplication
 from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 
-from gateway_sdk.protocols.protocol import BaseAgentProtocol
-from gateway_sdk.transports.transport import BaseTransport
-from gateway_sdk.protocols.message import Message
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
+from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.protocols.message import Message
 
-from gateway_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
 configure_logging()
 logger = get_logger(__name__)

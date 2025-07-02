@@ -18,10 +18,10 @@ from typing import Any
 
 from mcp.client.streamable_http import streamablehttp_client
 
-from gateway_sdk.common.logging_config import configure_logging, get_logger
-from gateway_sdk.protocols.message import Message
-from gateway_sdk.transports.transport import BaseTransport
-from gateway_sdk.transports.streamable_http.gateway import StreamableHTTPGateway
+from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.protocols.message import Message
+from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.transports.streamable_http.gateway import StreamableHTTPGateway
 
 configure_logging()
 logger = get_logger(__name__)
