@@ -41,19 +41,34 @@ The Agntcy Application SDK provides a factory and set of interfaces for creating
 
 # Quick Start
 
-This project uses [uv](https://github.com/astral-sh/uv) for package management:
+Install the SDK via pip:
+
+```bash
+pip install gateway-sdk
+```
+
+Or install from source:
+
+```bash
+git clone https://github.com/cisco-outshift-ai-agents/gateway-sdk.git
+cd gateway-sdk
+```
 
 ```bash
 # Install UV if you don't have it already
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
 
-Create a new virtual environment and install the dependencies:
-
-```bash
+# Install the SDK dependencies
 uv venv
 source .venv/bin/activate
 ```
+
+[Server-side](#a2a-server-bridge): Create an A2A server bridge with a SLIM | NATS transport.  
+[Client-side](#a2a-client-with-transport): Create an A2A client with a SLIM | NATS transport.
+
+Note: To run a NATS or SLIM server, see the provided [docker-compose](infra/docker/docker-compose.yaml) file.
+
+### A2A Server Bridge
 
 Create an A2A server bridge with your network transport of choice:
 
@@ -71,7 +86,7 @@ bridge = factory.create_bridge(server, transport=transport)
 await bridge.start()
 ```
 
-Create an A2A client with a transport of your choice:
+### A2A Client with Transport
 
 ```python
 from agntcy_app_sdk.factory import GatewayFactory
@@ -82,7 +97,7 @@ factory = GatewayFactory()
 transport = factory.create_transport("NATS", "localhost:4222")
 
 # connect via agent URL
-client_over_nats = await factory.create_client("A2A", transport=transport)
+client_over_nats = await factory.create_client("A2A", agent_url="http://localhost:9999", transport=transport)
 
 # or connect via agent topic
 client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_topic="Hello_World_Agent_1.0.0", transport=transport)
@@ -121,3 +136,5 @@ uv run pytest tests/e2e/test_a2a.py::test_client -s -k "SLIM"
 ```
 
 # Contributing
+
+Contributions are welcome! Please see the [contribution guide](CONTRIBUTING.md) for details on how to contribute to the Agntcy Application SDK.
