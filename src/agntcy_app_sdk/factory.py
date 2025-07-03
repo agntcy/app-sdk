@@ -106,7 +106,6 @@ class GatewayFactory:
         Create a bridge/receiver for the specified transport and protocol.
         """
 
-        # TODO: handle multiple server types and or agent frameworks
         if isinstance(server, A2AStarletteApplication):
             if topic is None:
                 topic = A2AProtocol.create_agent_topic(server.agent_card)

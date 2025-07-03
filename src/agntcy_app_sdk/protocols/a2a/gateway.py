@@ -41,7 +41,7 @@ class A2AProtocol(BaseAgentProtocol):
     @staticmethod
     def create_agent_topic(agent_card: AgentCard) -> str:
         """
-        Create a topic for the agent card metadata.
+        A standard way to create a topic for the agent card metadata.
         """
         return f"{agent_card.name}_{agent_card.version}"
 
@@ -49,7 +49,7 @@ class A2AProtocol(BaseAgentProtocol):
         self, topic: str, transport: BaseTransport
     ) -> A2AClient:
         """
-        Create an A2A client from the agent card topic, bypassing all need for a URLs.
+        Create an A2A client from the agent card topic, bypassing all need for a URL.
         """
         logger.info(f"Getting agent card from topic {topic}")
 
@@ -251,8 +251,8 @@ class A2AProtocol(BaseAgentProtocol):
             "raw_path": route_path.encode("utf-8"),
             "query_string": b"",
             "headers": headers,
-            "client": ("nats-bridge", 0),
-            "server": ("nats-bridge", 0),
+            "client": ("agntcy-bridge", 0),
+            "server": ("agntcy-bridge", 0),
         }
 
         # Create the receive channel that will yield request body

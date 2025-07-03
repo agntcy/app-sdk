@@ -1,28 +1,46 @@
-# Agntcy SDK
+<div align='center'>
+
+<h2>
+  Agntcy Application SDK
+</h2>
+
+&nbsp;
+
+</div>
 
 The Agntcy Application SDK provides a factory and set of interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
 
-<div align="center" style="margin-bottom: 1rem;">
-  <a href="https://pypi.org/project/your-package-name/" target="_blank" style="margin-right: 0.5rem;">
-    <img src="https://img.shields.io/pypi/v/your-package-name?logo=pypi&logoColor=%23FFFFFF&label=Version&color=%2300BCEB" alt="PyPI version">
-  </a>
-  <a href="./LICENSE" target="_blank">
-    <img src="https://img.shields.io/badge/License-Apache%202.0-blue?color=%2300BCEB" alt="Apache License">
-  </a>
+&nbsp;
+
+<div align='center'>
+  
+<pre>
+✅ A2A over NATS             ✅ A2A over SLIM              🕐 A2A over MQTT
+✅ Request-reply messaging   ✅ Publish-subscribe          ✅ Broadcast messaging
+✅ MCP transport decoupling  🕐 Baked-in observability     🕐 Baked-in identity & trust
+</pre>
+
+<div align='center'>
+
+[![PyPI version](https://img.shields.io/pypi/v/ioa-observe-sdk.svg)](https://pypi.org/project/gateway-sdk/)
+[![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/cisco-outshift-ai-agents/gateway-sdk/LICENSE)
+
+</div>
+</div>
+<div align="center">
+  <div style="text-align: center;">
+    <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick start</a> •
+    <a target="_blank" href="#featured-examples" style="margin: 0 10px;">Examples</a> •
+    <a target="_blank" href="#features" style="margin: 0 10px;">Features</a> •
+    <a target="_blank" href="#api-reference" style="margin: 0 10px;">API Reference</a>
+  </div>
 </div>
 
+&nbsp;
+
+# Quick start
+
 ---
-
-**🧠 Supported Agent Protocols**
-
-- [x] A2A
-- [x] MCP
-
-**📡 Supported Messaging Transports**
-
-- [x] NATS
-- [x] SLIM
-- [ ] MQTT _(coming soon)_
 
 ### Architecture
 
@@ -45,6 +63,11 @@ source .venv/bin/activate
 ```
 
 ## Getting Started
+
+| Protocol \ Transport | SLIM | NATS | STREAMABLE_HTTP | MQTT |
+| -------------------- | :--: | :--: | :-------------: | :--: |
+| **A2A**              |  ✅  |  ✅  |       🕐        |  🕐  |
+| **MCP**              |  🕐  |  🕐  |       ✅        |  🕐  |
 
 Create an A2A server bridge with your network transport of choice:
 
@@ -115,10 +138,4 @@ make docs
 
 ## Roadmap
 
-- [x] Support A2A protocol
-- [x] Support NATS transport
-- [ ] Support SLIM transport
-- [ ] Support MQTT transport
-- [x] Support e2e observability via Traceloop and OpenTelemetry
-- [ ] Add authentication and transport security
-- [ ] Add traffic routing via SLIM control plane
+TBD
