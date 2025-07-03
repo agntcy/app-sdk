@@ -1,12 +1,12 @@
 <div align='center'>
 
-<h2>
+<h1>
   Agntcy Application SDK
-</h2>
-
-&nbsp;
+</h1>
 
 </div>
+
+for the internet of agents
 
 The Agntcy Application SDK provides a factory and set of interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
 
@@ -15,9 +15,9 @@ The Agntcy Application SDK provides a factory and set of interfaces for creating
 <div align='center'>
   
 <pre>
-✅ A2A over NATS             ✅ A2A over SLIM              🕐 A2A over MQTT
-✅ Request-reply messaging   ✅ Publish-subscribe          ✅ Broadcast messaging
-✅ MCP transport decoupling  🕐 Baked-in observability     🕐 Baked-in identity & trust
+✅ A2A over SLIM           ✅ A2A over NATS              🕐 A2A over MQTT (soon)      
+✅ Request-reply messaging ✅ Publish-subscribe          ✅ Broadcast messaging       
+✅ MCP client factory      🕐 Observability built-in     🕐 Identity & trust built-in 
 </pre>
 
 <div align='center'>
@@ -29,24 +29,17 @@ The Agntcy Application SDK provides a factory and set of interfaces for creating
 </div>
 <div align="center">
   <div style="text-align: center;">
-    <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick start</a> •
-    <a target="_blank" href="#featured-examples" style="margin: 0 10px;">Examples</a> •
-    <a target="_blank" href="#features" style="margin: 0 10px;">Features</a> •
-    <a target="_blank" href="#api-reference" style="margin: 0 10px;">API Reference</a>
+    <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
+    <a target="_blank" href="#api-reference" style="margin: 0 10px;">API Reference</a> •
+    <a target="_blank" href="#reference-application" style="margin: 0 10px;">Reference Apps</a> •
+    <a target="_blank" href="#testing" style="margin: 0 10px;">Testing</a> •
+    <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
   </div>
 </div>
 
 &nbsp;
 
-# Quick start
-
----
-
-### Architecture
-
-[![architecture](assets/architecture.png)]()
-
-## Installation
+# Quick Start
 
 This project uses [uv](https://github.com/astral-sh/uv) for package management:
 
@@ -61,13 +54,6 @@ Create a new virtual environment and install the dependencies:
 uv venv
 source .venv/bin/activate
 ```
-
-## Getting Started
-
-| Protocol \ Transport | SLIM | NATS | STREAMABLE_HTTP | MQTT |
-| -------------------- | :--: | :--: | :-------------: | :--: |
-| **A2A**              |  ✅  |  ✅  |       🕐        |  🕐  |
-| **MCP**              |  🕐  |  🕐  |       ✅        |  🕐  |
 
 Create an A2A server bridge with your network transport of choice:
 
@@ -96,13 +82,19 @@ factory = GatewayFactory()
 transport = factory.create_transport("NATS", "localhost:4222")
 
 # connect via agent URL
-client_over_nats = await factory.create_client("A2A", agent_url="http://localhost:9999", transport=transport)
+client_over_nats = await factory.create_client("A2A", transport=transport)
 
 # or connect via agent topic
 client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_topic="Hello_World_Agent_1.0.0", transport=transport)
 ```
 
-## Testing
+For more details and exhaustive capabilities, see the [API Reference](#api-reference) below.
+
+# API Reference
+
+# Reference Applications
+
+# Testing
 
 The `/tests` directory contains e2e tests for the gateway factory, including A2A client and various transports.
 
@@ -128,14 +120,4 @@ Or run a single transport test:
 uv run pytest tests/e2e/test_a2a.py::test_client -s -k "SLIM"
 ```
 
-## Development
-
-Run a local documentation server:
-
-```bash
-make docs
-```
-
-## Roadmap
-
-TBD
+# Contributing
