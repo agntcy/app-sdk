@@ -6,8 +6,6 @@
 
 </div>
 
-for the internet of agents
-
 The Agntcy Application SDK provides a factory and set of interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
 
 &nbsp;
@@ -15,8 +13,8 @@ The Agntcy Application SDK provides a factory and set of interfaces for creating
 <div align='center'>
   
 <pre>
-✅ A2A over SLIM           ✅ A2A over NATS              🕐 A2A over MQTT (soon)      
-✅ Request-reply messaging ✅ Publish-subscribe          ✅ Broadcast messaging       
+✅ A2A over SLIM           ✅ A2A over NATS              🕐 A2A over MQTT             
+✅ Request-reply           ✅ Publish-subscribe          ✅ Broadcast                 
 ✅ MCP client factory      🕐 Observability built-in     🕐 Identity & trust built-in 
 </pre>
 
@@ -31,7 +29,7 @@ The Agntcy Application SDK provides a factory and set of interfaces for creating
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
     <a target="_blank" href="#api-reference" style="margin: 0 10px;">API Reference</a> •
-    <a target="_blank" href="#reference-application" style="margin: 0 10px;">Reference Apps</a> •
+    <a target="_blank" href="#reference-apps" style="margin: 0 10px;">Reference Apps</a> •
     <a target="_blank" href="#testing" style="margin: 0 10px;">Testing</a> •
     <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
   </div>
@@ -44,14 +42,14 @@ The Agntcy Application SDK provides a factory and set of interfaces for creating
 Install the SDK via pip:
 
 ```bash
-pip install gateway-sdk
+pip install agntcy-app-sdk
 ```
 
 Or install from source:
 
 ```bash
-git clone https://github.com/cisco-outshift-ai-agents/gateway-sdk.git
-cd gateway-sdk
+git clone https://github.com/agntcy/app-sdk.git
+cd app-sdk
 ```
 
 ```bash
@@ -68,7 +66,7 @@ source .venv/bin/activate
 
 Note: To run a NATS or SLIM server, see the provided [docker-compose](infra/docker/docker-compose.yaml) file.
 
-### A2A Server Bridge
+### A2A Server Bridge Example
 
 Create an A2A server bridge with your network transport of choice:
 
@@ -86,7 +84,7 @@ bridge = factory.create_bridge(server, transport=transport)
 await bridge.start()
 ```
 
-### A2A Client with Transport
+### A2A Client with Transport Example
 
 ```python
 from agntcy_app_sdk.factory import GatewayFactory
@@ -107,7 +105,7 @@ For more details and exhaustive capabilities, see the [API Reference](#api-refer
 
 # API Reference
 
-# Reference Applications
+# Reference Apps
 
 # Testing
 
