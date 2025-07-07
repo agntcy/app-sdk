@@ -6,7 +6,7 @@
 
 </div>
 
-The Agntcy Application SDK provides a factory and set of interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
+The Agntcy Application SDK provides a factory and interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
 
 &nbsp;
 
@@ -61,8 +61,8 @@ uv venv
 source .venv/bin/activate
 ```
 
-[Server-side](#a2a-server-bridge): Create an A2A server bridge with a SLIM | NATS transport.  
-[Client-side](#a2a-client-with-transport): Create an A2A client with a SLIM | NATS transport.
+[Server-side](#a2a-server-bridge-example): Create an A2A server bridge with a SLIM | NATS transport.  
+[Client-side](#a2a-client-with-transport-example): Create an A2A client with a SLIM | NATS transport.
 
 Note: To run a NATS or SLIM server, see the provided [docker-compose](infra/docker/docker-compose.yaml) file.
 
@@ -105,7 +105,11 @@ For more details and exhaustive capabilities, see the [API Reference](#api-refer
 
 # API Reference
 
+For detailed API documentation, please refer to the [API Reference](API_REFERENCE.md).
+
 # Reference Apps
+
+For fully functional examples, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
 
 # Testing
 
