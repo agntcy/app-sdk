@@ -1,5 +1,92 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 Cisco and/or its affiliates.
+# Copyright 2025 Cisco Systems, Inc. and its affiliates
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 # SPDX-License-Identifier: Apache-2.0
+
+"""logging_configuration.py
+==========================
+A **self‑contained, dependency‑free** (aside from the optional
+``coloredlogs`` package) helper that gives any Python project
+production‑ready logging in a single import.
+
+Why use it?
+-----------
+* **Consistent formatting** across libraries & your own code.
+* **Structured JSON** output for log aggregation platforms *or*
+  **colourised human‑friendly** output for local debugging – selectable at
+  runtime.
+* **Zero boilerplate** – call :pyfunc:`get_logger` and start logging.
+* **Drop‑in** for CLI tools, web frameworks (FastAPI / Django / Flask),
+  serverless functions, and background jobs.
+
+Quick‑start
+~~~~~~~~~~~
+```python
+from logging_configuration import get_logger
+
+log = get_logger(__name__)
+log.info("Hello, world!")
+```
+With no environment variables set, messages appear on ``stdout`` using a
+colourised format at ``INFO`` level.
+
+Environment Variables
+---------------------
+The behaviour can be tweaked entirely via environment variables – no code
+changes required.
+
+============================== =================== ============================================
+Variable                       Example             Purpose / Effect
+============================== =================== ============================================
+``LOG_LEVEL``                  ``"DEBUG"``         Root log level (default: ``INFO``)
+``LOG_FORMATTER``              ``"json"``          ``"json"`` or ``"colored"`` (default)
+``LOG_TO_FILE``                ``"1"``             Write JSON logs to *logs/application.log*
+``LOGCONF_AUTO_CONFIGURE_LOGGING`` ``"0"``         **Disable** auto‑configuration on import
+``HTTP_CLIENT_DEBUG``          ``"1"``             Enable verbose ``http.client`` wire‑logging
+============================== =================== ============================================
+
+Usage patterns
+--------------
+**1. Application entry‑point** (recommended) – explicit configuration::
+
+    import logging_configuration as logconf
+
+    logconf.configure_logging()  # configure as early as possible
+    logger = logconf.get_logger(__name__)
+
+**2. Library / reusable package** – rely on auto‑configuration::
+
+    from logging_configuration import get_logger
+
+    log = get_logger(__name__)
+    log.debug("Library initialised")
+
+Advanced configuration
+~~~~~~~~~~~~~~~~~~~~~~
+* **File logging** – set ``LOG_TO_FILE=1`` to mirror JSON logs to
+  *logs/application.log* (rotated on every start‑up).
+* **Disable colour** – choose ``LOG_FORMATTER=json`` or pipe output to a
+  file; colour codes are suppressed automatically when ``isatty`` is
+  ``False``.
+* **HTTP debugging** – set ``HTTP_CLIENT_DEBUG=1`` to dump full request &
+  response bodies via the standard library's ``http.client`` module.
+
+API Reference
+-------------
+.. autofunction:: configure_logging
+.. autofunction:: get_logger
+"""
 from __future__ import annotations
 
 import json
