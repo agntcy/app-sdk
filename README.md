@@ -11,6 +11,8 @@
   </picture>
 </a>
 
+&nbsp;
+
 </div>
 
 The Agntcy Application SDK offers a unified, interoperable factory for constructing multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single interface for creating Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP.
