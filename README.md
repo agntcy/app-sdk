@@ -1,21 +1,26 @@
 <div align='center'>
 
 <h1>
-  Agntcy Application SDK
+  Application SDK
 </h1>
+
+<a href="https://agntcy.org">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/_logo-Agntcy_White@2x.png" width="300">
+    <img alt="" src="assets/_logo-Agntcy_FullColor@2x.png" width="300">
+  </picture>
+</a>
 
 </div>
 
-The Agntcy Application SDK provides a factory and interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
-
-&nbsp;
+The Agntcy Application SDK offers a unified, interoperable factory for constructing multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single interface for creating Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP.
 
 <div align='center'>
   
 <pre>
 ✅ A2A over SLIM           ✅ A2A over NATS              🕐 A2A over MQTT             
 ✅ Request-reply           ✅ Publish-subscribe          ✅ Broadcast                 
-✅ MCP client factory      🕐 Observability built-in     🕐 Identity & trust built-in 
+✅ MCP client factory      🕐 Observability provider     🕐 Identity provider         
 </pre>
 
 <div align='center'>
@@ -61,14 +66,11 @@ uv venv
 source .venv/bin/activate
 ```
 
-[Server-side](#a2a-server-bridge-example): Create an A2A server bridge with a SLIM | NATS transport.  
-[Client-side](#a2a-client-with-transport-example): Create an A2A client with a SLIM | NATS transport.
+[**A2A Server**](#a2a-server-with-transport-example): Create an A2A server bridge with a `SLIM` | `NATS` transport.  
+[**A2A Client**](#a2a-client-with-transport-example): Create an A2A client with a `SLIM` | `NATS` transport.  
+[**MCP Client**](#mcp-client-from-factory-example): Create an MCP client default `streamable-http` transport.
 
-Note: To run a NATS or SLIM server, see the provided [docker-compose](infra/docker/docker-compose.yaml) file.
-
-### A2A Server Bridge Example
-
-Create an A2A server bridge with your network transport of choice:
+### A2A Server with Transport Example
 
 ```python
 from a2a.server import A2AServer
@@ -78,7 +80,7 @@ from agntcy_app_sdk.factory import GatewayFactory
 server = A2AServer(agent_card=agent_card, request_handler=request_handler)
 
 factory = GatewayFactory()
-transport = factory.create_transport("NATS", "localhost:4222")
+transport = factory.create_transport("SLIM", "http://localhost:46357")
 bridge = factory.create_bridge(server, transport=transport)
 
 await bridge.start()
@@ -99,6 +101,23 @@ client_over_nats = await factory.create_client("A2A", agent_url="http://localhos
 
 # or connect via agent topic
 client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_topic="Hello_World_Agent_1.0.0", transport=transport)
+```
+
+### MCP Client from Factory Example
+
+```python
+# Create factory and transport
+factory = GatewayFactory()
+transport_instance = factory.create_transport(
+    transport="STREAMABLE_HTTP", endpoint="http://localhost:8123/mcp"
+)
+
+# Create MCP client
+client = await factory.create_client(
+    "MCP",
+    agent_url=endpoint,
+    transport=transport_instance,
+)
 ```
 
 For more details and exhaustive capabilities, see the [API Reference](#api-reference) below.

@@ -25,7 +25,7 @@ async def test_client():
         transport=transport, endpoint=endpoint
     )
 
-    # Create A2A client
+    # Create a MCP client
     print("[test] Creating MCP client...")
     client = await factory.create_client(
         "MCP",
