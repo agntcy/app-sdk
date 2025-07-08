@@ -1,4 +1,4 @@
-# Getting Started Guide
+# Usage Guide
 
 In this guide, we will walk through some of the key features of the Agntcy Application SDK and explore an end-to-end example of creating two A2A agents that communicate over a PubSub transport.
 

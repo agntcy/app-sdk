@@ -35,7 +35,7 @@ The Agntcy Application SDK offers a unified, interoperable factory for construct
 <div align="center">
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
-    <a target="_blank" href="docs/GETTING_STARTED_GUIDE.md" style="margin: 0 10px;">Getting Started Guide</a> •
+    <a target="_blank" href="docs/USAGE_GUIDE.md" style="margin: 0 10px;">Usage Guide</a> •
     <a target="_blank" href="#reference-apps" style="margin: 0 10px;">Reference Apps</a> •
     <a target="_blank" href="#testing" style="margin: 0 10px;">Testing</a> •
     <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
