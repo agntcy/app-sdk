@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = "~=3.12"
+license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
     "a2a-sdk==0.2.5",
@@ -16,6 +17,10 @@ dependencies = [
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
 ]
+
+[project.urls]
+"Homepage" = "https://github.com/agntcy/app-sdk"
+"Bug Tracker" = "https://github.com/agntcy/app-sdk/issues"
 
 [dependency-groups]
 dev = [

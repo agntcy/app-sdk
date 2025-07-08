@@ -15,7 +15,7 @@
 
 </div>
 
-The Agntcy Application SDK offers a unified, interoperable factory for constructing multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single interface for creating Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP.
+The Agntcy Application SDK offers a unified, interoperable factory for constructing multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single interface to interact with Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP.
 
 <div align='center'>
   
@@ -35,7 +35,7 @@ The Agntcy Application SDK offers a unified, interoperable factory for construct
 <div align="center">
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
-    <a target="_blank" href="#api-reference" style="margin: 0 10px;">API Reference</a> •
+    <a target="_blank" href="docs/GETTING_STARTED_GUIDE.md" style="margin: 0 10px;">Getting Started Guide</a> •
     <a target="_blank" href="#reference-apps" style="margin: 0 10px;">Reference Apps</a> •
     <a target="_blank" href="#testing" style="margin: 0 10px;">Testing</a> •
     <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
@@ -56,16 +56,7 @@ Or install from source:
 
 ```bash
 git clone https://github.com/agntcy/app-sdk.git
-cd app-sdk
-```
-
-```bash
-# Install UV if you don't have it already
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install the SDK dependencies
-uv venv
-source .venv/bin/activate
+pip install -e app-sdk
 ```
 
 [**A2A Server**](#a2a-server-with-transport-example): Create an A2A server bridge with a `SLIM` | `NATS` transport.  
@@ -78,7 +69,7 @@ source .venv/bin/activate
 from a2a.server import A2AServer
 from agntcy_app_sdk.factory import GatewayFactory
 
-...
+# bring your own agent card and request handler
 server = A2AServer(agent_card=agent_card, request_handler=request_handler)
 
 factory = GatewayFactory()
@@ -124,15 +115,11 @@ client = await factory.create_client(
 )
 ```
 
-For more details and exhaustive capabilities, see the [API Reference](#api-reference) below.
-
-# API Reference
-
-For detailed API documentation, please refer to the [API Reference](API_REFERENCE.md).
+For more details and exhaustive capabilities, see the [Getting Started Guide](docs/GETTING_STARTED_GUIDE.md).
 
 # Reference Apps
 
-For fully functional examples, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
+For fully functional distributed multi-agent examples, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
 
 # Testing
 
