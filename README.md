@@ -115,7 +115,7 @@ client = await factory.create_client(
 )
 ```
 
-For more details and exhaustive capabilities, see the [Getting Started Guide](docs/GETTING_STARTED_GUIDE.md).
+For more details and exhaustive capabilities, see the [Usage Guide](docs/USAGE_GUIDE.md).
 
 # Reference Apps
 
