@@ -108,6 +108,8 @@ client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_to
 ### MCP Client from Factory Example
 
 ```python
+from agntcy_app_sdk.factory import GatewayFactory
+
 # Create factory and transport
 factory = GatewayFactory()
 transport_instance = factory.create_transport(
