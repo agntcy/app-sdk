@@ -27,8 +27,8 @@ The Agntcy Application SDK offers a unified, interoperable factory for construct
 
 <div align='center'>
 
-[![PyPI version](https://img.shields.io/pypi/v/ioa-observe-sdk.svg)](https://pypi.org/project/gateway-sdk/)
-[![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/cisco-outshift-ai-agents/gateway-sdk/LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/agntcy-app-sdk.svg)](https://pypi.org/project/agntcy-app-sdk/)
+[![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/agntcy/app-sdk/LICENSE)
 
 </div>
 </div>
