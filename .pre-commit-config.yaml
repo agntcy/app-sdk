@@ -14,7 +14,6 @@ repos:
       - id: check-yaml
       - id: detect-private-key
       - id: end-of-file-fixer
-      - id: trailing-whitespace
   - repo: https://github.com/kaechele/pre-commit-mirror-prettier
     rev: v3.2.4
     hooks:

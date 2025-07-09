@@ -1,24 +1,26 @@
 [project]
-name = "gateway-sdk"
-version = "0.1.2"
-description = ""
+name = "agntcy-app-sdk"
+version = "0.1.0"
+description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = "~=3.12"
+license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
     "a2a-sdk==0.2.5",
     "nats-py>=2.10.0,<3",
     "cisco-outshift-agent-utils>=0.0.2,<0.0.3",
     "coloredlogs>=15.0.1,<16",
-    "traceloop-sdk>=0.40.5",
     "langchain-community>=0.3.24",
-    "opentelemetry-instrumentation-starlette>=0.54b0",
-    "click>=8.2.0",
     "uvicorn>=0.34.3",
     "slim-bindings==0.3.6",
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
 ]
+
+[project.urls]
+"Homepage" = "https://github.com/agntcy/app-sdk"
+"Bug Tracker" = "https://github.com/agntcy/app-sdk/issues"
 
 [dependency-groups]
 dev = [
@@ -45,9 +47,6 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
-
-[project.scripts]
-gateway-infra = "gateway_sdk.__cli__:cli"
 
 [build-system]
 requires = ["hatchling"]

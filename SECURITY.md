@@ -31,7 +31,7 @@ will send a more detailed response within an additional three (3) business days
 indicating the next steps in handling your report.
 
 If you've been unable to successfully draft a vulnerability report via GitHub or
-have not received a response during the alloted response window, please reach out via
+have not received a response during the allotted response window, please reach out via
 [oss-security@cisco.com](mailto:oss-security@cisco.com) contact email.
 
 After the initial reply to your report, the maintainers will endeavor to keep

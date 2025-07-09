@@ -1,73 +1,89 @@
-# Agntcy SDK
+<div align='center'>
 
-The Agntcy SDK provides a factory and set of interfaces for creating agentic communication bridges and clients. This SDK is designed to enable interoperability between different agent protocols and messaging layers by decoupling protocol logic from the underlying network stack.
+<h1>
+  Application SDK
+</h1>
 
-<div align="center" style="margin-bottom: 1rem;">
-  <a href="https://pypi.org/project/your-package-name/" target="_blank" style="margin-right: 0.5rem;">
-    <img src="https://img.shields.io/pypi/v/your-package-name?logo=pypi&logoColor=%23FFFFFF&label=Version&color=%2300BCEB" alt="PyPI version">
-  </a>
-  <a href="./LICENSE" target="_blank">
-    <img src="https://img.shields.io/badge/License-Apache%202.0-blue?color=%2300BCEB" alt="Apache License">
-  </a>
+<a href="https://agntcy.org">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/_logo-Agntcy_White@2x.png" width="300">
+    <img alt="" src="assets/_logo-Agntcy_FullColor@2x.png" width="300">
+  </picture>
+</a>
+
+&nbsp;
+
 </div>
 
----
+The Agntcy Application SDK offers a unified, interoperable factory for constructing multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single interface to interact with Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP.
 
-**🧠 Supported Agent Protocols**
+<div align='center'>
+  
+<pre>
+✅ A2A over SLIM           ✅ A2A over NATS              🕐 A2A over MQTT             
+✅ Request-reply           ✅ Publish-subscribe          ✅ Broadcast                 
+✅ MCP client factory      🕐 Observability provider     🕐 Identity provider         
+</pre>
 
-- [x] A2A
-- [ ] MCP _(coming soon)_
+<div align='center'>
 
-**📡 Supported Messaging Transports**
+[![PyPI version](https://img.shields.io/pypi/v/agntcy-app-sdk.svg)](https://pypi.org/project/agntcy-app-sdk/)
+[![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/agntcy/app-sdk/LICENSE)
 
-- [x] SLIM
-- [x] NATS
-- [ ] MQTT _(coming soon)_
-- [ ] WebSocket _(coming soon)_
+</div>
+</div>
+<div align="center">
+  <div style="text-align: center;">
+    <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
+    <a target="_blank" href="docs/USAGE_GUIDE.md" style="margin: 0 10px;">Usage Guide</a> •
+    <a target="_blank" href="#reference-apps" style="margin: 0 10px;">Reference Apps</a> •
+    <a target="_blank" href="#testing" style="margin: 0 10px;">Testing</a> •
+    <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
+  </div>
+</div>
 
-### Architecture
+&nbsp;
 
-[![architecture](assets/architecture.png)]()
+# Quick Start
 
-## Installation
-
-This project uses [uv](https://github.com/astral-sh/uv) for package management:
+Install the SDK via pip:
 
 ```bash
-# Install UV if you don't have it already
-curl -LsSf https://astral.sh/uv/install.sh | sh
+pip install agntcy-app-sdk
 ```
 
-Create a new virtual environment and install the dependencies:
+Or install from source:
 
 ```bash
-uv venv
-source .venv/bin/activate
+git clone https://github.com/agntcy/app-sdk.git
+pip install -e app-sdk
 ```
 
-## Getting Started
+[**A2A Server**](#a2a-server-with-transport-example): Create an A2A server bridge with a `SLIM` | `NATS` transport.  
+[**A2A Client**](#a2a-client-with-transport-example): Create an A2A client with a `SLIM` | `NATS` transport.  
+[**MCP Client**](#mcp-client-from-factory-example): Create an MCP client default `streamable-http` transport.
 
-Create an A2A server bridge with your network transport of choice:
+### A2A Server with Transport Example
 
 ```python
 from a2a.server import A2AServer
-from gateway_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import GatewayFactory
 
-...
+# bring your own agent card and request handler
 server = A2AServer(agent_card=agent_card, request_handler=request_handler)
 
 factory = GatewayFactory()
-transport = factory.create_transport("NATS", "localhost:4222")
+transport = factory.create_transport("SLIM", "http://localhost:46357")
 bridge = factory.create_bridge(server, transport=transport)
 
 await bridge.start()
 ```
 
-Create an A2A client with a transport of your choice:
+### A2A Client with Transport Example
 
 ```python
-from gateway_sdk.factory import GatewayFactory
-from gateway_sdk.factory import ProtocolTypes
+from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import ProtocolTypes
 
 factory = GatewayFactory()
 
@@ -80,7 +96,32 @@ client_over_nats = await factory.create_client("A2A", agent_url="http://localhos
 client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_topic="Hello_World_Agent_1.0.0", transport=transport)
 ```
 
-## Testing
+### MCP Client from Factory Example
+
+```python
+from agntcy_app_sdk.factory import GatewayFactory
+
+# Create factory and transport
+factory = GatewayFactory()
+transport_instance = factory.create_transport(
+    transport="STREAMABLE_HTTP", endpoint="http://localhost:8123/mcp"
+)
+
+# Create MCP client
+client = await factory.create_client(
+    "MCP",
+    agent_url=endpoint,
+    transport=transport_instance,
+)
+```
+
+For more details and exhaustive capabilities, see the [Usage Guide](docs/USAGE_GUIDE.md).
+
+# Reference Apps
+
+For fully functional distributed multi-agent examples, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
+
+# Testing
 
 The `/tests` directory contains e2e tests for the gateway factory, including A2A client and various transports.
 
@@ -106,20 +147,6 @@ Or run a single transport test:
 uv run pytest tests/e2e/test_a2a.py::test_client -s -k "SLIM"
 ```
 
-## Development
+# Contributing
 
-Run a local documentation server:
-
-```bash
-make docs
-```
-
-## Roadmap
-
-- [x] Support A2A protocol
-- [x] Support NATS transport
-- [ ] Support SLIM transport
-- [ ] Support MQTT transport
-- [x] Support e2e observability via Traceloop and OpenTelemetry
-- [ ] Add authentication and transport security
-- [ ] Add traffic routing via SLIM control plane
+Contributions are welcome! Please see the [contribution guide](CONTRIBUTING.md) for details on how to contribute to the Agntcy Application SDK.

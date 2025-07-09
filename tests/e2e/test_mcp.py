@@ -14,7 +14,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from gateway_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import GatewayFactory
 import pytest
 
 pytest_plugins = "pytest_asyncio"
@@ -41,7 +41,7 @@ async def test_client():
         transport=transport, endpoint=endpoint
     )
 
-    # Create A2A client
+    # Create a MCP client
     print("[test] Creating MCP client...")
     client = await factory.create_client(
         "MCP",
