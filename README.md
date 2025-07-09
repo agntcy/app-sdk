@@ -36,7 +36,7 @@ The Agntcy Application SDK offers a unified, interoperable factory for construct
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
     <a target="_blank" href="docs/USAGE_GUIDE.md" style="margin: 0 10px;">Usage Guide</a> •
-    <a target="_blank" href="#reference-apps" style="margin: 0 10px;">Reference Apps</a> •
+    <a target="_blank" href="#reference-application" style="margin: 0 10px;">Reference App</a> •
     <a target="_blank" href="#testing" style="margin: 0 10px;">Testing</a> •
     <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
   </div>
@@ -117,9 +117,13 @@ client = await factory.create_client(
 
 For more details and exhaustive capabilities, see the [Usage Guide](docs/USAGE_GUIDE.md).
 
-# Reference Apps
+# Reference Application
 
-For fully functional distributed multi-agent examples, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
+<a href="https://github.com/agntcy/coffeeAgntcy">
+  <img alt="" src="assets/coffee_agntcy.png" width="284">
+</a>
+
+For a fully functional distributed multi-agent sample app, check out our ~[coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)~!
 
 # Testing
 
