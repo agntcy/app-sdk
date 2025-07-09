@@ -123,7 +123,7 @@ For more details and exhaustive capabilities, see the [Usage Guide](docs/USAGE_G
   <img alt="" src="assets/coffee_agntcy.png" width="284">
 </a>
 
-For a fully functional distributed multi-agent sample app, check out our ~[coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)~!
+For a fully functional distributed multi-agent sample app, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
 
 # Testing
 
