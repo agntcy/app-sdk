@@ -39,7 +39,7 @@ cd a2a-pubsub
 Install the Agntcy Application SDK and Langgraph:
 
 ```bash
-uv install agntcy-app-sdk
+uv add agntcy-app-sdk
 ```
 
 Next we will create a simple weather agent that responds to weather queries. Create a file named `weather_agent.py` and implement the A2A agent and add a message bridge to a SLIM transport:
