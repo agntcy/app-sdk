@@ -67,14 +67,14 @@ pip install -e app-sdk
 
 ```python
 from a2a.server.apps import A2AStarletteApplication
-from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import AgntcyFactory
 
 # bring your own agent card and request handler
 server = A2AStarletteApplication(
   agent_card=agent_card, http_handler=request_handler
 )
 
-factory = GatewayFactory()
+factory = GAgntcyFactory()
 transport = factory.create_transport("SLIM", "http://localhost:46357")
 bridge = factory.create_bridge(server, transport=transport)
 
@@ -84,10 +84,10 @@ await bridge.start()
 ### A2A Client with Transport Example
 
 ```python
-from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.factory import ProtocolTypes
 
-factory = GatewayFactory()
+factory = AgntcyFactory()
 
 transport = factory.create_transport("NATS", "localhost:4222")
 
@@ -101,10 +101,10 @@ client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_to
 ### MCP Client from Factory Example
 
 ```python
-from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import AgntcyFactory
 
 # Create factory and transport
-factory = GatewayFactory()
+factory = AgntcyFactory()
 transport_instance = factory.create_transport(
     transport="STREAMABLE_HTTP", endpoint="http://localhost:8123/mcp"
 )
@@ -125,7 +125,7 @@ For fully functional distributed multi-agent examples, check out our [coffeeAgnt
 
 # Testing
 
-The `/tests` directory contains e2e tests for the gateway factory, including A2A client and various transports.
+The `/tests` directory contains e2e tests for the factory, including A2A client and various transports.
 
 ### Prerequisites
 
@@ -135,7 +135,7 @@ Run the required message bus services:
 docker-compose -f infra/docker/docker-compose.yaml up
 ```
 
-**✅ Test the gateway factory with A2A client and all available transports**
+**✅ Test the factory with A2A client and all available transports**
 
 Run the parameterized e2e test for the A2A client across all transports:
 

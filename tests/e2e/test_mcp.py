@@ -14,7 +14,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import AgntcyFactory
 import pytest
 
 pytest_plugins = "pytest_asyncio"
@@ -36,7 +36,7 @@ async def test_client():
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = GatewayFactory()
+    factory = AgntcyFactory()
     transport_instance = factory.create_transport(
         transport=transport, endpoint=endpoint
     )

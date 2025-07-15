@@ -31,7 +31,7 @@ Nats implementation of BaseTransport.
 """
 
 
-class NatsGateway(BaseTransport):
+class NatsTransport(BaseTransport):
     def __init__(
         self, client: Optional[NATS] = None, endpoint: Optional[str] = None, **kwargs
     ):
@@ -52,12 +52,12 @@ class NatsGateway(BaseTransport):
         self.subscriptions = []
 
     @classmethod
-    def from_client(cls, client: NATS) -> "NatsGateway":
+    def from_client(cls, client: NATS) -> "NatsTransport":
         # Optionally validate client
         return cls(client=client)
 
     @classmethod
-    def from_config(cls, endpoint: str, **kwargs) -> "NatsGateway":
+    def from_config(cls, endpoint: str, **kwargs) -> "NatsTransport":
         """
         Create a NATS transport instance from a configuration.
         :param gateway_endpoint: The NATS server endpoint.

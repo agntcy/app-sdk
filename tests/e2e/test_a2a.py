@@ -14,7 +14,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import AgntcyFactory
 from a2a.types import (
     MessageSendParams,
     SendMessageRequest,
@@ -48,7 +48,7 @@ async def test_client(run_server, transport):
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = GatewayFactory()
+    factory = AgntcyFactory()
     transport_instance = factory.create_transport(transport, endpoint=endpoint)
 
     # Create A2A client
@@ -131,7 +131,7 @@ async def test_broadcast(run_server, transport):
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = GatewayFactory()
+    factory = AgntcyFactory()
     transport_instance = factory.create_transport(transport, endpoint=endpoint)
 
     # Create A2A client

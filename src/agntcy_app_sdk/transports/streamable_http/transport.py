@@ -28,7 +28,7 @@ configure_logging()
 logger = get_logger(__name__)
 
 
-class StreamableHTTPGateway(BaseTransport):
+class StreamableHTTPTransport(BaseTransport):
     def __init__(self, endpoint: str):
         self.endpoint: str = endpoint if endpoint else None
         self.session: Optional[ClientSession] = None
@@ -51,7 +51,7 @@ class StreamableHTTPGateway(BaseTransport):
         return cls(endpoint=endpoint, **kwargs)
 
     def type(self) -> str:
-        return "StreamableHTTP"
+        return "StreamableHTTPTransport"
 
     def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""

@@ -31,9 +31,9 @@ SLIM implementation of the BaseTransport interface.
 """
 
 
-class SLIMGateway(BaseTransport):
+class SLIMTransport(BaseTransport):
     """
-    SLIM Gateway implementation using the slim_bindings library.
+    SLIM Transport implementation using the slim_bindings library.
     """
 
     def __init__(
@@ -51,21 +51,21 @@ class SLIMGateway(BaseTransport):
 
         self._sessions = {}
 
-        logger.info(f"SLIMGateway initialized with endpoint: {endpoint}")
+        logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
 
     # ###################################################
     # BaseTransport interface methods
     # ###################################################
 
     @classmethod
-    def from_client(cls, client, org="default", namespace="default") -> "SLIMGateway":
+    def from_client(cls, client, org="default", namespace="default") -> "SLIMTransport":
         # Optionally validate client
         return cls(client=client, default_org=org, default_namespace=namespace)
 
     @classmethod
     def from_config(
         cls, endpoint: str, org: str = "default", namespace: str = "default", **kwargs
-    ) -> "SLIMGateway":
+    ) -> "SLIMTransport":
         """
         Create a SLIM transport instance from a configuration.
         :param endpoint: The SLIM server endpoint.

@@ -20,12 +20,12 @@ from enum import Enum
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 
-from agntcy_app_sdk.transports.slim.gateway import SLIMGateway
-from agntcy_app_sdk.transports.nats.gateway import NatsGateway
-from agntcy_app_sdk.transports.streamable_http.gateway import StreamableHTTPGateway
+from agntcy_app_sdk.transports.slim.transport import SLIMTransport
+from agntcy_app_sdk.transports.nats.transport import NatsTransport
+from agntcy_app_sdk.transports.streamable_http.transport import StreamableHTTPTransport
 
-from agntcy_app_sdk.protocols.a2a.gateway import A2AProtocol
-from agntcy_app_sdk.protocols.mcp.gateway import MCPProtocol
+from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
+from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from a2a.server.apps import A2AStarletteApplication
 
 from agntcy_app_sdk.bridge import MessageBridge
@@ -51,7 +51,7 @@ class TransportTypes(Enum):
     STREAMABLE_HTTP = "StreamableHTTP"
 
 
-class GatewayFactory:
+class AgntcyFactory:
     """
     Factory class to create different types of agent gateway transports and protocols.
     """
@@ -180,9 +180,9 @@ class GatewayFactory:
         """
         Register well-known transports. New transports can be registered using the register decorator.
         """
-        self._transport_registry["SLIM"] = SLIMGateway
-        self._transport_registry["NATS"] = NatsGateway
-        self._transport_registry["STREAMABLE_HTTP"] = StreamableHTTPGateway
+        self._transport_registry["SLIM"] = SLIMTransport
+        self._transport_registry["NATS"] = NatsTransport
+        self._transport_registry["STREAMABLE_HTTP"] = StreamableHTTPTransport
 
     def _register_wellknown_protocols(self):
         """
