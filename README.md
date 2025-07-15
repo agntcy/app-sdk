@@ -66,11 +66,13 @@ pip install -e app-sdk
 ### A2A Server with Transport Example
 
 ```python
-from a2a.server import A2AServer
+from a2a.server.apps import A2AStarletteApplication
 from agntcy_app_sdk.factory import GatewayFactory
 
 # bring your own agent card and request handler
-server = A2AServer(agent_card=agent_card, request_handler=request_handler)
+server = A2AStarletteApplication(
+  agent_card=agent_card, http_handler=request_handler
+)
 
 factory = GatewayFactory()
 transport = factory.create_transport("SLIM", "http://localhost:46357")

@@ -27,8 +27,7 @@ configure_logging()
 logger = get_logger(__name__)
 
 """
-Implementations of the BaseGateway class for different protocols.
-These classes should implement the abstract methods defined in BaseGateway.
+SLIM implementation of the BaseTransport interface.
 """
 
 
@@ -101,8 +100,9 @@ class SLIMGateway(BaseTransport):
 
         logger.debug(f"Publishing {message.payload} to topic: {topic}")
 
+        # if we are asked to provide a response, use or generate a reply_to topic
         if respond and not message.reply_to:
-            message.reply_to = topic
+            message.reply_to = uuid.uuid4().hex
 
         # set the sender_id header to the org/namespace/topic
         message.headers = message.headers or {}
@@ -136,13 +136,12 @@ class SLIMGateway(BaseTransport):
             f"Broadcasting to topic: {topic} and waiting for {expected_responses} responses"
         )
 
-        message.reply_to = topic if not message.reply_to else message.reply_to
+        # Generate a unique reply_to topic if not provided
+        if not message.reply_to:
+            message.reply_to = uuid.uuid4().hex
 
         # set the sender_id header to the org/namespace/topic
         message.headers = message.headers or {}
-        message.headers[
-            "sender_id"
-        ] = f"{self._default_org}/{self._default_namespace}/{uuid.uuid4()}"
         message.headers["broadcast_id"] = str(uuid.uuid4())
 
         try:
@@ -183,9 +182,8 @@ class SLIMGateway(BaseTransport):
 
     async def _subscribe(self, org: str, namespace: str, topic: str) -> None:
         if not self._gateway:
-            await self._create_gateway(org, namespace, uuid.uuid4().hex)
+            await self._create_gateway(org, namespace, topic)
 
-        await self._gateway.set_route(org, namespace, topic)
         await self._gateway.subscribe(org, namespace, topic)
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
@@ -200,16 +198,12 @@ class SLIMGateway(BaseTransport):
 
                     msg = Message.deserialize(msg)
 
-                    # check the sender_id header to see if we sent this message
-                    sender_id = msg.headers.get("sender_id")
-                    if sender_id and sender_id.startswith(f"{org}/{namespace}/{topic}"):
-                        logger.debug(f"Skipping message from self: {msg}")
-                        continue
-
                     logger.debug(f"Received message: {msg}")
 
                     reply_to = msg.reply_to
-                    msg.reply_to = None
+                    msg.reply_to = (
+                        None  # we will handle replies instead of the bridge receiver
+                    )
 
                     if inspect.iscoroutinefunction(self._callback):
                         output = await self._callback(msg)
@@ -225,6 +219,9 @@ class SLIMGateway(BaseTransport):
                         )
 
                         payload = output.serialize()
+
+                        # Set a slim route to the reply_to topic to enable outbound messages
+                        await self._gateway.set_route(org, namespace, reply_to)
 
                         await self._gateway.publish(
                             recv_session,
@@ -252,14 +249,10 @@ class SLIMGateway(BaseTransport):
 
         logger.debug(f"Publishing to topic: {topic}")
 
-        # Set a slim route to this topic
+        # Set a slim route to this topic, enabling outbound messages to this topic
         await self._gateway.set_route(org, namespace, topic)
         if message.reply_to:
             logger.debug(f"Setting reply_to topic: {message.reply_to}")
-            if message.reply_to != topic:
-                logger.warning(
-                    f"Reply-to topic {message.reply_to} is different from the main topic {topic}. This may lead to unexpected behavior."
-                )
             # to get responses, we need to subscribe to the reply_to topic
             await self._gateway.subscribe(org, namespace, message.reply_to)
 
