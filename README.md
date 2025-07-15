@@ -74,7 +74,7 @@ server = A2AStarletteApplication(
   agent_card=agent_card, http_handler=request_handler
 )
 
-factory = GAgntcyFactory()
+factory = AgntcyFactory()
 transport = factory.create_transport("SLIM", "http://localhost:46357")
 bridge = factory.create_bridge(server, transport=transport)
 
