@@ -43,20 +43,20 @@ TransportTypes.SLIM  # "SLIM"
 
 ---
 
-## `GatewayFactory`
+## `AgntcyFactory`
 
 Factory class to create agent transport clients, bridges, and protocol handlers.
 
 ```python
-from agntcy_app_sdk import GatewayFactory
+from agntcy_app_sdk import AgntcyFactory
 
-factory = GatewayFactory()
+factory = AgntcyFactory()
 ```
 
 ### Constructor
 
 ```python
-GatewayFactory(enable_logging=True)
+AgntcyFactory(enable_logging=True)
 ```
 
 - `enable_logging` (bool): Enable or disable logging. Default is `True`.

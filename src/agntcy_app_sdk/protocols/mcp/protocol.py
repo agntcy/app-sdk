@@ -9,7 +9,7 @@ from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
-from agntcy_app_sdk.transports.streamable_http.gateway import StreamableHTTPGateway
+from agntcy_app_sdk.transports.streamable_http.transport import StreamableHTTPTransport
 
 configure_logging()
 logger = get_logger(__name__)
@@ -29,7 +29,7 @@ class MCPProtocol(BaseAgentProtocol):
         url: str = None,
         transport: BaseTransport = None,
         **kwargs,
-    ) -> StreamableHTTPGateway:
+    ) -> StreamableHTTPTransport:
         """
         Create a client for the MCP protocol.
         """
@@ -37,8 +37,8 @@ class MCPProtocol(BaseAgentProtocol):
         if not url:
             raise ValueError("MCP Server URL must be provided to create an MCP client")
 
-        # overrides the transport to use StreamableHTTPGateway
-        transport = StreamableHTTPGateway(endpoint=url)
+        # overrides the transport to use StreamableHTTPTransport
+        transport = StreamableHTTPTransport(endpoint=url)
 
         # Create a streamable HTTP client for MCP
         try:

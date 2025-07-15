@@ -56,7 +56,7 @@ from a2a.types import (
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import AgntcyFactory
 
 """
 Create the AgentSkill and AgentCard for a simple weather report agent.
@@ -114,7 +114,7 @@ Create the A2A server and transport bridge to server the Weather Agent.
 
 async def main():
     # create an app-sdk factory to create the transport and bridge
-    factory = GatewayFactory()
+    factory = AgntcyFactory()
 
     request_handler = DefaultRequestHandler(
         agent_executor=WeatherAgentExecutor(),
@@ -146,17 +146,17 @@ from a2a.types import (
     Role,
 )
 
-from agntcy_app_sdk.factory import GatewayFactory
+from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.factory import ProtocolTypes
-from agntcy_app_sdk.protocols.a2a.gateway import A2AProtocol
+from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from weather_agent import agent_card
 
-factory = GatewayFactory()
+factory = AgntcyFactory()
 transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
 
 async def main():
     # create an app-sdk factory to create the transport and bridge
-    factory = GatewayFactory()
+    factory = AgntcyFactory()
 
     a2a_topic = A2AProtocol.create_agent_topic(agent_card)
 
@@ -227,7 +227,7 @@ To contribute a new transport implementation, follow these steps:
 
 1. **Implement the Transport Interface**: Create a new class for your transport in the `src/agntcy_app_sdk/transports` directory. Ensure it inherits from the `BaseTransport` interface and implements all required methods.
 
-2. **Update the Factory**: Modify the `GatewayFactory` to include your new transport in the `create_transport` method.
+2. **Update the Factory**: Modify the `AgntcyFactory` to include your new transport in the `create_transport` method.
 
 3. **Add Tests**: Create unit tests for your transport in the `tests/e2e` directory. Ensure all tests pass.
 

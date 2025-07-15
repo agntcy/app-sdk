@@ -18,7 +18,7 @@ Nats implementation of BaseTransport.
 """
 
 
-class NatsGateway(BaseTransport):
+class NatsTransport(BaseTransport):
     def __init__(
         self, client: Optional[NATS] = None, endpoint: Optional[str] = None, **kwargs
     ):
@@ -39,12 +39,12 @@ class NatsGateway(BaseTransport):
         self.subscriptions = []
 
     @classmethod
-    def from_client(cls, client: NATS) -> "NatsGateway":
+    def from_client(cls, client: NATS) -> "NatsTransport":
         # Optionally validate client
         return cls(client=client)
 
     @classmethod
-    def from_config(cls, endpoint: str, **kwargs) -> "NatsGateway":
+    def from_config(cls, endpoint: str, **kwargs) -> "NatsTransport":
         """
         Create a NATS transport instance from a configuration.
         :param gateway_endpoint: The NATS server endpoint.
@@ -94,8 +94,6 @@ class NatsGateway(BaseTransport):
         self._callback = callback
 
     async def subscribe(self, topic: str) -> None:
-        topic = self.santize_topic(topic)
-
         """Subscribe to a topic with a callback."""
         if self._nc is None:
             await self._connect()
@@ -103,6 +101,7 @@ class NatsGateway(BaseTransport):
         if not self._callback:
             raise ValueError("Message handler must be set before starting transport")
 
+        topic = self.santize_topic(topic)
         sub = await self._nc.subscribe(topic, cb=self._message_handler)
         self.subscriptions.append(sub)
         logger.info(f"Subscribed to topic: {topic}")
@@ -113,7 +112,7 @@ class NatsGateway(BaseTransport):
         message: Message,
         respond: Optional[bool] = False,
         headers: Optional[Dict[str, str]] = None,
-        timeout=5,
+        timeout=10,
     ) -> None:
         """Publish a message to a topic."""
         topic = self.santize_topic(topic)
@@ -135,7 +134,7 @@ class NatsGateway(BaseTransport):
         try:
             if respond:
                 resp = await self._nc.request(
-                    self.santize_topic(topic),
+                    topic,
                     message.serialize(),
                     headers=headers,
                     timeout=timeout,
@@ -209,7 +208,7 @@ class NatsGateway(BaseTransport):
             )
 
         finally:
-            # Clean up subscription to avoid memory leaks
+            # Clean up request specific subscription
             await sub.unsubscribe()
 
         return responses
@@ -218,7 +217,7 @@ class NatsGateway(BaseTransport):
         """Internal handler for NATS messages."""
         message = Message.deserialize(nats_msg.data)
 
-        # Add reply_to from NATS message if not in payload
+        # Add reply_to from NATS message if not in payload, receiver bridge may use it
         if nats_msg.reply and not message.reply_to:
             message.reply_to = nats_msg.reply
 
