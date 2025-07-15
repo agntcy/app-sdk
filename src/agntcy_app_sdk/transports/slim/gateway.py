@@ -104,12 +104,6 @@ class SLIMGateway(BaseTransport):
         if respond and not message.reply_to:
             message.reply_to = uuid.uuid4().hex
 
-        # set the sender_id header to the org/namespace/topic
-        message.headers = message.headers or {}
-        message.headers[
-            "sender_id"
-        ] = f"{self._default_org}/{self._default_namespace}/{uuid.uuid4()}"
-
         resp = await self._publish(
             org=self._default_org,
             namespace=self._default_namespace,
@@ -140,7 +134,7 @@ class SLIMGateway(BaseTransport):
         if not message.reply_to:
             message.reply_to = uuid.uuid4().hex
 
-        # set the sender_id header to the org/namespace/topic
+        # set the broadcast_id header to a unique value
         message.headers = message.headers or {}
         message.headers["broadcast_id"] = str(uuid.uuid4())
 
@@ -211,9 +205,8 @@ class SLIMGateway(BaseTransport):
                         output = self._callback(msg)
 
                     if reply_to:
-                        # add a header to the output message called sender_id
+                        # set a unique broadcast_id if not already set
                         output.headers = output.headers or {}
-                        output.headers["sender_id"] = f"{org}/{namespace}/{topic}"
                         output.headers["broadcast_id"] = msg.headers.get(
                             "broadcast_id", str(uuid.uuid4())
                         )
