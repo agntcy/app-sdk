@@ -6,6 +6,7 @@ from typing import Dict, Any, Callable
 import json
 from uuid import uuid4
 import httpx
+import os
 
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.server.apps import A2AStarletteApplication
@@ -78,6 +79,11 @@ class A2AProtocol(BaseAgentProtocol):
         Create an A2A client, overriding the default client _send_request method to
         use the provided transport.
         """
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            # Initialize tracing if enabled
+            from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+            A2AInstrumentor().instrument()
+
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
 
@@ -87,7 +93,7 @@ class A2AProtocol(BaseAgentProtocol):
         else:
             httpx_client = httpx.AsyncClient()
             client = await A2AClient.get_client_from_agent_card_url(httpx_client, url)
-            # fix: bug in A2AClient.get_client_from_agent_card_url where the card is not being set
+            # ensure the client has an agent card
             if not hasattr(client, "agent_card"):
                 agent_card = await A2ACardResolver(
                     httpx_client,
@@ -121,12 +127,16 @@ class A2AProtocol(BaseAgentProtocol):
             """
             Send a request using the provided transport.
             """
+
+            if http_kwargs is None:
+                http_kwargs = {}
+            headers = http_kwargs.get("headers", {})
+            
             try:
                 response = await transport.publish(
                     topic,
-                    self.message_translator(request=rpc_request_payload),
+                    self.message_translator(request=rpc_request_payload, headers=headers),
                     respond=True,
-                    headers={},
                 )
 
                 response.payload = json.loads(response.payload.decode("utf-8"))
@@ -180,15 +190,21 @@ class A2AProtocol(BaseAgentProtocol):
         client._send_request = _send_request
         client.broadcast_message = broadcast_message
 
-    def message_translator(self, request: dict[str, Any]) -> Message:
+    def message_translator(self, request: dict[str, Any], headers: dict[str, Any] | None = None) -> Message:
         """
-        Translate an A2A request into our internal Message object.
+        Translate an A2A request into the internal Message object.
         """
+        if headers is None:
+            headers = {}
+        if not isinstance(headers, dict):
+            raise ValueError("Headers must be a dictionary")
+
         message = Message(
             type="A2ARequest",
             payload=json.dumps(request),
             route_path="/",  # json-rpc path
             method="POST",  # A2A json-rpc will always use POST
+            headers=headers,
         )
 
         return message
@@ -199,6 +215,14 @@ class A2AProtocol(BaseAgentProtocol):
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.
         """
+
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            #from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+            #A2AInstrumentor().instrument()
+
+            # check if we are already instrumented
+            pass
+
         # Create an ASGI adapter
         self._app = server.build()
 

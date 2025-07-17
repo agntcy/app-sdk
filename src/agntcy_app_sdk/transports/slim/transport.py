@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, Dict, Callable
+from typing import Optional, Callable
 import slim_bindings
 import asyncio
 import inspect
@@ -80,7 +80,6 @@ class SLIMTransport(BaseTransport):
         topic: str,
         message: Message,
         respond: Optional[bool] = False,
-        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Publish a message to a topic."""
         topic = self.santize_topic(topic)
@@ -108,7 +107,6 @@ class SLIMTransport(BaseTransport):
         message: Message,
         expected_responses: int = 1,
         timeout: Optional[float] = 30.0,
-        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         topic = self.santize_topic(topic)

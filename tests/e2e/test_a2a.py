@@ -35,7 +35,7 @@ async def test_client(run_server, transport):
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = AgntcyFactory()
+    factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(transport, endpoint=endpoint)
 
     # Create A2A client
@@ -118,7 +118,7 @@ async def test_broadcast(run_server, transport):
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = AgntcyFactory()
+    factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(transport, endpoint=endpoint)
 
     # Create A2A client

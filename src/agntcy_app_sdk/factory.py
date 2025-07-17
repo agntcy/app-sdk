@@ -3,6 +3,7 @@
 
 from typing import Dict, Type
 from enum import Enum
+import os
 
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
@@ -43,8 +44,9 @@ class AgntcyFactory:
     Factory class to create different types of agent gateway transports and protocols.
     """
 
-    def __init__(self, enable_logging: bool = True):
+    def __init__(self, enable_logging: bool = True, enable_tracing: bool = False):
         self.enable_logging = enable_logging
+        self.enable_tracing = enable_tracing
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
         self._protocol_registry: Dict[str, Type[BaseAgentProtocol]] = {}
@@ -54,6 +56,15 @@ class AgntcyFactory:
 
         self._register_wellknown_transports()
         self._register_wellknown_protocols()
+
+        if self.enable_tracing:
+            os.environ["TRACING_ENABLED"] = "true"
+            from ioa_observe.sdk import Observe
+            Observe.init(
+                "AgntcyFactory", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
+            )
+            
+            logger.info("Tracing enabled for AgntcyFactory via ioa_observe.sdk")
 
     def create_client(
         self,

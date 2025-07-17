@@ -50,7 +50,6 @@ class BaseTransport(ABC):
         topic: str,
         message: Message,
         respond: Optional[bool] = False,
-        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Publish a message to a topic."""
         pass
@@ -67,7 +66,6 @@ class BaseTransport(ABC):
         message: Message,
         expected_responses: int = 1,
         timeout: Optional[float] = 30.0,
-        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         pass

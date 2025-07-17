@@ -27,8 +27,81 @@ services:
       - ./configs/slim/server-config.yaml:/config.yaml
     command: ["/slim", "--config", "/config.yaml"]
     networks:
-      - gateway
+      - agntcyappsdk
+
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.76.1
+    container_name: otel-col
+    deploy:
+      resources:
+        limits:
+          memory: 125M
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-config.yml"]
+    environment:
+      - JAEGER_SERVICE_HOST=jaeger
+    volumes:
+      - ./configs/otelcollector/otelcol-config.yml:/etc/otelcol-config.yml
+    ports:
+      - "4317:4317" # OTLP over gRPC receiver
+      - "4318:4318" # OTLP over HTTP receiver
+      - "9464" # Prometheus exporter
+      - "8888" # metrics endpoint
+    networks:
+      - agntcyappsdk
+    depends_on:
+      - jaeger
+    logging: *logging
+
+  prometheus:
+    image: quay.io/prometheus/prometheus:v2.43.0
+    container_name: prometheus
+    command:
+      - --web.console.templates=/etc/prometheus/consoles
+      - --web.console.libraries=/etc/prometheus/console_libraries
+      - --storage.tsdb.retention.time=1h
+      - --config.file=/etc/prometheus/prometheus-config.yaml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      - --web.route-prefix=/
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./configs/prometheus/prometheus-config.yaml:/etc/prometheus/prometheus-config.yaml
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    networks:
+      - agntcyappsdk
+    ports:
+      - "9090:9090" # Prometheus UI
+    logging: *logging
+
+  jaeger:
+    image: jaegertracing/all-in-one
+    container_name: jaeger
+    command:
+      - "--memory.max-traces"
+      - "10000"
+      - "--query.base-path"
+      - "/jaeger"
+      - "--prometheus.server-url"
+      - "http://prometheus:9090"
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    restart: unless-stopped
+    networks:
+      - agntcyappsdk
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317" # OTLP gRPC default port
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - METRICS_STORAGE_TYPE=prometheus
+    logging: *logging
 
 networks:
-  gateway:
+  agntcyappsdk:
     driver: bridge
