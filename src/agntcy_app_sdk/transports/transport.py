@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 from agntcy_app_sdk.protocols.message import Message
-from typing import Callable, Dict, Optional
+from typing import Callable, Optional
 from typing import Any, TypeVar, Type
 import asyncio
 

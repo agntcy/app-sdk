@@ -15,7 +15,7 @@ from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.message import Message
-from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.tracing import get_current_traceparent
 from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
@@ -84,6 +84,7 @@ class A2AProtocol(BaseAgentProtocol):
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+
             A2AInstrumentor().instrument()
             logger.info("A2A Instrumentor enabled for tracing")
 
@@ -134,11 +135,13 @@ class A2AProtocol(BaseAgentProtocol):
             if http_kwargs is None:
                 http_kwargs = {}
             headers = http_kwargs.get("headers", {})
-            
+
             try:
                 response = await transport.publish(
                     topic,
-                    self.message_translator(request=rpc_request_payload, headers=headers),
+                    self.message_translator(
+                        request=rpc_request_payload, headers=headers
+                    ),
                     respond=True,
                 )
 
@@ -193,7 +196,9 @@ class A2AProtocol(BaseAgentProtocol):
         client._send_request = _send_request
         client.broadcast_message = broadcast_message
 
-    def message_translator(self, request: dict[str, Any], headers: dict[str, Any] | None = None) -> Message:
+    def message_translator(
+        self, request: dict[str, Any], headers: dict[str, Any] | None = None
+    ) -> Message:
         """
         Translate an A2A request into the internal Message object.
         """
@@ -223,6 +228,7 @@ class A2AProtocol(BaseAgentProtocol):
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+
             A2AInstrumentor().instrument()
             StarletteInstrumentor().instrument_app(self._app)
             logger.info("A2A ASGI app instrumented for tracing")
@@ -295,11 +301,13 @@ class A2AProtocol(BaseAgentProtocol):
 
         print("hello world")
         logger.info("Handling request with traceparent: %s", get_current_traceparent())
-        
+
         from ioa_observe.sdk import TracerWrapper
-        from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+        from opentelemetry.trace.propagation.tracecontext import (
+            TraceContextTextMapPropagator,
+        )
         from opentelemetry.baggage.propagation import W3CBaggagePropagator
-        
+
         tracer = TracerWrapper().get_tracer()
         traceparent = get_current_traceparent()
 
@@ -318,9 +326,6 @@ class A2AProtocol(BaseAgentProtocol):
             "A2AProtocol.handle_incoming_request",
             context=ctx,
         ) as span:
-            
-
-
             # Call the ASGI application with our scope, receive, and send
             await self._app(scope, receive, send)
 
@@ -337,9 +342,11 @@ class A2AProtocol(BaseAgentProtocol):
                 payload=payload,
                 reply_to=message.reply_to,
             )
-        
+
+
 def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
     import re
+
     """
     Extracts the trace-id from a W3C traceparent header string.
 
@@ -358,7 +365,10 @@ def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
     # Group 2: trace-id (16-byte hex)
     # Group 3: parent-id (8-byte hex)
     # Group 4: trace-flags (1-byte hex)
-    match = re.match(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$", traceparent_header)
+    match = re.match(
+        r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$",
+        traceparent_header,
+    )
 
     if match:
         return match.group(2)

@@ -7,7 +7,7 @@ from nats.aio.client import Client as NATS
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 from uuid import uuid4
 
 configure_logging()

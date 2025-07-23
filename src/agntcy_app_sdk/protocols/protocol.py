@@ -29,7 +29,9 @@ class BaseAgentProtocol(ABC):
         pass
 
     @abstractmethod
-    def message_translator(self, request: Any, headers: dict[str, Any] | None = None) -> Message:
+    def message_translator(
+        self, request: Any, headers: dict[str, Any] | None = None
+    ) -> Message:
         """Translate a request into a message."""
         pass
 

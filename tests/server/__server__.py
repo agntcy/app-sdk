@@ -20,6 +20,7 @@ from agntcy_app_sdk.factory import AgntcyFactory
 
 factory = AgntcyFactory(enable_tracing=False)
 
+
 async def main(transport_type: str, endpoint: str, block: bool = True):
     """
     This is a simple example of how to create a bridge between an A2A server and a transport.

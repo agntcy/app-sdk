@@ -11,7 +11,7 @@ import uuid
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.transports.transport import BaseTransport, Message
 
-from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from ioa_observe.sdk.tracing import get_current_traceparent
 
 configure_logging()
 logger = get_logger(__name__)
@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 """
 SLIM implementation of the BaseTransport interface.
 """
+
 
 class SLIMTransport(BaseTransport):
     """
@@ -43,6 +44,7 @@ class SLIMTransport(BaseTransport):
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
             from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
+
             SLIMInstrumentor().instrument()
             logger.info("SLIMTransport initialized with tracing enabled")
 
@@ -184,7 +186,8 @@ class SLIMTransport(BaseTransport):
                     )
 
                     import json
-                    print("msg:", json.loads(msg.decode("utf-8"))) 
+
+                    print("msg:", json.loads(msg.decode("utf-8")))
 
                     traceparent = get_current_traceparent()
 
@@ -341,10 +344,11 @@ class SLIMTransport(BaseTransport):
         # NATS topics should not contain spaces or special characters
         sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
-    
+
 
 def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
     import re
+
     """
     Extracts the trace-id from a W3C traceparent header string.
 
@@ -363,7 +367,10 @@ def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
     # Group 2: trace-id (16-byte hex)
     # Group 3: parent-id (8-byte hex)
     # Group 4: trace-flags (1-byte hex)
-    match = re.match(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$", traceparent_header)
+    match = re.match(
+        r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$",
+        traceparent_header,
+    )
 
     if match:
         return match.group(2)
