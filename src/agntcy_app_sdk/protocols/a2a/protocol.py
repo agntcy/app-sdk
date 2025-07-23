@@ -15,6 +15,8 @@ from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.message import Message
+from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
@@ -83,6 +85,7 @@ class A2AProtocol(BaseAgentProtocol):
             # Initialize tracing if enabled
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
             A2AInstrumentor().instrument()
+            logger.info("A2A Instrumentor enabled for tracing")
 
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
@@ -215,16 +218,14 @@ class A2AProtocol(BaseAgentProtocol):
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.
         """
-
-        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            #from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
-            #A2AInstrumentor().instrument()
-
-            # check if we are already instrumented
-            pass
-
         # Create an ASGI adapter
         self._app = server.build()
+
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+            A2AInstrumentor().instrument()
+            StarletteInstrumentor().instrument_app(self._app)
+            logger.info("A2A ASGI app instrumented for tracing")
 
         return self.handle_incoming_request
 
@@ -292,19 +293,74 @@ class A2AProtocol(BaseAgentProtocol):
                 if "body" in message:
                     response_data["body"].extend(message["body"])
 
-        # Call the ASGI application with our scope, receive, and send
-        await self._app(scope, receive, send)
+        print("hello world")
+        logger.info("Handling request with traceparent: %s", get_current_traceparent())
+        
+        from ioa_observe.sdk import TracerWrapper
+        from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+        from opentelemetry.baggage.propagation import W3CBaggagePropagator
+        
+        tracer = TracerWrapper().get_tracer()
+        traceparent = get_current_traceparent()
 
-        # Parse the body
-        body = bytes(response_data["body"])
-        try:
-            body_obj = json.loads(body.decode("utf-8"))
-            payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            payload = body  # raw bytes
+        print(f"Current traceparent: {traceparent}")
+        print(f"Trace ID: {get_trace_id_from_traceparent(traceparent)}")
 
-        return Message(
-            type="A2AResponse",
-            payload=payload,
-            reply_to=message.reply_to,
-        )
+        carrier = {"traceparent": traceparent}
+
+        # Step 2: Extract context from the carrier
+        ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
+        ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
+
+        print(f"Extracted context: {ctx}")
+
+        with tracer.start_as_current_span(
+            "A2AProtocol.handle_incoming_request",
+            context=ctx,
+        ) as span:
+            
+
+
+            # Call the ASGI application with our scope, receive, and send
+            await self._app(scope, receive, send)
+
+            # Parse the body
+            body = bytes(response_data["body"])
+            try:
+                body_obj = json.loads(body.decode("utf-8"))
+                payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                payload = body  # raw bytes
+
+            return Message(
+                type="A2AResponse",
+                payload=payload,
+                reply_to=message.reply_to,
+            )
+        
+def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
+    import re
+    """
+    Extracts the trace-id from a W3C traceparent header string.
+
+    Args:
+        traceparent_header: The full traceparent header string (e.g.,
+                            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").
+
+    Returns:
+        The trace-id as a string, or None if the format is invalid.
+    """
+    if not traceparent_header:
+        return None
+
+    # Regex to match the traceparent format
+    # Group 1: version (00)
+    # Group 2: trace-id (16-byte hex)
+    # Group 3: parent-id (8-byte hex)
+    # Group 4: trace-flags (1-byte hex)
+    match = re.match(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$", traceparent_header)
+
+    if match:
+        return match.group(2)
+    else:
+        return None

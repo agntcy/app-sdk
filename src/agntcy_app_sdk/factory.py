@@ -60,10 +60,11 @@ class AgntcyFactory:
         if self.enable_tracing:
             os.environ["TRACING_ENABLED"] = "true"
             from ioa_observe.sdk import Observe
+            from ioa_observe.sdk.tracing import session_start
             Observe.init(
                 "AgntcyFactory", api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
             )
-            
+            #session_start()
             logger.info("Tracing enabled for AgntcyFactory via ioa_observe.sdk")
 
     def create_client(

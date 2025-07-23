@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional, Callable
+import os
 import slim_bindings
 import asyncio
 import inspect
@@ -10,13 +11,14 @@ import uuid
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.transports.transport import BaseTransport, Message
 
+from ioa_observe.sdk.tracing import set_session_id, get_current_traceparent
+
 configure_logging()
 logger = get_logger(__name__)
 
 """
 SLIM implementation of the BaseTransport interface.
 """
-
 
 class SLIMTransport(BaseTransport):
     """
@@ -37,6 +39,12 @@ class SLIMTransport(BaseTransport):
         self._default_namespace = default_namespace
 
         self._sessions = {}
+
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            # Initialize tracing if enabled
+            from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
+            SLIMInstrumentor().instrument()
+            logger.info("SLIMTransport initialized with tracing enabled")
 
         logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
 
@@ -175,6 +183,14 @@ class SLIMTransport(BaseTransport):
                         session=session_info.id
                     )
 
+                    import json
+                    print("msg:", json.loads(msg.decode("utf-8"))) 
+
+                    traceparent = get_current_traceparent()
+
+                    print(f"Current traceparent in _subscribe: {traceparent}")
+                    print(f"Trace ID: {get_trace_id_from_traceparent(traceparent)}")
+
                     msg = Message.deserialize(msg)
 
                     logger.debug(f"Received message: {msg}")
@@ -222,7 +238,6 @@ class SLIMTransport(BaseTransport):
         expected_responses: int = 0,
     ) -> None:
         if not self._gateway:
-            # TODO: create a hash for the topic so its private since subscribe hasn't been called
             await self._create_gateway(org, namespace, uuid.uuid4().hex)
 
         logger.debug(f"Publishing to topic: {topic}")
@@ -235,6 +250,11 @@ class SLIMTransport(BaseTransport):
             await self._gateway.subscribe(org, namespace, message.reply_to)
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
+
+        traceparent = get_current_traceparent()
+
+        print(f"Current traceparent in _publish: {traceparent}")
+        print(f"Trace ID: {get_trace_id_from_traceparent(traceparent)}")
 
         async with self._gateway:
             # Send the message
@@ -321,3 +341,31 @@ class SLIMTransport(BaseTransport):
         # NATS topics should not contain spaces or special characters
         sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
+    
+
+def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
+    import re
+    """
+    Extracts the trace-id from a W3C traceparent header string.
+
+    Args:
+        traceparent_header: The full traceparent header string (e.g.,
+                            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").
+
+    Returns:
+        The trace-id as a string, or None if the format is invalid.
+    """
+    if not traceparent_header:
+        return None
+
+    # Regex to match the traceparent format
+    # Group 1: version (00)
+    # Group 2: trace-id (16-byte hex)
+    # Group 3: parent-id (8-byte hex)
+    # Group 4: trace-flags (1-byte hex)
+    match = re.match(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$", traceparent_header)
+
+    if match:
+        return match.group(2)
+    else:
+        return None
