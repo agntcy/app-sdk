@@ -47,12 +47,20 @@ class AgntcyFactory:
     def __init__(
         self,
         name="AgntcyFactory",
-        enable_logging: bool = True,
         enable_tracing: bool = False,
+        log_level: str = "DEBUG",
     ):
         self.name = name
-        self.enable_logging = enable_logging
         self.enable_tracing = enable_tracing
+
+        # Configure logging
+        self.log_level = log_level
+        try:
+            logger.setLevel(log_level.upper())
+        except:
+            logger.error(f"Invalid log level '{log_level}'. Defaulting to DEBUG.")
+            self.log_level = "DEBUG"
+            logger.setLevel(self.log_level)
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
         self._protocol_registry: Dict[str, Type[BaseAgentProtocol]] = {}
@@ -66,14 +74,12 @@ class AgntcyFactory:
         if self.enable_tracing:
             os.environ["TRACING_ENABLED"] = "true"
             from ioa_observe.sdk import Observe
-            from ioa_observe.sdk.tracing import session_start
 
             Observe.init(
                 self.name,
                 api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
             )
 
-            session_start()  # Start a new tracing session
             logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
 
     def create_client(
