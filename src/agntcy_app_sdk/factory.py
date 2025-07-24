@@ -44,7 +44,13 @@ class AgntcyFactory:
     Factory class to create different types of agent gateway transports and protocols.
     """
 
-    def __init__(self, enable_logging: bool = True, enable_tracing: bool = False):
+    def __init__(
+        self,
+        name="AgntcyFactory",
+        enable_logging: bool = True,
+        enable_tracing: bool = False,
+    ):
+        self.name = name
         self.enable_logging = enable_logging
         self.enable_tracing = enable_tracing
 
@@ -60,13 +66,15 @@ class AgntcyFactory:
         if self.enable_tracing:
             os.environ["TRACING_ENABLED"] = "true"
             from ioa_observe.sdk import Observe
+            from ioa_observe.sdk.tracing import session_start
 
             Observe.init(
-                "AgntcyFactory",
+                self.name,
                 api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
             )
-            # session_start()
-            logger.info("Tracing enabled for AgntcyFactory via ioa_observe.sdk")
+
+            session_start()  # Start a new tracing session
+            logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
 
     def create_client(
         self,

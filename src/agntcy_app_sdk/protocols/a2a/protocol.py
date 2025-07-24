@@ -15,7 +15,6 @@ from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.message import Message
-from ioa_observe.sdk.tracing import get_current_traceparent
 from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
@@ -299,49 +298,22 @@ class A2AProtocol(BaseAgentProtocol):
                 if "body" in message:
                     response_data["body"].extend(message["body"])
 
-        print("hello world")
-        logger.info("Handling request with traceparent: %s", get_current_traceparent())
+        # Call the ASGI application with our scope, receive, and send
+        await self._app(scope, receive, send)
 
-        from ioa_observe.sdk import TracerWrapper
-        from opentelemetry.trace.propagation.tracecontext import (
-            TraceContextTextMapPropagator,
+        # Parse the body
+        body = bytes(response_data["body"])
+        try:
+            body_obj = json.loads(body.decode("utf-8"))
+            payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            payload = body  # raw bytes
+
+        return Message(
+            type="A2AResponse",
+            payload=payload,
+            reply_to=message.reply_to,
         )
-        from opentelemetry.baggage.propagation import W3CBaggagePropagator
-
-        tracer = TracerWrapper().get_tracer()
-        traceparent = get_current_traceparent()
-
-        print(f"Current traceparent: {traceparent}")
-        print(f"Trace ID: {get_trace_id_from_traceparent(traceparent)}")
-
-        carrier = {"traceparent": traceparent}
-
-        # Step 2: Extract context from the carrier
-        ctx = TraceContextTextMapPropagator().extract(carrier=carrier)
-        ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
-
-        print(f"Extracted context: {ctx}")
-
-        with tracer.start_as_current_span(
-            "A2AProtocol.handle_incoming_request",
-            context=ctx,
-        ) as span:
-            # Call the ASGI application with our scope, receive, and send
-            await self._app(scope, receive, send)
-
-            # Parse the body
-            body = bytes(response_data["body"])
-            try:
-                body_obj = json.loads(body.decode("utf-8"))
-                payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                payload = body  # raw bytes
-
-            return Message(
-                type="A2AResponse",
-                payload=payload,
-                reply_to=message.reply_to,
-            )
 
 
 def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
