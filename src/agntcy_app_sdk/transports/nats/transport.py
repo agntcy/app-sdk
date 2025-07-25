@@ -7,7 +7,7 @@ from nats.aio.client import Client as NATS
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 from uuid import uuid4
 
 configure_logging()
@@ -111,7 +111,6 @@ class NatsTransport(BaseTransport):
         topic: str,
         message: Message,
         respond: Optional[bool] = False,
-        headers: Optional[Dict[str, str]] = None,
         timeout=10,
     ) -> None:
         """Publish a message to a topic."""
@@ -121,22 +120,15 @@ class NatsTransport(BaseTransport):
         if self._nc is None:
             await self._connect()
 
-        if headers:
-            # if headers are provided, add them to the message
-            for key, value in headers.items():
-                message.headers[key] = value
-        else:
-            headers = message.headers
-
-        # add tracing headers to the message
-        message.headers = headers
+        if message.headers is None:
+            message.headers = {}
 
         try:
             if respond:
                 resp = await self._nc.request(
                     topic,
                     message.serialize(),
-                    headers=headers,
+                    headers=message.headers,
                     timeout=timeout,
                 )
 
@@ -160,7 +152,6 @@ class NatsTransport(BaseTransport):
         message: Message,
         expected_responses: int = 1,
         timeout: Optional[float] = 30.0,
-        headers: Optional[Dict[str, str]] = None,
     ) -> List[Message]:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         if self._nc is None:

@@ -18,7 +18,7 @@ TRANSPORT_CONFIGS = {
 def run_server():
     procs = []
 
-    def _run(transport, endpoint):
+    def _run(transport, endpoint, version="1.0.0"):
         cmd = [
             "uv",
             "run",
@@ -28,6 +28,8 @@ def run_server():
             transport,
             "--endpoint",
             endpoint,
+            "--version",
+            version,
         ]
 
         proc = subprocess.Popen(cmd, preexec_fn=os.setsid)

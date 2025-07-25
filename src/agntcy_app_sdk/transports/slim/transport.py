@@ -1,7 +1,8 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, Dict, Callable
+from typing import Optional, Callable
+import os
 import slim_bindings
 import asyncio
 import inspect
@@ -9,6 +10,7 @@ import datetime
 import uuid
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.transports.transport import BaseTransport, Message
+
 
 configure_logging()
 logger = get_logger(__name__)
@@ -37,6 +39,13 @@ class SLIMTransport(BaseTransport):
         self._default_namespace = default_namespace
 
         self._sessions = {}
+
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            # Initialize tracing if enabled
+            from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
+
+            SLIMInstrumentor().instrument()
+            logger.info("SLIMTransport initialized with tracing enabled")
 
         logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
 
@@ -80,7 +89,6 @@ class SLIMTransport(BaseTransport):
         topic: str,
         message: Message,
         respond: Optional[bool] = False,
-        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Publish a message to a topic."""
         topic = self.santize_topic(topic)
@@ -108,7 +116,6 @@ class SLIMTransport(BaseTransport):
         message: Message,
         expected_responses: int = 1,
         timeout: Optional[float] = 30.0,
-        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         topic = self.santize_topic(topic)
@@ -224,7 +231,6 @@ class SLIMTransport(BaseTransport):
         expected_responses: int = 0,
     ) -> None:
         if not self._gateway:
-            # TODO: create a hash for the topic so its private since subscribe hasn't been called
             await self._create_gateway(org, namespace, uuid.uuid4().hex)
 
         logger.debug(f"Publishing to topic: {topic}")

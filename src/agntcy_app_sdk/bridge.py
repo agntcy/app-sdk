@@ -71,7 +71,6 @@ class MessageBridge:
                     topic=response.reply_to,
                     message=response,
                     respond=False,
-                    headers=response.headers,
                 )
             else:
                 return response
@@ -87,5 +86,4 @@ class MessageBridge:
                     topic=message.reply_to,
                     message=error_response,
                     respond=False,
-                    headers=message.headers,
                 )
