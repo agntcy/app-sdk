@@ -57,7 +57,7 @@ class AgntcyFactory:
         self.log_level = log_level
         try:
             logger.setLevel(log_level.upper())
-        except:
+        except ValueError:
             logger.error(f"Invalid log level '{log_level}'. Defaulting to DEBUG.")
             self.log_level = "DEBUG"
             logger.setLevel(self.log_level)

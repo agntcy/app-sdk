@@ -59,7 +59,7 @@ git clone https://github.com/agntcy/app-sdk.git
 pip install -e app-sdk
 ```
 
-Add a desc...
+The following examples demonstrate how to use the factory to create A2A servers, clients, and MCP clients with a SLIM or NATS transport.
 
 [**A2A Server**](#a2a-server-with-transport-example): Create an A2A server bridge with a `SLIM` | `NATS` transport.  
 [**A2A Client**](#a2a-client-with-transport-example): Create an A2A client with a `SLIM` | `NATS` transport.  

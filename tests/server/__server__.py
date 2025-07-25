@@ -18,10 +18,10 @@ from uvicorn import Config, Server
 from agntcy_app_sdk.factory import TransportTypes
 from agntcy_app_sdk.factory import AgntcyFactory
 
-factory = AgntcyFactory(enable_tracing=False)
+factory = AgntcyFactory(enable_tracing=True)
 
 
-async def main(transport_type: str, endpoint: str, block: bool = True):
+async def main(transport_type: str, endpoint: str, version="1.0.0", block: bool = True):
     """
     This is a simple example of how to create a bridge between an A2A server and a transport.
     It creates a Hello World agent and sets up the transport to communicate with it.
@@ -38,7 +38,7 @@ async def main(transport_type: str, endpoint: str, block: bool = True):
         name="Hello World Agent",
         description="Just a hello world agent",
         url="http://localhost:9999/",
-        version="1.0.0",
+        version=version,
         defaultInputModes=["text"],
         defaultOutputModes=["text"],
         capabilities=AgentCapabilities(streaming=True),
@@ -84,6 +84,12 @@ if __name__ == "__main__":
         help="Endpoint for the transport (default: localhost:4222)",
     )
     parser.add_argument(
+        "--version",
+        type=str,
+        default="1.0.0",
+        help="Version of the agent (default: 1.0.0)",
+    )
+    parser.add_argument(
         "--non-blocking",
         action="store_false",
         dest="block",
@@ -92,4 +98,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    asyncio.run(main(args.transport, args.endpoint, args.block))
+    asyncio.run(main(args.transport, args.endpoint, args.version, args.block))
