@@ -134,7 +134,13 @@ SLIM (Secure Low-Latency Interactive Messaging) may be used to facilitate commun
 
 ### Observe
 
-The AgntcyFactory may be configured to use the Observe-SDK for multi-agentic application observability by setting the `enable_tracing` parameter to `True` when creating the factory instance. This will initialize an observe tracer and enable SLIM and A2A auto-instrumentation if necessary. For more details and usage guides for Agntcy Observe, see the [Observe-SDK repository](https://github.com/agntcy/observe/tree/main)
+The AgntcyFactory may be configured to use the Observe-SDK for multi-agentic application observability by setting the `enable_tracing` parameter to `True` when creating the factory instance. This will initialize an observe tracer and enable SLIM and A2A auto-instrumentation if necessary. 
+
+```
+factory = AgntcyFactory(enable_tracing=True)
+```
+
+For more details and usage guides for Agntcy Observe, see the [Observe-SDK repository](https://github.com/agntcy/observe/tree/main)
 
 ### Identity (coming soon)
 
