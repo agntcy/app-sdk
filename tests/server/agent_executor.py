@@ -12,6 +12,7 @@ class HelloWorldAgent:
     async def invoke(self) -> str:
         return "Hello World"
 
+
 class HelloWorldAgentExecutor(AgentExecutor):
     """Test AgentProxy Implementation."""
 
@@ -26,7 +27,5 @@ class HelloWorldAgentExecutor(AgentExecutor):
         result = await self.agent.invoke()
         await event_queue.enqueue_event(new_agent_text_message(result))
 
-    async def cancel(
-        self, context: RequestContext, event_queue: EventQueue
-    ) -> None:
-        raise Exception('cancel not supported')
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise Exception("cancel not supported")
