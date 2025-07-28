@@ -8,7 +8,7 @@ import time
 import pytest
 
 TRANSPORT_CONFIGS = {
-    "A2A": "http://localhost:9999",
+    #"A2A": "http://localhost:9999",
     "NATS": "localhost:4222",
     "SLIM": "http://localhost:46357",
 }

@@ -147,7 +147,7 @@ class AgntcyFactory:
 
         gateway_class = self._transport_registry.get(transport)
         if gateway_class is None:
-            logger.warning(f"No gateway registered for transport type: {transport}")
+            logger.warning(f"No transport registered for transport type: {transport}")
             return None
 
         if client:
