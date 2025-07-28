@@ -6,6 +6,7 @@ from typing import Dict, Any, Callable
 import json
 from uuid import uuid4
 import httpx
+import os
 
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.server.apps import A2AStarletteApplication
@@ -14,6 +15,7 @@ from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.message import Message
+from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
@@ -78,6 +80,13 @@ class A2AProtocol(BaseAgentProtocol):
         Create an A2A client, overriding the default client _send_request method to
         use the provided transport.
         """
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            # Initialize tracing if enabled
+            from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+
+            A2AInstrumentor().instrument()
+            logger.info("A2A Instrumentor enabled for tracing")
+
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
 
@@ -87,7 +96,7 @@ class A2AProtocol(BaseAgentProtocol):
         else:
             httpx_client = httpx.AsyncClient()
             client = await A2AClient.get_client_from_agent_card_url(httpx_client, url)
-            # fix: bug in A2AClient.get_client_from_agent_card_url where the card is not being set
+            # ensure the client has an agent card
             if not hasattr(client, "agent_card"):
                 agent_card = await A2ACardResolver(
                     httpx_client,
@@ -121,12 +130,18 @@ class A2AProtocol(BaseAgentProtocol):
             """
             Send a request using the provided transport.
             """
+
+            if http_kwargs is None:
+                http_kwargs = {}
+            headers = http_kwargs.get("headers", {})
+
             try:
                 response = await transport.publish(
                     topic,
-                    self.message_translator(request=rpc_request_payload),
+                    self.message_translator(
+                        request=rpc_request_payload, headers=headers
+                    ),
                     respond=True,
-                    headers={},
                 )
 
                 response.payload = json.loads(response.payload.decode("utf-8"))
@@ -180,15 +195,23 @@ class A2AProtocol(BaseAgentProtocol):
         client._send_request = _send_request
         client.broadcast_message = broadcast_message
 
-    def message_translator(self, request: dict[str, Any]) -> Message:
+    def message_translator(
+        self, request: dict[str, Any], headers: dict[str, Any] | None = None
+    ) -> Message:
         """
-        Translate an A2A request into our internal Message object.
+        Translate an A2A request into the internal Message object.
         """
+        if headers is None:
+            headers = {}
+        if not isinstance(headers, dict):
+            raise ValueError("Headers must be a dictionary")
+
         message = Message(
             type="A2ARequest",
             payload=json.dumps(request),
             route_path="/",  # json-rpc path
             method="POST",  # A2A json-rpc will always use POST
+            headers=headers,
         )
 
         return message
@@ -201,6 +224,13 @@ class A2AProtocol(BaseAgentProtocol):
         """
         # Create an ASGI adapter
         self._app = server.build()
+
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
+
+            A2AInstrumentor().instrument()
+            StarletteInstrumentor().instrument_app(self._app)
+            logger.info("A2A ASGI app instrumented for tracing")
 
         return self.handle_incoming_request
 
@@ -284,3 +314,35 @@ class A2AProtocol(BaseAgentProtocol):
             payload=payload,
             reply_to=message.reply_to,
         )
+
+
+def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
+    import re
+
+    """
+    Extracts the trace-id from a W3C traceparent header string.
+
+    Args:
+        traceparent_header: The full traceparent header string (e.g.,
+                            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").
+
+    Returns:
+        The trace-id as a string, or None if the format is invalid.
+    """
+    if not traceparent_header:
+        return None
+
+    # Regex to match the traceparent format
+    # Group 1: version (00)
+    # Group 2: trace-id (16-byte hex)
+    # Group 3: parent-id (8-byte hex)
+    # Group 4: trace-flags (1-byte hex)
+    match = re.match(
+        r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$",
+        traceparent_header,
+    )
+
+    if match:
+        return match.group(2)
+    else:
+        return None

@@ -15,7 +15,7 @@
 
 </div>
 
-The Agntcy Application SDK offers a unified, interoperable factory for constructing multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single interface to interact with Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP.
+The Agntcy Application SDK offers an interoperable factory for constructing multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single high-level interface to interact with Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP.
 
 <div align='center'>
   
@@ -37,7 +37,7 @@ The Agntcy Application SDK offers a unified, interoperable factory for construct
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
     <a target="_blank" href="docs/USAGE_GUIDE.md" style="margin: 0 10px;">Usage Guide</a> •
     <a target="_blank" href="#reference-apps" style="margin: 0 10px;">Reference Apps</a> •
-    <a target="_blank" href="#testing" style="margin: 0 10px;">Testing</a> •
+    <a target="_blank" href="#agntcy-component-usage" style="margin: 0 10px;">Agntcy Component Usage</a> •
     <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
   </div>
 </div>
@@ -58,6 +58,8 @@ Or install from source:
 git clone https://github.com/agntcy/app-sdk.git
 pip install -e app-sdk
 ```
+
+The following examples demonstrate how to use the factory to create A2A servers, clients, and MCP clients with a SLIM or NATS transport.
 
 [**A2A Server**](#a2a-server-with-transport-example): Create an A2A server bridge with a `SLIM` | `NATS` transport.  
 [**A2A Client**](#a2a-client-with-transport-example): Create an A2A client with a `SLIM` | `NATS` transport.  
@@ -122,6 +124,26 @@ For more details and exhaustive capabilities, see the [Usage Guide](docs/USAGE_G
 # Reference Apps
 
 For fully functional distributed multi-agent examples, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
+
+# Agntcy Component Usage
+
+### SLIM
+
+SLIM (Secure Low-Latency Interactive Messaging) may be used to facilitate communication between AI agents with various communication patterns such as request-reply, publish-subscribe, and broadcast. The AgntcyFactory implements a high-level SLIM transport wrapper which is used to standardize integration with agntcy-app-sdk protocol implementations including A2A and MCP. For more details and usage guides for SLIM, see the [SLIM repository](https://github.com/agntcy/slim).
+
+### Observe
+
+The AgntcyFactory may be configured to use the Observe-SDK for multi-agentic application observability by setting the `enable_tracing` parameter to `True` when creating the factory instance. This will initialize an observe tracer and enable SLIM and A2A auto-instrumentation if necessary.
+
+```
+factory = AgntcyFactory(enable_tracing=True)
+```
+
+For more details and usage guides for Agntcy Observe, see the [Observe-SDK repository](https://github.com/agntcy/observe/tree/main)
+
+### Identity (coming soon)
+
+See the [Identity repository](https://github.com/agntcy/identity/tree/main) for more details.
 
 # Testing
 

@@ -1,6 +1,6 @@
 [project]
 name = "agntcy-app-sdk"
-version = "0.1.0"
+version = "0.1.2"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = "~=3.12"
@@ -16,6 +16,9 @@ dependencies = [
     "slim-bindings==0.3.6",
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
+    "ioa-observe-sdk==1.0.12",
+    "opentelemetry-instrumentation-requests>=0.54b1",
+    "opentelemetry-instrumentation-starlette>=0.54b0",
 ]
 
 [project.urls]

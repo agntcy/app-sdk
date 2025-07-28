@@ -50,16 +50,16 @@ Factory class to create agent transport clients, bridges, and protocol handlers.
 ```python
 from agntcy_app_sdk import AgntcyFactory
 
-factory = AgntcyFactory()
+factory = AgntcyFactory(enable_tracing=True)
 ```
 
 ### Constructor
 
 ```python
-AgntcyFactory(enable_logging=True)
+AgntcyFactory(enable_tracing: bool = False)
 ```
 
-- `enable_logging` (bool): Enable or disable logging. Default is `True`.
+- `enable_tracing` (bool): Enable or disable tracing. Default is `False`.
 
 ---
 
