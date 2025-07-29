@@ -16,6 +16,9 @@ from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from a2a.server.apps import A2AStarletteApplication
 
+from mcp.server.lowlevel import Server as MCPServer
+from mcp.server.fastmcp import FastMCP
+
 from agntcy_app_sdk.bridge import MessageBridge
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
@@ -48,7 +51,7 @@ class AgntcyFactory:
         self,
         name="AgntcyFactory",
         enable_tracing: bool = False,
-        log_level: str = "DEBUG",
+        log_level: str = "INFO",
     ):
         self.name = name
         self.enable_tracing = enable_tracing
@@ -58,8 +61,8 @@ class AgntcyFactory:
         try:
             logger.setLevel(log_level.upper())
         except ValueError:
-            logger.error(f"Invalid log level '{log_level}'. Defaulting to DEBUG.")
-            self.log_level = "DEBUG"
+            logger.error(f"Invalid log level '{log_level}'. Defaulting to INFO.")
+            self.log_level = "INFO"
             logger.setLevel(self.log_level)
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
@@ -112,7 +115,7 @@ class AgntcyFactory:
 
     def create_bridge(
         self,
-        server,  # add type hints for server, e.g., A2AStarletteApplication
+        server,
         transport: BaseTransport,
         topic: str | None = None,
     ) -> MessageBridge:
@@ -124,6 +127,10 @@ class AgntcyFactory:
             if topic is None:
                 topic = A2AProtocol.create_agent_topic(server.agent_card)
             handler = self.create_protocol("A2A").create_ingress_handler(server)
+        elif isinstance(server, MCPServer) or isinstance(server, FastMCP):
+            if topic is None:
+                raise ValueError("Topic must be provided for MCP server")
+            handler = self.create_protocol("MCP").create_ingress_handler(server)
         else:
             raise ValueError("Unsupported server type")
 

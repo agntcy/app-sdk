@@ -314,35 +314,3 @@ class A2AProtocol(BaseAgentProtocol):
             payload=payload,
             reply_to=message.reply_to,
         )
-
-
-def get_trace_id_from_traceparent(traceparent_header: str) -> str | None:
-    import re
-
-    """
-    Extracts the trace-id from a W3C traceparent header string.
-
-    Args:
-        traceparent_header: The full traceparent header string (e.g.,
-                            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").
-
-    Returns:
-        The trace-id as a string, or None if the format is invalid.
-    """
-    if not traceparent_header:
-        return None
-
-    # Regex to match the traceparent format
-    # Group 1: version (00)
-    # Group 2: trace-id (16-byte hex)
-    # Group 3: parent-id (8-byte hex)
-    # Group 4: trace-flags (1-byte hex)
-    match = re.match(
-        r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$",
-        traceparent_header,
-    )
-
-    if match:
-        return match.group(2)
-    else:
-        return None

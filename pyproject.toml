@@ -18,6 +18,7 @@ dependencies = [
     "ioa-observe-sdk==1.0.12",
     "opentelemetry-instrumentation-requests>=0.54b1",
     "opentelemetry-instrumentation-starlette>=0.54b0",
+    "asgi-lifespan>=2.1.0",
 ]
 
 [project.urls]
