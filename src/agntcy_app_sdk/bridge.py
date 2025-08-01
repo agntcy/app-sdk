@@ -30,8 +30,9 @@ class MessageBridge:
         """Start all components of the bridge."""
 
         # if the handler is a coroutine function, await it
-        #if inspect.iscoroutine(self.handler):
-        #    await self.handler
+        if inspect.iscoroutine(self.handler):
+            print("[setup] Handler is a coroutine function, awaiting it...")
+            await self.handler
         self.transport.set_callback(self._process_message)
 
         # Start all components

@@ -1,30 +1,32 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Tuple, Union
 import os
 import datetime
 import json
 
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 
 from contextlib import asynccontextmanager
-from asgi_lifespan import LifespanManager
 from starlette.types import Scope
 from mcp import ClientSession
 from mcp.server.lowlevel import Server as MCPServer
-import mcp.types as types
 from mcp.shared.message import SessionMessage
 import anyio
+from anyio import Event
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+import logging
 
-configure_logging()
-logger = get_logger(__name__)
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
-MCP_SESSION_ID = "mcp-session-id"
+# configure_logging()
+# logger = get_logger(__name__)
+
 
 class MCPProtocol(BaseAgentProtocol):
     """
@@ -83,7 +85,6 @@ class MCPProtocol(BaseAgentProtocol):
         async def reader():
             try:
                 async for message in read_stream:
-                    print(f"Received message in reader: {message}")
                     pass
             except Exception as e:
                 logger.error(f"Error reading from stream: {e}")
@@ -93,7 +94,9 @@ class MCPProtocol(BaseAgentProtocol):
             try:
                 async for session_message in write_stream_reader:
                     try:
-                        msg_dict = session_message.message.model_dump(by_alias=True, mode="json", exclude_none=True)
+                        msg_dict = session_message.message.model_dump(
+                            by_alias=True, mode="json", exclude_none=True
+                        )
                         await transport.publish(
                             topic=topic,
                             respond=False,
@@ -105,7 +108,6 @@ class MCPProtocol(BaseAgentProtocol):
                                 headers={
                                     "accept": "text/event-stream, application/json",
                                     "content-type": "application/json",
-                                    MCP_SESSION_ID: "this is a test session"
                                 },
                             ),
                         )
@@ -131,45 +133,158 @@ class MCPProtocol(BaseAgentProtocol):
                 await write_stream.aclose()
 
     def create_ingress_handler(
-        self, server: MCPServer
-    ) -> Callable[[Message], Message]:
+        self, server: MCPServer, transport: BaseTransport, topic: str, **kwargs
+    ) -> Callable[[Message], None]:
+        """
+        Pre-creates and reuses a stream pair for a given topic.
+        Returns an async handler to feed inbound messages into the session.
+        """
+        # prepare the async context once
+        stream_cm = self.new_streams(transport, topic, **kwargs)
+        setup_complete = Event()
+        read_stream = None
+        write_stream = None
+
+        async def session_runner():
+            nonlocal read_stream, write_stream
+            async with stream_cm as (r, w):
+                read_stream, write_stream = r, w
+                setup_complete.set()
+                # hand off to server session logic until completion
+                await server.run(read_stream, write_stream, topic=topic)
+
+        # start the session runner in background
+        anyio.create_task_group().start_soon(session_runner)
+
+        # the handler that NATS (or other transport) will call
+        async def handler(message: Message) -> None:
+            await setup_complete.wait()
+            try:
+                # convert transport Message to SessionMessage
+                session_msg = SessionMessage.from_transport(message)
+                await read_stream.send(session_msg)
+            except Exception:
+                logger.exception("Error routing inbound MCP message")
+
+        return handler
+
+    '''def create_ingress_handler(self, server: MCPServer) -> Callable[[Message], Message]:
         """
         Create an ingress handler for the MCP protocol.
         """
         # create a streamable HTTP app for the MCP server, enables both HTTP and transport
         # communication
+        import inspect
+        # inspect the signature of server.run
+        print(inspect.signature(server.run))
         self._app = server.streamable_http_app()
-
-        return self.handle_incoming_request
+        self._is_started = False
+        self._lifespan_manager = LifespanManager(self._app)
+        return self.handle_incoming_request'''
 
     async def handle_incoming_request(self, message: Message) -> Message:
-        assert self._app is not None, "ASGI app is not set up"
+        """
+        Handle incoming MCP protocol requests by routing them through the ASGI app.
 
-        route_path = (
-            message.route_path
-            if message.route_path.startswith("/")
-            else f"/{message.route_path}"
-        )
+        Args:
+            message: The incoming message to process
+
+        Returns:
+            The processed response message
+
+        Raises:
+            RuntimeError: If the ASGI app is not initialized
+            ValueError: If header values have unsupported types
+        """
+        if self._app is None:
+            raise RuntimeError(
+                "ASGI app is not set up. Call create_ingress_handler first."
+            )
+
+        try:
+            # Start the lifespan manager once if not already started
+            if not self._is_started:
+                await self._lifespan_manager.__aenter__()
+                self._is_started = True
+
+            scope = self._build_asgi_scope(message)
+            receive_callable = self._create_receive_callable(message.payload)
+            response_data = await self._process_asgi_request(scope, receive_callable)
+
+            return self._build_response_message(response_data, message.reply_to)
+
+        except Exception as e:
+            logger.error(f"Error processing MCP request: {e}")
+            raise
+
+    def _normalize_route_path(self, route_path: str) -> str:
+        """
+        Normalize the route path to ensure it starts and ends with '/'.
+
+        Args:
+            route_path: The original route path
+
+        Returns:
+            The normalized route path
+        """
+        if not route_path.startswith("/"):
+            route_path = f"/{route_path}"
         if not route_path.endswith("/"):
             route_path += "/"
+        return route_path
 
-        body = message.payload
-        method = message.method
+    def _build_headers(
+        self, headers_dict: Dict[str, Union[str, bytes]]
+    ) -> List[Tuple[bytes, bytes]]:
+        """
+        Convert headers dictionary to ASGI format.
 
+        Args:
+            headers_dict: Dictionary of headers
+
+        Returns:
+            List of header tuples in ASGI format
+
+        Raises:
+            ValueError: If header value type is not supported
+        """
         headers = []
-        for key, value in message.headers.items():
-            if isinstance(value, str):
-                headers.append((key.encode("utf-8"), value.encode("utf-8")))
-            elif isinstance(value, bytes):
-                headers.append((key.encode("utf-8"), value))
-            else:
-                raise ValueError(f"Unsupported header value type: {type(value)}")
 
-        scope: Scope = {
+        for key, value in headers_dict.items():
+            key_bytes = key.encode("utf-8")
+
+            if isinstance(value, str):
+                value_bytes = value.encode("utf-8")
+            elif isinstance(value, bytes):
+                value_bytes = value
+            else:
+                raise ValueError(
+                    f"Unsupported header value type: {type(value)}. "
+                    f"Expected str or bytes, got {type(value).__name__}"
+                )
+
+            headers.append((key_bytes, value_bytes))
+
+        return headers
+
+    def _build_asgi_scope(self, message: Message) -> Scope:
+        """
+        Build ASGI scope from the incoming message.
+
+        Args:
+            message: The incoming message
+
+        Returns:
+            ASGI scope dictionary
+        """
+        route_path = self._normalize_route_path(message.route_path)
+        headers = self._build_headers(message.headers)
+
+        return {
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.1"},
             "http_version": "1.1",
-            "method": method,
+            "method": message.method,
             "scheme": "http",
             "path": route_path,
             "raw_path": route_path.encode("utf-8"),
@@ -179,6 +294,17 @@ class MCPProtocol(BaseAgentProtocol):
             "server": ("agntcy-bridge", 0),
         }
 
+    def _create_receive_callable(self, body: bytes):
+        """
+        Create the ASGI receive callable.
+
+        Args:
+            body: The request body
+
+        Returns:
+            Async callable for ASGI receive interface
+        """
+
         async def receive() -> Dict[str, Any]:
             return {
                 "type": "http.request",
@@ -186,11 +312,18 @@ class MCPProtocol(BaseAgentProtocol):
                 "more_body": False,
             }
 
-        response_data = {
-            "status": None,
-            "headers": None,
-            "body": bytearray(),
-        }
+        return receive
+
+    def _create_send_callable(self, response_data: Dict[str, Any]):
+        """
+        Create the ASGI send callable that captures response data.
+
+        Args:
+            response_data: Dictionary to store response data
+
+        Returns:
+            Async callable for ASGI send interface
+        """
 
         async def send(message: Dict[str, Any]) -> None:
             if message["type"] == "http.response.start":
@@ -199,24 +332,78 @@ class MCPProtocol(BaseAgentProtocol):
             elif message["type"] == "http.response.body":
                 response_data["body"].extend(message.get("body", b""))
 
-        # 👇 Lifespan context actually triggers self.session_manager.run()
-        async with LifespanManager(self._app):
-            await self._app(scope, receive, send)
+        return send
 
-        raw_body = bytes(response_data["body"])
+    async def _process_asgi_request(
+        self, scope: Scope, receive: Callable
+    ) -> Dict[str, Any]:
+        """
+        Process the ASGI request and capture the response.
+
+        Args:
+            scope: ASGI scope
+            receive: ASGI receive callable
+
+        Returns:
+            Dictionary containing response data
+        """
+        response_data = {
+            "status": None,
+            "headers": None,
+            "body": bytearray(),
+        }
+
+        send = self._create_send_callable(response_data)
+
+        # The lifespan is already managed, just call the app directly
+        await self._app(scope, receive, send)
+
+        return response_data
+
+    def _process_response_body(self, raw_body: bytes) -> bytes:
+        """
+        Process the raw response body, attempting JSON parsing if possible.
+
+        Args:
+            raw_body: The raw response body bytes
+
+        Returns:
+            Processed response body
+        """
         try:
-            payload = json.dumps(json.loads(raw_body.decode("utf-8"))).encode("utf-8")
+            # Attempt to parse and re-serialize JSON for consistency
+            json_data = json.loads(raw_body.decode("utf-8"))
+            return json.dumps(json_data).encode("utf-8")
         except (UnicodeDecodeError, json.JSONDecodeError):
-            payload = raw_body
+            # Return raw body if JSON parsing fails
+            logger.debug("Response body is not valid JSON, returning raw bytes")
+            return raw_body
 
-        print(f"Response status: {response_data['status']}")
-        print(f"Response headers: {response_data['headers']}")
-        print(f"Response body: {payload}")
+    def _build_response_message(
+        self, response_data: Dict[str, Any], reply_to: str
+    ) -> Message:
+        """
+        Build the response message from ASGI response data.
+
+        Args:
+            response_data: The captured response data
+            reply_to: The reply-to identifier
+
+        Returns:
+            The response message
+        """
+        raw_body = bytes(response_data["body"])
+        processed_payload = self._process_response_body(raw_body)
+
+        # Log response details for debugging
+        logger.info(f"Response status: {response_data['status']}")
+        logger.info(f"Response headers: {response_data['headers']}")
+        logger.info(f"Response body {processed_payload}")
 
         return Message(
             type="MCPJSONRPCMessage",
-            payload=payload,
-            reply_to=message.reply_to,
+            payload=processed_payload,
+            reply_to=reply_to,
         )
 
     def message_translator(self, request: Any) -> Message:

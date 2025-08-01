@@ -21,7 +21,7 @@ async def test_mcp():
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = AgntcyFactory()
+    factory = AgntcyFactory(log_level="DEBUG")
     transport_instance = factory.create_transport(
         transport=transport, endpoint=endpoint
     )

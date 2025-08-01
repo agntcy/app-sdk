@@ -30,12 +30,12 @@ async def test_client(run_server, transport):
     )
 
     # Start the mock/test server
-    print("[setup] Launching test server...")
-    run_server(transport, endpoint)
+    # print("[setup] Launching test server...")
+    # run_server(transport, endpoint)
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = AgntcyFactory(enable_tracing=True)
+    factory = AgntcyFactory(enable_tracing=False)
     transport_instance = factory.create_transport(transport, endpoint=endpoint)
 
     # Create A2A client
