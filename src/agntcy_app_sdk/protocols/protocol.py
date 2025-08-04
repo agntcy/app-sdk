@@ -36,6 +36,11 @@ class BaseAgentProtocol(ABC):
         pass
 
     @abstractmethod
-    def create_ingress_handler(self, *args, **kwargs) -> Callable[[Message], Message]:
+    def create_ingress_handler(self, server: Any, *args, **kwargs) -> Callable[[Message], Message]:
         """Create an ingress handler for the protocol."""
+        pass
+
+    @abstractmethod
+    def bind_server(self, server: Any) -> None:
+        """Bind the protocol to a server."""
         pass

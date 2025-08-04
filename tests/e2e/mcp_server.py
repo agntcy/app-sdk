@@ -3,6 +3,8 @@
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from mcp.server.fastmcp import FastMCP
+from mcp.server.lowlevel import Server
+from mcp import types
 import asyncio
 
 
@@ -26,8 +28,65 @@ async def test_mcp():
         transport=transport, endpoint=endpoint
     )
 
+    app: Server = Server("mcp-time")
+    @app.list_tools()
+    async def list_tools() -> list[types.Tool]:
+        """
+        List available time tools.
+
+        Returns:
+            list[types.Tool]: List of available time-related tools
+        """
+        return [
+            types.Tool(
+                name="get_current_time",
+                description="Get current time in a specific timezones",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "timezone": {
+                            "type": "string",
+                            "description": f"IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use as local timezone if no timezone provided by the user.",
+                        }
+                    },
+                    "required": ["timezone"],
+                },
+            ),
+            types.Tool(
+                name="convert_time",
+                description="Convert time between timezones",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_timezone": {
+                            "type": "string",
+                            "description": f"Source IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use as local timezone if no source timezone provided by the user.",
+                        },
+                        "time": {
+                            "type": "string",
+                            "description": "Time to convert in 24-hour format (HH:MM)",
+                        },
+                        "target_timezone": {
+                            "type": "string",
+                            "description": f"Target IANA timezone name (e.g., 'Asia/Tokyo', 'America/San_Francisco'). Use as local timezone if no target timezone provided by the user.",
+                        },
+                    },
+                    "required": ["source_timezone", "time", "target_timezone"],
+                },
+            ),
+        ]
+
+
     # Create an MCP server instance
     mcp = FastMCP()
+    @mcp.tool()
+    async def get_forecast(location: str) -> str:
+        return (
+            f"Temperature: 80°C\n"
+            f"Wind speed: 10 m/s\n"
+            f"Wind direction: 180°"
+        )
+
     bridge = factory.create_bridge(
         server=mcp,
         transport=transport_instance,

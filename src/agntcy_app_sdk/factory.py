@@ -126,17 +126,20 @@ class AgntcyFactory:
         if isinstance(server, A2AStarletteApplication):
             if topic is None:
                 topic = A2AProtocol.create_agent_topic(server.agent_card)
-            handler = self.create_protocol("A2A").create_ingress_handler(server)
+            handler = self.create_protocol("A2A")
+            handler.bind_server(server)
         elif isinstance(server, MCPServer) or isinstance(server, FastMCP):
             if topic is None:
                 raise ValueError("Topic must be provided for MCP server")
-            handler = self.create_protocol("MCP").create_ingress_handler(server)
+            handler = self.create_protocol("MCP")
+            handler.bind_server(server)
+            handler.bind_transport(transport)
         else:
             raise ValueError("Unsupported server type")
 
         bridge = MessageBridge(
             transport=transport,
-            handler=handler,
+            protocol_handler=handler,
             topic=topic,
         )
 

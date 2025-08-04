@@ -215,6 +215,10 @@ class A2AProtocol(BaseAgentProtocol):
         )
 
         return message
+    
+    def bind_server(self, server: Any) -> None:
+        """Bind the protocol to a server."""
+        self._server = server
 
     def create_ingress_handler(
         self, server: A2AStarletteApplication

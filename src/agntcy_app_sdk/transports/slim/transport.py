@@ -102,6 +102,7 @@ class SLIMTransport(BaseTransport):
         # if we are asked to provide a response, use or generate a reply_to topic
         if respond and not message.reply_to:
             message.reply_to = uuid.uuid4().hex
+            print(f"Generated reply_to topic: {message.reply_to}")
 
         resp = await self._publish(
             org=self._default_org,
@@ -222,7 +223,7 @@ class SLIMTransport(BaseTransport):
                             reply_to,
                         )
 
-                        logger.debug(f"Replied to {reply_to} with message: {output}")
+                        logger.info(f"Replied to {reply_to} with message: {output}")
 
         asyncio.create_task(background_task())
 
@@ -242,7 +243,7 @@ class SLIMTransport(BaseTransport):
         # Set a slim route to this topic, enabling outbound messages to this topic
         await self._slim.set_route(org, namespace, topic)
         if message.reply_to:
-            logger.debug(f"Setting reply_to topic: {message.reply_to}")
+            logger.info(f"Setting reply_to topic: {message.reply_to}")
             # to get responses, we need to subscribe to the reply_to topic
             await self._slim.subscribe(org, namespace, message.reply_to)
 

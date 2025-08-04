@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.protocols.message import Message
 from agntcy_app_sdk.common.logging_config import get_logger
 from typing import Callable
@@ -19,23 +20,32 @@ class MessageBridge:
     def __init__(
         self,
         transport: BaseTransport,
-        handler: Callable[[Message], Message],
+        protocol_handler: BaseAgentProtocol,
         topic: str,
     ):
         self.transport = transport
-        self.handler = handler
+        self.protocol_handler = protocol_handler
         self.topic = topic
 
     async def start(self, blocking: bool = False):
+
         """Start all components of the bridge."""
 
-        # if the handler is a coroutine function, await it
-        #if inspect.iscoroutine(self.handler):
-        #    await self.handler
+        self.handler = self.protocol_handler.handle_incoming_request
+
         self.transport.set_callback(self._process_message)
 
         # Start all components
         await self.transport.subscribe(self.topic)
+
+        # check if protocol_handler.create_ingress_handler is async or sync
+        if inspect.iscoroutinefunction(self.protocol_handler.create_ingress_handler):
+            print("[setup] Starting async bridge handler...")
+            await self.protocol_handler.create_ingress_handler(self.topic)
+            print("[setup] Async bridge handler started.")
+        else:
+            print("[setup] Starting sync bridge handler...")
+            self.protocol_handler.create_ingress_handler(self.topic)
 
         logger.info("Message bridge started.")
 
@@ -69,6 +79,8 @@ class MessageBridge:
                 response = await result
             else:
                 response = result
+
+        print("Processed message:", message, "| Response:", response)
 
         if not response:
             logger.warning("Handler returned no response for message.")
