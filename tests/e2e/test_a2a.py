@@ -18,7 +18,7 @@ pytest_plugins = "pytest_asyncio"
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_client(run_server, transport):
+async def test_client(run_a2a_server, transport):
     """
     End-to-end test for the A2A factory client over different transports.
     """
@@ -31,7 +31,7 @@ async def test_client(run_server, transport):
 
     # Start the mock/test server
     print("[setup] Launching test server...")
-    run_server(transport, endpoint)
+    run_a2a_server(transport, endpoint)
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
@@ -94,7 +94,7 @@ async def test_client(run_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_broadcast(run_server, transport):
+async def test_broadcast(run_a2a_server, transport):
     """
     End-to-end test for the A2A factory client broadcast over different transports.
     """
@@ -112,9 +112,9 @@ async def test_broadcast(run_server, transport):
 
     # Start the mock/test server
     print("[setup] Launching test server...")
-    run_server(transport, endpoint)
-    run_server(transport, endpoint)
-    run_server(transport, endpoint)
+    run_a2a_server(transport, endpoint)
+    run_a2a_server(transport, endpoint)
+    run_a2a_server(transport, endpoint)
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")

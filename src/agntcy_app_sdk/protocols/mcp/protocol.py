@@ -3,7 +3,6 @@
 
 from typing import Any, Callable
 import os
-import datetime
 import json
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
@@ -46,7 +45,7 @@ class MCPProtocol(BaseAgentProtocol):
         topic: str,
         url: str = None,
         transport: BaseTransport = None,
-        message_timeout: datetime.timedelta = datetime.timedelta(seconds=15),
+        message_timeout: int = 15,
         message_retries: int = 2,
         **kwargs,
     ) -> ClientSession:
@@ -286,7 +285,7 @@ class MCPProtocol(BaseAgentProtocol):
 
             logger.info("[setup] MCP server started successfully.")
 
-    async def handle_message(self, message: Message):
+    async def handle_message(self, message: Message, timeout: int = 15) -> Message:
         """
         Handle an incoming MCP message and return the server's response.
 
@@ -322,7 +321,7 @@ class MCPProtocol(BaseAgentProtocol):
 
         try:
             # Wait for the server's response with a timeout
-            response = await asyncio.wait_for(future, timeout=10)
+            response = await asyncio.wait_for(future, timeout=timeout)
 
             # Serialize the response back to JSON-RPC format
             return Message(
