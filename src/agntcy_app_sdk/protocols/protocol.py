@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Any
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.message import Message
 
@@ -36,11 +36,16 @@ class BaseAgentProtocol(ABC):
         pass
 
     @abstractmethod
-    def create_ingress_handler(self, server: Any, *args, **kwargs) -> Callable[[Message], Message]:
+    def bind_server(self, server: Any) -> None:
+        """Bind the protocol to a server."""
+        pass
+
+    @abstractmethod
+    def setup_ingress_handler(self, *args, **kwargs) -> None:
         """Create an ingress handler for the protocol."""
         pass
 
     @abstractmethod
-    def bind_server(self, server: Any) -> None:
-        """Bind the protocol to a server."""
+    def handle_message(self, message: Message) -> Message:
+        """Handle an incoming message and return a response."""
         pass

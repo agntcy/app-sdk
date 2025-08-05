@@ -5,7 +5,6 @@ from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.protocols.message import Message
 from agntcy_app_sdk.common.logging_config import get_logger
-from typing import Callable
 import asyncio
 import inspect
 
@@ -28,24 +27,21 @@ class MessageBridge:
         self.topic = topic
 
     async def start(self, blocking: bool = False):
-
         """Start all components of the bridge."""
 
-        self.handler = self.protocol_handler.handle_incoming_request
+        # set the message handler to the protocol handler's handle_message method
+        self.handler = self.protocol_handler.handle_message
 
         self.transport.set_callback(self._process_message)
 
         # Start all components
         await self.transport.subscribe(self.topic)
 
-        # check if protocol_handler.create_ingress_handler is async or sync
-        if inspect.iscoroutinefunction(self.protocol_handler.create_ingress_handler):
-            print("[setup] Starting async bridge handler...")
-            await self.protocol_handler.create_ingress_handler(self.topic)
-            print("[setup] Async bridge handler started.")
+        # check if protocol_handler.setup_ingress_handler is async or sync
+        if inspect.iscoroutinefunction(self.protocol_handler.setup_ingress_handler):
+            await self.protocol_handler.setup_ingress_handler()
         else:
-            print("[setup] Starting sync bridge handler...")
-            self.protocol_handler.create_ingress_handler(self.topic)
+            self.protocol_handler.setup_ingress_handler()
 
         logger.info("Message bridge started.")
 
@@ -68,38 +64,37 @@ class MessageBridge:
 
     async def _process_message(self, message: Message):
         """Process an incoming message through the handler and send response."""
-        # try:
-        # Handle the request - check if handler is async or sync
-        if inspect.iscoroutinefunction(self.handler):
-            response = await self.handler(message)
-        else:
-            result = self.handler(message)
-            # If the result is a coroutine, await it
-            if inspect.iscoroutine(result):
-                response = await result
+
+        try:
+            # Handle the request - check if handler is async or sync
+            if inspect.iscoroutinefunction(self.handler):
+                response = await self.handler(message)
             else:
-                response = result
+                result = self.handler(message)
+                # If the result is a coroutine, await it
+                if inspect.iscoroutine(result):
+                    response = await result
+                else:
+                    response = result
 
-        print("Processed message:", message, "| Response:", response)
+            if not response:
+                logger.warning("Handler returned no response for message.")
+                return
 
-        if not response:
-            logger.warning("Handler returned no response for message.")
-            return
+            # Send response if reply is expected
+            if message.reply_to:
+                response.reply_to = message.reply_to
 
-        # Send response if reply is expected
-        if message.reply_to:
-            response.reply_to = message.reply_to
+                # Send the response back through the transport using publish
+                await self.transport.publish(
+                    topic=response.reply_to,
+                    message=response,
+                    respond=False,
+                )
+            else:
+                return response
 
-            # Send the response back through the transport using publish
-            await self.transport.publish(
-                topic=response.reply_to,
-                message=response,
-                respond=False,
-            )
-        else:
-            return response
-
-        """except Exception as e:
+        except Exception as e:
             logger.error(f"Error processing message: {e}")
             # Send error response if reply is expected
             if message.reply_to:
@@ -110,4 +105,4 @@ class MessageBridge:
                     topic=message.reply_to,
                     message=error_response,
                     respond=False,
-                )"""
+                )

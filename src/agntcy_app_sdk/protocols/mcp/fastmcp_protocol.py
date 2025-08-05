@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 
 MCP_SESSION_ID = "mcp-session-id"
 
+
 class FastMCPProtocol(BaseAgentProtocol):
     """
     FastMCPProtocol creates an MCP client session with a specified transport and URL.
@@ -54,11 +55,11 @@ class FastMCPProtocol(BaseAgentProtocol):
             pass
 
         # create streams
-        '''async with self.new_streams(transport, topic) as (read_stream, write_stream):
+        """async with self.new_streams(transport, topic) as (read_stream, write_stream):
             async with ClientSession(
                 read_stream, write_stream, **kwargs
             ) as mcp_session:
-                yield mcp_session'''
+                yield mcp_session"""
 
     def create_server_topic(self):
         raise NotImplementedError(
@@ -87,7 +88,9 @@ class FastMCPProtocol(BaseAgentProtocol):
                 async for session_message in write_stream_reader:
                     try:
                         print(f"Sending message: {session_message}")
-                        msg_dict = session_message.message.model_dump(by_alias=True, mode="json", exclude_none=True)
+                        msg_dict = session_message.message.model_dump(
+                            by_alias=True, mode="json", exclude_none=True
+                        )
                         await transport.publish(
                             topic=topic,
                             respond=False,
@@ -99,7 +102,7 @@ class FastMCPProtocol(BaseAgentProtocol):
                                 headers={
                                     "accept": "text/event-stream, application/json",
                                     "content-type": "application/json",
-                                    MCP_SESSION_ID: "this is a test session"
+                                    MCP_SESSION_ID: "this is a test session",
                                 },
                             ),
                         )
@@ -111,7 +114,7 @@ class FastMCPProtocol(BaseAgentProtocol):
                 await write_stream_reader.aclose()
 
         async with anyio.create_task_group() as tg:
-            #tg.start_soon(reader)
+            # tg.start_soon(reader)
             tg.start_soon(writer)
 
             try:
@@ -133,17 +136,17 @@ class FastMCPProtocol(BaseAgentProtocol):
         # create a streamable HTTP app for the MCP server, enables both HTTP and transport
         # communication
         self._server = server
-        #self._app = server.streamable_http_app()
+        # self._app = server.streamable_http_app()
 
-        ''''async with self.new_streams(transport, topic) as (read_stream, write_stream):
+        """'async with self.new_streams(transport, topic) as (read_stream, write_stream):
             await self._mcp_server.run(
                 read_stream,
                 write_stream,
                 self._mcp_server.create_initialization_options(),
-            )'''
+            )"""
 
         return self.handle_incoming_request
-    
+
     async def handle_simple_incoming_request(self, message: Message):
         # write the message to the read stream
         await self._read_stream.send(message)

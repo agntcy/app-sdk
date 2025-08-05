@@ -25,6 +25,7 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 configure_logging()
 logger = get_logger(__name__)
 
+
 class MCPProtocol(BaseAgentProtocol):
     """
     FastMCPProtocol creates an MCP client session with a specified transport and URL.
@@ -54,7 +55,7 @@ class MCPProtocol(BaseAgentProtocol):
             pass
 
         async def send_method(session_message: SessionMessage):
-            return await self._client_send(transport, session_message, topic)
+            await self._client_send(transport, session_message, topic)
 
         # create streams
         async with self.new_streams(send_method) as (read_stream, write_stream):
@@ -95,11 +96,7 @@ class MCPProtocol(BaseAgentProtocol):
             try:
                 async for session_message in write_stream_reader:
                     try:
-                        resp = await send_method(session_message)
-                        if resp:
-                            msg = resp.payload.decode()
-                            json_rpc_message = types.JSONRPCMessage.model_validate_json(msg)
-                            await self.read_stream_writer.send(SessionMessage(json_rpc_message))
+                        await send_method(session_message)
                     except Exception:
                         logger.error("Error sending message", exc_info=True)
                         raise
@@ -116,45 +113,49 @@ class MCPProtocol(BaseAgentProtocol):
                 # cancel the task group
                 tg.cancel_scope.cancel()
                 # delete the session
-                logger.info(f"Closing MCP session streams.")
+                logger.info("Closing MCP session streams.")
                 await read_stream_writer.aclose()
                 await write_stream.aclose()
 
     async def _client_send(self, transport, session_message, topic):
-        msg_dict = session_message.message.model_dump(by_alias=True, mode="json", exclude_none=True)
+        msg_dict = session_message.message.model_dump(
+            by_alias=True, mode="json", exclude_none=True
+        )
         resp = await transport.publish(
             topic=topic,
             respond=True,
             message=Message(
-                type="MCPJSONRPCMessage",
+                type=str(types.JSONRPCMessage),
                 payload=json.dumps(msg_dict),
             ),
         )
 
         if not resp:
             raise ValueError("No response received from MCP server")
-        
-        return resp
+
+        msg = resp.payload.decode()
+        json_rpc_message = types.JSONRPCMessage.model_validate_json(msg)
+        await self.read_stream_writer.send(SessionMessage(json_rpc_message))
 
     def bind_server(self, server: MCPServer | FastMCP) -> None:
         """Bind the protocol to a server."""
         if not isinstance(server, (MCPServer, FastMCP)):
             raise ValueError("Server must be an instance of MCPServer or FastMCP")
-        
+
         if isinstance(server, FastMCP):
             self._low_level_server = server._mcp_server
         else:
             self._low_level_server = server
 
-    def bind_transport(self, transport: BaseTransport) -> None:
-        self._transport = transport
-
-    async def create_ingress_handler(
-        self, topic: str = None
-    ) -> None:
+    async def setup_ingress_handler(self) -> None:
         """
         Create an ingress handler for the MCP protocol.
         """
+        if not self._low_level_server:
+            raise ValueError(
+                "MCP server is not bound to the protocol, please bind it first"
+            )
+
         self._response_futures: dict[str, asyncio.Future] = {}
 
         async def reply_method(session_message: SessionMessage):
@@ -169,12 +170,12 @@ class MCPProtocol(BaseAgentProtocol):
                 read_stream,
                 write_stream,
                 self._low_level_server.create_initialization_options(),
-                stateless=True
+                stateless=True,
             )
 
             logger.info("[setup] MCP server started successfully.")
 
-    async def handle_incoming_request(self, message: Message):
+    async def handle_message(self, message: Message):
         # write the message to the read stream
         rpc_message = types.JSONRPCMessage.model_validate_json(message.payload.decode())
 
@@ -187,12 +188,18 @@ class MCPProtocol(BaseAgentProtocol):
         try:
             response = await asyncio.wait_for(future, timeout=10)
             return Message(
-                type="MCPJSONRPCMessage",
-                payload=json.dumps(response.message.model_dump(by_alias=True, mode="json", exclude_none=True))
+                type=str(types.JSONRPCMessage),
+                payload=json.dumps(
+                    response.message.model_dump(
+                        by_alias=True, mode="json", exclude_none=True
+                    )
+                ),
             )
         except asyncio.TimeoutError:
             logger.warning(f"Timeout waiting for response for id={rpc_message.root.id}")
-            raise TimeoutError(f"Timeout waiting for response for id={rpc_message.root.id}")
+            raise TimeoutError(
+                f"Timeout waiting for response for id={rpc_message.root.id}"
+            )
         except Exception as e:
             logger.error(f"Error waiting for response: {e}")
             raise e
@@ -203,6 +210,4 @@ class MCPProtocol(BaseAgentProtocol):
         This method should be implemented to convert the request format
         into the Message format used by the MCP protocol.
         """
-        raise NotImplementedError(
-            "Message translation is not implemented for MCP protocol"
-        )
+        pass

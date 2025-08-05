@@ -191,7 +191,7 @@ class SLIMTransport(BaseTransport):
 
                     msg = Message.deserialize(msg)
 
-                    logger.info(f"Received message: {msg}")
+                    logger.debug(f"Received message: {msg}")
 
                     reply_to = msg.reply_to
                     msg.reply_to = (
@@ -223,7 +223,7 @@ class SLIMTransport(BaseTransport):
                             reply_to,
                         )
 
-                        logger.info(f"Replied to {reply_to} with message: {output}")
+                        logger.debug(f"Replied to {reply_to} with message: {output}")
 
         asyncio.create_task(background_task())
 

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from starlette.types import Scope
-from typing import Dict, Any, Callable
+from typing import Dict, Any
 import json
 from uuid import uuid4
 import httpx
@@ -215,19 +215,23 @@ class A2AProtocol(BaseAgentProtocol):
         )
 
         return message
-    
-    def bind_server(self, server: Any) -> None:
+
+    def bind_server(self, server: A2AStarletteApplication) -> None:
         """Bind the protocol to a server."""
         self._server = server
 
-    def create_ingress_handler(
-        self, server: A2AStarletteApplication
-    ) -> Callable[[Message], Message]:
+    def setup_ingress_handler(self) -> None:
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.
         """
+
+        if not self._server:
+            raise ValueError(
+                "A2A server is not bound to the protocol, please bind it first"
+            )
+
         # Create an ASGI adapter
-        self._app = server.build()
+        self._app = self._server.build()
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
@@ -236,9 +240,7 @@ class A2AProtocol(BaseAgentProtocol):
             StarletteInstrumentor().instrument_app(self._app)
             logger.info("A2A ASGI app instrumented for tracing")
 
-        return self.handle_incoming_request
-
-    async def handle_incoming_request(self, message: Message) -> Message:
+    async def handle_message(self, message: Message) -> Message:
         """
         Handle an incoming request and return a response.
         """

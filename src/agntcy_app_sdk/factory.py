@@ -133,7 +133,6 @@ class AgntcyFactory:
                 raise ValueError("Topic must be provided for MCP server")
             handler = self.create_protocol("MCP")
             handler.bind_server(server)
-            handler.bind_transport(transport)
         else:
             raise ValueError("Unsupported server type")
 

@@ -29,6 +29,7 @@ async def test_mcp():
     )
 
     app: Server = Server("mcp-time")
+
     @app.list_tools()
     async def list_tools() -> list[types.Tool]:
         """
@@ -46,7 +47,7 @@ async def test_mcp():
                     "properties": {
                         "timezone": {
                             "type": "string",
-                            "description": f"IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use as local timezone if no timezone provided by the user.",
+                            "description": "IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use as local timezone if no timezone provided by the user.",
                         }
                     },
                     "required": ["timezone"],
@@ -60,7 +61,7 @@ async def test_mcp():
                     "properties": {
                         "source_timezone": {
                             "type": "string",
-                            "description": f"Source IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use as local timezone if no source timezone provided by the user.",
+                            "description": "Source IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use as local timezone if no source timezone provided by the user.",
                         },
                         "time": {
                             "type": "string",
@@ -68,7 +69,7 @@ async def test_mcp():
                         },
                         "target_timezone": {
                             "type": "string",
-                            "description": f"Target IANA timezone name (e.g., 'Asia/Tokyo', 'America/San_Francisco'). Use as local timezone if no target timezone provided by the user.",
+                            "description": "Target IANA timezone name (e.g., 'Asia/Tokyo', 'America/San_Francisco'). Use as local timezone if no target timezone provided by the user.",
                         },
                     },
                     "required": ["source_timezone", "time", "target_timezone"],
@@ -76,16 +77,12 @@ async def test_mcp():
             ),
         ]
 
-
     # Create an MCP server instance
     mcp = FastMCP()
+
     @mcp.tool()
     async def get_forecast(location: str) -> str:
-        return (
-            f"Temperature: 80°C\n"
-            f"Wind speed: 10 m/s\n"
-            f"Wind direction: 180°"
-        )
+        return "Temperature: 80°C\n" "Wind speed: 10 m/s\n" "Wind direction: 180°"
 
     bridge = factory.create_bridge(
         server=mcp,
