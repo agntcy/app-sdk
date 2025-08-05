@@ -36,6 +36,11 @@ class BaseAgentProtocol(ABC):
         pass
 
     @abstractmethod
+    def create_agent_topic(*args, **kwargs) -> str:
+        """Create a unique topic identifier for the agent."""
+        pass
+
+    @abstractmethod
     def bind_server(self, server: Any) -> None:
         """Bind the protocol to a server."""
         pass
