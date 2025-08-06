@@ -46,6 +46,11 @@ async def test_client(run_mcp_server, transport):
         # Build message request
         print("[test] Sending test message...")
         try:
+            tools = await client.list_tools()
+            print("[test] Tools available:", tools)
+            assert tools is not None, "Tools list was None"
+            assert len(list(tools)) > 0, "No tools available in the list"
+
             result = await client.call_tool(
                 name="get_forecast",
                 arguments={"location": "Colombia"},

@@ -42,6 +42,16 @@ class TransportTypes(Enum):
     STREAMABLE_HTTP = "StreamableHTTP"
 
 
+# a utility enum class to define observability providers as constants
+class ObservabilityProviders(Enum):
+    IOA_OBSERVE = "ioa_observe"
+
+
+# a utility enum class to define identity providers as constants
+class IdentityProviders(Enum):
+    AGNTCY = "agntcy_identity"
+
+
 class AgntcyFactory:
     """
     Factory class to create different types of agent gateway transports and protocols.
@@ -84,6 +94,24 @@ class AgntcyFactory:
             )
 
             logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
+
+    def registered_protocols(self):
+        """
+        Get the list of registered protocol types.
+        """
+        return list(self._protocol_registry.keys())
+
+    def registered_transports(self):
+        """
+        Get the list of registered transport types.
+        """
+        return list(self._transport_registry.keys())
+
+    def registered_observability_providers(self):
+        """
+        Get the list of registered observability providers.
+        """
+        return [provider.value for provider in ObservabilityProviders]
 
     def create_client(
         self,

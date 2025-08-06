@@ -223,6 +223,9 @@ class MCPProtocol(BaseAgentProtocol):
 
         # Handle FastMCP wrapper by extracting the underlying server
         if isinstance(server, FastMCP):
+            logger.warning(
+                "FastMCP Server not natively supported, downgrading to its low-level server instance."
+            )
             self._low_level_server = server._mcp_server
         else:
             self._low_level_server = server
