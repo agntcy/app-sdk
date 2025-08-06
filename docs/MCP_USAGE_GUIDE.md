@@ -20,7 +20,7 @@ Additional features incorporating AGNTCY's identity and observability components
 
 ### ⚡️ Connecting an MCP client to an MCP server over an abstract transport (SLIM | NATS | MQTT)
 
-A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or Agntcy's SLIM. Below is an example of how to create two A2A agents that communicate over SLIM's PubSub gateway.
+A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or Agntcy's SLIM. Below is an example of how to create an MCP client and server that communicate over SLIM's gateway server.
 
 We will use `uv` for package management and virtual environments. If you don't have it installed, you can install it via:
 
@@ -31,8 +31,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Create a new project directory:
 
 ```bash
-uv init a2a-pubsub
-cd a2a-pubsub
+uv init agntcy-mcp
+cd agntcy-mcp
 ```
 
 Install the Agntcy Application SDK and Langgraph:
@@ -44,142 +44,52 @@ uv add agntcy-app-sdk
 Next we will create a simple weather agent that responds to weather queries. Create a file named `weather_agent.py` and implement the A2A agent and add a message bridge to a SLIM transport:
 
 ```python
-from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.events import EventQueue
-from a2a.utils import new_agent_text_message
-from a2a.types import (
-    AgentCapabilities,
-    AgentCard,
-    AgentSkill,
-)
-from a2a.server.apps import A2AStarletteApplication
-from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.tasks import InMemoryTaskStore
 from agntcy_app_sdk.factory import AgntcyFactory
+from mcp.server.fastmcp import FastMCP
 
-"""
-Create the AgentSkill and AgentCard for a simple weather report agent.
-"""
+# create an MCP server instance
+mcp = FastMCP()
 
-skill = AgentSkill(
-    id="weather_report",
-    name="Returns weather report",
-    description="Provides a simple weather report",
-    tags=["weather", "report"],
-    examples=["What's the weather like?", "Give me a weather report"],
-)
+# add a tool to the MCP server
+@mcp.tool()
+async def get_forecast(location: str) -> str:
+    return "Temperature: 30°C\n" "Humidity: 50%\n" "Condition: Sunny\n"
 
-agent_card = AgentCard(
-    name="Weather Agent",
-    description="An agent that provides weather reports",
-    url="",
-    version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
-    capabilities=AgentCapabilities(streaming=True),
-    skills=[skill],
-    supportsAuthenticatedExtendedCard=False,
-)
+# create an Agntcy factory transport instance
+transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
+# transport = factory.create_transport("NATS", endpoint="localhost:4222")
 
-"""
-Create the actual agent logic and executor.
-"""
-
-class WeatherAgent:
-    """A simple agent that returns a weather report."""
-    async def invoke(self) -> str:
-        return "The weather is sunny with a high of 75°F."
-
-class WeatherAgentExecutor(AgentExecutor):
-    """Test AgentProxy Implementation."""
-
-    def __init__(self):
-        self.agent = WeatherAgent()
-
-    async def execute(
-        self,
-        context: RequestContext,
-        event_queue: EventQueue,
-    ) -> None:
-        result = await self.agent.invoke()
-        event_queue.enqueue_event(new_agent_text_message(result))
-
-    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        raise Exception("cancel not supported")
-
-"""
-Create the A2A server and transport bridge to server the Weather Agent.
-"""
-
-async def main():
-    # create an app-sdk factory to create the transport and bridge
-    factory = AgntcyFactory()
-
-    request_handler = DefaultRequestHandler(
-        agent_executor=WeatherAgentExecutor(),
-        task_store=InMemoryTaskStore(),
-    )
-
-    server = A2AStarletteApplication(
-        agent_card=agent_card, http_handler=request_handler
-    )
-
-    transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
-    bridge = factory.create_bridge(server, transport=transport)
-    await bridge.start(blocking=True)
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+# serve the MCP server via a message bridge
+bridge = factory.create_bridge(mcp, transport=transport, topic="my_weather_agent.mcp")
+await bridge.start(blocking=block)
 ```
 
 Next we will create a simple client agent that queries the weather agent. Create a file named `weather_client.py` and implement the A2A client with a SLIM transport:
 
 ```python
-from a2a.types import (
-    SendMessageRequest,
-    MessageSendParams,
-    Message,
-    Part,
-    TextPart,
-    Role,
-)
-
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.factory import ProtocolTypes
-from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
-from weather_agent import agent_card
 
 factory = AgntcyFactory()
 transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
+# transport = factory.create_transport("NATS", endpoint="localhost:4222")
 
-async def main():
-    # create an app-sdk factory to create the transport and bridge
-    factory = AgntcyFactory()
+# Create a MCP client
+print("[test] Creating MCP client...")
+mcp_client = factory.create_client(
+    "MCP",
+    agent_topic="my_weather_agent.mcp",
+    transport=transport_instance,
+)
+async with mcp_client as client:
+    # Build message request
+    tools = await client.list_tools()
+    print("[test] Tools available:", tools)
 
-    a2a_topic = A2AProtocol.create_agent_topic(agent_card)
-
-    # create a client to connect to the A2A server
-    client = await factory.create_client(ProtocolTypes.A2A.value, agent_topic=a2a_topic, transport=transport)
-
-    message = "Hello, Weather Agent, how is the weather?"
-    request = SendMessageRequest(
-        params=MessageSendParams(
-            message=Message(
-                messageId="0",
-                role=Role.user,
-                parts=[Part(TextPart(text=message))],
-            ),
-        )
+    result = await client.call_tool(
+        name="get_forecast",
+        arguments={"location": "Colombia"},
     )
-
-    # send a message to the agent
-    response = await client.send_message(request)
-    print(response)
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    print(f"Tool call result: {result}")
 ```
 
 A few notes about the code above:

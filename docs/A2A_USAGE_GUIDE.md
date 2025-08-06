@@ -29,8 +29,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Create a new project directory:
 
 ```bash
-uv init a2a-pubsub
-cd a2a-pubsub
+uv init agntcy-a2a
+cd agntcy-a2a
 ```
 
 Install the Agntcy Application SDK and Langgraph:
