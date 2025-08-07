@@ -1,6 +1,6 @@
 # A2A Usage Guide
 
-In this guide, we will walk through some of the key features of the Agntcy Application SDK and explore an end-to-end example of creating two A2A agents that communicate over a PubSub transport.
+In this guide, we will walk through some of the key features of the Agntcy Application SDK and explore an end-to-end example of creating two A2A agents that communicate over a custom transport.
 
 The following diagram illustrates how the A2A protocol maps to a transport implementation:
 
@@ -8,17 +8,15 @@ The following diagram illustrates how the A2A protocol maps to a transport imple
   <img src="architecture.png" alt="architecture" width="80%">
 </p>
 
-The following table summarizes the current transport and protocol capabilities:
+The following table summarizes the current A2A and transport support in the Agntcy Application SDK:
 
 | Protocol \ Transport | SLIM | NATS | MQTT |
 | -------------------- | :--: | :--: | :--: |
 | **A2A**              |  ✅  |  ✅  |  🕐  |
 
-Additional features incorporating AGNTCY's identity and observability components are coming soon.
-
 ### ⚡️ Connecting two Agents over an an abstract transport (SLIM | NATS | MQTT)
 
-A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or Agntcy's SLIM. Below is an example of how to create two A2A agents that communicate over SLIM's PubSub gateway.
+A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or Agntcy's SLIM. Below is an example of how to create two A2A agents that communicate over SLIM's gateway.
 
 We will use `uv` for package management and virtual environments. If you don't have it installed, you can install it via:
 
