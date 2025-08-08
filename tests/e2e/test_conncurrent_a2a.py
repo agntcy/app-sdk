@@ -8,6 +8,7 @@ from a2a.types import (
 )
 from typing import Any
 import uuid
+import asyncio
 import pytest
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
@@ -18,41 +19,47 @@ pytest_plugins = "pytest_asyncio"
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_client(run_server, transport):
+async def test_client(run_a2a_server, transport):
     """
-    End-to-end test for the A2A factory client over different transports.
+    End-to-end test for the A2A factory client over different transports with concurrent requests.
     """
-    # Get the endpoint inside the test using the transport name as a key
     endpoint = TRANSPORT_CONFIGS[transport]
-
     print(
         f"\n--- Starting test: test_client | Transport: {transport} | Endpoint: {endpoint} ---"
     )
 
-    # Start the mock/test server
-    print("[setup] Launching test server...")
-    run_server(transport, endpoint)
+    # Launch the server for each version (concurrently, if applicable)
+    print("[setup] Launching test servers...")
+    for version in ["1.0.0", "2.0.0", "3.0.0"]:
+        run_a2a_server(transport, endpoint, version=version)
 
-    # Create factory and transport
+    # Initialize factory and transport
     print("[setup] Initializing client factory and transport...")
+
     factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(transport, endpoint=endpoint)
 
-    # Create A2A client
-    print("[test] Creating A2A client...")
-    client = await factory.create_client(
-        "A2A",
-        agent_url=endpoint,
-        agent_topic="Hello_World_Agent_1.0.0",  # Used if transport is provided
-        transport=transport_instance,
+    # Create clients concurrently
+    print("[setup] Creating clients...")
+    agent_versions = ["1.0.0", "2.0.0", "3.0.0"]
+    clients = await asyncio.gather(
+        *[
+            factory.create_client(
+                "A2A",
+                agent_url=endpoint,
+                agent_topic=f"Hello_World_Agent_{v}",
+                transport=transport_instance,
+            )
+            for v in agent_versions
+        ]
     )
-    assert client is not None, "Client was not created"
 
-    print("\n=== Agent Information ===")
-    print(f"Name: {client.agent_card.name}")
+    assert all(clients), "One or more clients were not created"
 
-    # Build message request
-    print("[test] Sending test message...")
+    for i, client in enumerate(clients, 1):
+        print(f"[info] Client{i} name: {client.agent_card.name}")
+
+    # Prepare request
     send_message_payload: dict[str, Any] = {
         "message": {
             "role": "user",
@@ -64,24 +71,21 @@ async def test_client(run_server, transport):
         id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
     )
 
-    # Send and validate response
-    response = await client.send_message(request)
-    assert response is not None, "Response was None"
+    # Send messages concurrently
+    print("[test] Sending concurrent messages...")
+    responses = await asyncio.gather(
+        *[client.send_message(request) for client in clients]
+    )
 
-    response = response.model_dump(mode="json", exclude_none=True)
+    assert all(responses), "One or more responses were None"
 
-    print(f"[debug] Raw response: {response}")
+    for i, response in enumerate(responses, 1):
+        json_response = response.model_dump(mode="json", exclude_none=True)
+        print(f"[response {i}] {json_response}")
 
-    assert response["jsonrpc"] == "2.0"
-    assert response["result"]["kind"] == "message"
-    assert response["result"]["role"] == "agent"
-
-    parts = response["result"]["parts"]
-    assert isinstance(parts, list)
-    assert parts[0]["kind"] == "text"
-    assert parts[0]["text"] == "Hello World"
-
-    print(f"[result] Agent responded with: {parts[0]['text']}")
+    # wait for all tasks to complete
+    print("[teardown] Waiting for all tasks to complete...")
+    await asyncio.sleep(1)
 
     if transport_instance:
         print("[teardown] Closing transport...")

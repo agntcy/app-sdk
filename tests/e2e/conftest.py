@@ -15,7 +15,7 @@ TRANSPORT_CONFIGS = {
 
 
 @pytest.fixture
-def run_server():
+def run_a2a_server():
     procs = []
 
     def _run(transport, endpoint, version="1.0.0"):
@@ -23,13 +23,42 @@ def run_server():
             "uv",
             "run",
             "python",
-            "tests/server/__server__.py",
+            "tests/server/a2a_server.py",
             "--transport",
             transport,
             "--endpoint",
             endpoint,
             "--version",
             version,
+        ]
+
+        proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
+
+        procs.append(proc)
+        time.sleep(1)
+        return proc
+
+    yield _run
+
+    for proc in procs:
+        if proc.poll() is None:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+
+
+@pytest.fixture
+def run_mcp_server():
+    procs = []
+
+    def _run(transport, endpoint):
+        cmd = [
+            "uv",
+            "run",
+            "python",
+            "tests/server/mcp_server.py",
+            "--transport",
+            transport,
+            "--endpoint",
+            endpoint,
         ]
 
         proc = subprocess.Popen(cmd, preexec_fn=os.setsid)

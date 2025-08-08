@@ -1,6 +1,6 @@
 [project]
 name = "agntcy-app-sdk"
-version = "0.1.2"
+version = "0.1.5"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = "~=3.12"
@@ -18,6 +18,7 @@ dependencies = [
     "ioa-observe-sdk==1.0.12",
     "opentelemetry-instrumentation-requests>=0.54b1",
     "opentelemetry-instrumentation-starlette>=0.54b0",
+    "asgi-lifespan>=2.1.0",
 ]
 
 [project.urls]

@@ -15,14 +15,14 @@
 
 </div>
 
-The Agntcy Application SDK offers an interoperable factory for constructing multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single high-level interface to interact with Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP.
+The Agntcy Application SDK offers an interoperable factory hub for constructing / instantiating multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single high-level interface to interact with Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP. The initial release of the Agntcy Application SDK focuses on this interoperability across agent protocols and message transports. It introduces a BaseTransport interface, with implementations for SLIM, NATS, and StreamableHTTP, and a BaseAgentProtocol interface, implemented by protocols such as A2A and MCP. These interfaces decouple protocol logic from transport, enabling flexible and extensible agent communication
 
 <div align='center'>
   
 <pre>
 ✅ A2A over SLIM           ✅ A2A over NATS              🕐 A2A over MQTT             
 ✅ Request-reply           ✅ Publish-subscribe          ✅ Broadcast                 
-✅ MCP client factory      🕐 Observability provider     🕐 Identity provider         
+✅ MCP over SLIM | NATS    ✅ Observability provider     🕐 Identity provider         
 </pre>
 
 <div align='center'>
@@ -36,7 +36,7 @@ The Agntcy Application SDK offers an interoperable factory for constructing mult
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
     <a target="_blank" href="docs/USAGE_GUIDE.md" style="margin: 0 10px;">Usage Guide</a> •
-    <a target="_blank" href="#reference-apps" style="margin: 0 10px;">Reference Apps</a> •
+    <a target="_blank" href="#reference-application" style="margin: 0 10px;">Reference Application</a> •
     <a target="_blank" href="#agntcy-component-usage" style="margin: 0 10px;">Agntcy Component Usage</a> •
     <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
   </div>
@@ -50,6 +50,7 @@ Install the SDK via pip:
 
 ```bash
 pip install agntcy-app-sdk
+# or install via uv: uv add agntcy-app-sdk
 ```
 
 Or install from source:
@@ -59,48 +60,26 @@ git clone https://github.com/agntcy/app-sdk.git
 pip install -e app-sdk
 ```
 
-The following examples demonstrate how to use the factory to create A2A servers, clients, and MCP clients with a SLIM or NATS transport.
-
-[**A2A Server**](#a2a-server-with-transport-example): Create an A2A server bridge with a `SLIM` | `NATS` transport.  
-[**A2A Client**](#a2a-client-with-transport-example): Create an A2A client with a `SLIM` | `NATS` transport.  
-[**MCP Client**](#mcp-client-from-factory-example): Create an MCP client default `streamable-http` transport.
-
-### A2A Server with Transport Example
+Now we can list the registered protocols, transports, and observability providers in the factory:
 
 ```python
-from a2a.server.apps import A2AStarletteApplication
-from agntcy_app_sdk.factory import AgntcyFactory
-
-# bring your own agent card and request handler
-server = A2AStarletteApplication(
-  agent_card=agent_card, http_handler=request_handler
-)
-
-factory = AgntcyFactory()
-transport = factory.create_transport("SLIM", "http://localhost:46357")
-bridge = factory.create_bridge(server, transport=transport)
-
-await bridge.start()
-```
-
-### A2A Client with Transport Example
-
-```python
-from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.factory import ProtocolTypes
-
 factory = AgntcyFactory()
 
-transport = factory.create_transport("NATS", "localhost:4222")
+protocols = factory.registered_protocols()
+transports = factory.registered_transports()
+observability_providers = factory.registered_observability_providers()
 
-# connect via agent URL
-client_over_nats = await factory.create_client("A2A", agent_url="http://localhost:9999", transport=transport)
-
-# or connect via agent topic
-client_over_nats = await factory.create_client(ProtocolTypes.A2A.value, agent_topic="Hello_World_Agent_1.0.0", transport=transport)
+# ['A2A', 'MCP']
+# ['SLIM', 'NATS', 'STREAMABLE_HTTP']
+# ['ioa_observe']
 ```
 
-### MCP Client from Factory Example
+Next, we can create a protocol client over a transport of choice using the factory:
+
+[**MCP Client**](#mcp-client-from-factory-example): Create an MCP client with a `SLIM` | `NATS` transport.  
+[**A2A Client**](#a2a-client-from-factory-example): Create an A2A client with a `SLIM` | `NATS` transport.
+
+## MCP Client from Factory Example
 
 ```python
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -108,22 +87,42 @@ from agntcy_app_sdk.factory import AgntcyFactory
 # Create factory and transport
 factory = AgntcyFactory()
 transport_instance = factory.create_transport(
-    transport="STREAMABLE_HTTP", endpoint="http://localhost:8123/mcp"
+    transport="SLIM", endpoint="http://localhost:46357"
 )
 
 # Create MCP client
-client = await factory.create_client(
+mcp_client = factory.create_client(
     "MCP",
-    agent_url=endpoint,
+    agent_topic="my_remote_mcp_server",
     transport=transport_instance,
 )
+async with mcp_client as client:
+  tools = await client.list_tools()
 ```
 
-For more details and exhaustive capabilities, see the [Usage Guide](docs/USAGE_GUIDE.md).
+See the [MCP Usage Guide](docs/MCP_USAGE_GUIDE.md) for an end-to-end guide on using the MCP client and server with different transports.
 
-# Reference Apps
+### A2A Client from Factory Example
 
-For fully functional distributed multi-agent examples, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
+```python
+from agntcy_app_sdk.factory import AgntcyFactory
+
+factory = AgntcyFactory()
+transport = factory.create_transport("NATS", "localhost:4222")
+
+# or connect via agent topic
+client_over_nats = await factory.create_client("A2A", agent_topic="my_remote_a2a_server", transport=transport)
+```
+
+See the [A2A Usage Guide](docs/A2A_USAGE_GUIDE.md) for an end-to-end guide on using the A2A client and server with different transports.
+
+# Reference Application
+
+<a href="https://github.com/agntcy/coffeeAgntcy">
+  <img alt="" src="assets/coffee_agntcy.png" width="284">
+</a>
+
+For a fully functional distributed multi-agent sample app, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy)!
 
 # Agntcy Component Usage
 

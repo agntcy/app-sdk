@@ -1,27 +1,22 @@
-# Usage Guide
+# A2A Usage Guide
 
-In this guide, we will walk through some of the key features of the Agntcy Application SDK and explore an end-to-end example of creating two A2A agents that communicate over a PubSub transport.
+In this guide, we will walk through some of the key features of the Agntcy Application SDK and explore an end-to-end example of creating two A2A agents that communicate over a custom transport.
 
-### 🌟 SDK Features and Components
-
-The initial release of the Agntcy Application SDK focuses on interoperability across agent protocols and message transports. It introduces a BaseTransport interface, with implementations for SLIM, NATS, and StreamableHTTP, and a BaseAgentProtocol interface, implemented by protocols such as A2A and MCP. These interfaces decouple protocol logic from transport, enabling flexible and extensible agent communication. The following diagram illustrates how the A2A protocol maps to a transport implementation:
+The following diagram illustrates how the A2A protocol maps to a transport implementation:
 
 <p align="center">
   <img src="architecture.png" alt="architecture" width="80%">
 </p>
 
-The following table summarizes the current transport and protocol implementations available in the SDK:
+The following table summarizes the current A2A and transport support in the Agntcy Application SDK:
 
-| Protocol \ Transport | SLIM | NATS | STREAMABLE_HTTP | MQTT |
-| -------------------- | :--: | :--: | :-------------: | :--: |
-| **A2A**              |  ✅  |  ✅  |       🕐        |  🕐  |
-| **MCP**              |  🕐  |  🕐  |       ✅        |  🕐  |
+| Protocol \ Transport | SLIM | NATS | MQTT |
+| -------------------- | :--: | :--: | :--: |
+| **A2A**              |  ✅  |  ✅  |  🕐  |
 
-Additional features incorporating AGNTCY's identity and observability components are coming soon.
+### ⚡️ Connecting two Agents over an an abstract transport (SLIM | NATS)
 
-### ⚡️ Connecting two Agents over PubSub
-
-A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or Agntcy's SLIM. Below is an example of how to create two A2A agents that communicate over SLIM's PubSub gateway.
+A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or Agntcy's SLIM. Below is an example of how to create two A2A agents that communicate over SLIM's gateway.
 
 We will use `uv` for package management and virtual environments. If you don't have it installed, you can install it via:
 
@@ -32,8 +27,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Create a new project directory:
 
 ```bash
-uv init a2a-pubsub
-cd a2a-pubsub
+uv init agntcy-a2a
+cd agntcy-a2a
 ```
 
 Install the Agntcy Application SDK and Langgraph:

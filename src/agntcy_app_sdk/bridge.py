@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.protocols.message import Message
 from agntcy_app_sdk.common.logging_config import get_logger
-from typing import Callable
 import asyncio
+import inspect
 
 logger = get_logger(__name__)
 
@@ -18,20 +19,29 @@ class MessageBridge:
     def __init__(
         self,
         transport: BaseTransport,
-        handler: Callable[[Message], Message],
+        protocol_handler: BaseAgentProtocol,
         topic: str,
     ):
         self.transport = transport
-        self.handler = handler
+        self.protocol_handler = protocol_handler
         self.topic = topic
 
     async def start(self, blocking: bool = False):
         """Start all components of the bridge."""
-        # Set up message handling flow
+
+        # set the message handler to the protocol handler's handle_message method
+        self.handler = self.protocol_handler.handle_message
+
         self.transport.set_callback(self._process_message)
 
         # Start all components
         await self.transport.subscribe(self.topic)
+
+        # check if protocol_handler.setup_ingress_handler is async or sync
+        if inspect.iscoroutinefunction(self.protocol_handler.setup_ingress_handler):
+            await self.protocol_handler.setup_ingress_handler()
+        else:
+            self.protocol_handler.setup_ingress_handler()
 
         logger.info("Message bridge started.")
 
@@ -54,9 +64,18 @@ class MessageBridge:
 
     async def _process_message(self, message: Message):
         """Process an incoming message through the handler and send response."""
+
         try:
-            # Handle the request
-            response = await self.handler(message)
+            # Handle the request - check if handler is async or sync
+            if inspect.iscoroutinefunction(self.handler):
+                response = await self.handler(message)
+            else:
+                result = self.handler(message)
+                # If the result is a coroutine, await it
+                if inspect.iscoroutine(result):
+                    response = await result
+                else:
+                    response = result
 
             if not response:
                 logger.warning("Handler returned no response for message.")

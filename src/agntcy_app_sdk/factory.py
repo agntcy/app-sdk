@@ -16,6 +16,9 @@ from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from a2a.server.apps import A2AStarletteApplication
 
+from mcp.server.lowlevel import Server as MCPServer
+from mcp.server.fastmcp import FastMCP
+
 from agntcy_app_sdk.bridge import MessageBridge
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
@@ -39,6 +42,16 @@ class TransportTypes(Enum):
     STREAMABLE_HTTP = "StreamableHTTP"
 
 
+# a utility enum class to define observability providers as constants
+class ObservabilityProviders(Enum):
+    IOA_OBSERVE = "ioa_observe"
+
+
+# a utility enum class to define identity providers as constants
+class IdentityProviders(Enum):
+    AGNTCY = "agntcy_identity"
+
+
 class AgntcyFactory:
     """
     Factory class to create different types of agent gateway transports and protocols.
@@ -48,7 +61,7 @@ class AgntcyFactory:
         self,
         name="AgntcyFactory",
         enable_tracing: bool = False,
-        log_level: str = "DEBUG",
+        log_level: str = "INFO",
     ):
         self.name = name
         self.enable_tracing = enable_tracing
@@ -58,8 +71,8 @@ class AgntcyFactory:
         try:
             logger.setLevel(log_level.upper())
         except ValueError:
-            logger.error(f"Invalid log level '{log_level}'. Defaulting to DEBUG.")
-            self.log_level = "DEBUG"
+            logger.error(f"Invalid log level '{log_level}'. Defaulting to INFO.")
+            self.log_level = "INFO"
             logger.setLevel(self.log_level)
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
@@ -81,6 +94,24 @@ class AgntcyFactory:
             )
 
             logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
+
+    def registered_protocols(self):
+        """
+        Get the list of registered protocol types.
+        """
+        return list(self._protocol_registry.keys())
+
+    def registered_transports(self):
+        """
+        Get the list of registered transport types.
+        """
+        return list(self._transport_registry.keys())
+
+    def registered_observability_providers(self):
+        """
+        Get the list of registered observability providers.
+        """
+        return [provider.value for provider in ObservabilityProviders]
 
     def create_client(
         self,
@@ -112,7 +143,7 @@ class AgntcyFactory:
 
     def create_bridge(
         self,
-        server,  # add type hints for server, e.g., A2AStarletteApplication
+        server,
         transport: BaseTransport,
         topic: str | None = None,
     ) -> MessageBridge:
@@ -123,13 +154,19 @@ class AgntcyFactory:
         if isinstance(server, A2AStarletteApplication):
             if topic is None:
                 topic = A2AProtocol.create_agent_topic(server.agent_card)
-            handler = self.create_protocol("A2A").create_ingress_handler(server)
+            handler = self.create_protocol("A2A")
+            handler.bind_server(server)
+        elif isinstance(server, MCPServer) or isinstance(server, FastMCP):
+            if topic is None:
+                raise ValueError("Topic must be provided for MCP server")
+            handler = self.create_protocol("MCP")
+            handler.bind_server(server)
         else:
             raise ValueError("Unsupported server type")
 
         bridge = MessageBridge(
             transport=transport,
-            handler=handler,
+            protocol_handler=handler,
             topic=topic,
         )
 

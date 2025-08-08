@@ -31,12 +31,16 @@ class SLIMTransport(BaseTransport):
         endpoint: Optional[str] = None,
         default_org: str = "default",
         default_namespace: str = "default",
+        message_timeout: datetime.timedelta = datetime.timedelta(seconds=10),
+        message_retries: int = 2,
     ) -> None:
         self._endpoint = endpoint
-        self._gateway = client
+        self._slim = client
         self._callback = None
         self._default_org = default_org
         self._default_namespace = default_namespace
+        self.message_timeout = message_timeout
+        self.message_retries = message_retries
 
         self._sessions = {}
 
@@ -98,6 +102,7 @@ class SLIMTransport(BaseTransport):
         # if we are asked to provide a response, use or generate a reply_to topic
         if respond and not message.reply_to:
             message.reply_to = uuid.uuid4().hex
+            print(f"Generated reply_to topic: {message.reply_to}")
 
         resp = await self._publish(
             org=self._default_org,
@@ -169,18 +174,18 @@ class SLIMTransport(BaseTransport):
     # ###################################################
 
     async def _subscribe(self, org: str, namespace: str, topic: str) -> None:
-        if not self._gateway:
-            await self._create_gateway(org, namespace, topic)
+        if not self._slim:
+            await self._slim_connect(org, namespace, topic)
 
-        await self._gateway.subscribe(org, namespace, topic)
+        await self._slim.subscribe(org, namespace, topic)
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
 
         async def background_task():
-            async with self._gateway:
+            async with self._slim:
                 while True:
                     # Receive the message from the session
-                    recv_session, msg = await self._gateway.receive(
+                    recv_session, msg = await self._slim.receive(
                         session=session_info.id
                     )
 
@@ -208,9 +213,9 @@ class SLIMTransport(BaseTransport):
                         payload = output.serialize()
 
                         # Set a slim route to the reply_to topic to enable outbound messages
-                        await self._gateway.set_route(org, namespace, reply_to)
+                        await self._slim.set_route(org, namespace, reply_to)
 
-                        await self._gateway.publish(
+                        await self._slim.publish(
                             recv_session,
                             payload,
                             org,
@@ -230,23 +235,23 @@ class SLIMTransport(BaseTransport):
         message: Message,
         expected_responses: int = 0,
     ) -> None:
-        if not self._gateway:
-            await self._create_gateway(org, namespace, uuid.uuid4().hex)
+        if not self._slim:
+            await self._slim_connect(org, namespace, uuid.uuid4().hex)
 
         logger.debug(f"Publishing to topic: {topic}")
 
         # Set a slim route to this topic, enabling outbound messages to this topic
-        await self._gateway.set_route(org, namespace, topic)
+        await self._slim.set_route(org, namespace, topic)
         if message.reply_to:
-            logger.debug(f"Setting reply_to topic: {message.reply_to}")
+            logger.info(f"Setting reply_to topic: {message.reply_to}")
             # to get responses, we need to subscribe to the reply_to topic
-            await self._gateway.subscribe(org, namespace, message.reply_to)
+            await self._slim.subscribe(org, namespace, message.reply_to)
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
 
-        async with self._gateway:
+        async with self._slim:
             # Send the message
-            await self._gateway.publish(
+            await self._slim.publish(
                 session_info,
                 message.serialize(),
                 org,
@@ -257,7 +262,7 @@ class SLIMTransport(BaseTransport):
             responses = []
             while len(responses) < expected_responses and expected_responses > 0:
                 # Wait for a response if requested
-                session_info, msg = await self._gateway.receive(session=session_info.id)
+                session_info, msg = await self._slim.receive(session=session_info.id)
                 response = Message.deserialize(msg)
 
                 # Check if the response is from the same broadcast
@@ -282,12 +287,12 @@ class SLIMTransport(BaseTransport):
             session_info = self._sessions[session_key]
             logger.debug(f"Reusing existing session: {session_key}")
         else:
-            session_info = await self._gateway.create_session(
+            session_info = await self._slim.create_session(
                 slim_bindings.PySessionConfiguration.Streaming(
                     slim_bindings.PySessionDirection.BIDIRECTIONAL,
                     topic=slim_bindings.PyAgentType(org, namespace, topic),
-                    max_retries=5,  # TODO: set this from config
-                    timeout=datetime.timedelta(seconds=5),
+                    max_retries=self.message_retries,
+                    timeout=self.message_timeout,
                 )
             )
             logger.debug(f"Created new session: {session_key}")
@@ -295,7 +300,7 @@ class SLIMTransport(BaseTransport):
 
         return session_info
 
-    async def _create_gateway(
+    async def _slim_connect(
         self, org: str, namespace: str, topic: str, retries=3
     ) -> None:
         # create new gateway object
@@ -303,20 +308,20 @@ class SLIMTransport(BaseTransport):
             f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}"
         )
 
-        self._gateway = await slim_bindings.Slim.new(org, namespace, topic)
+        self._slim = await slim_bindings.Slim.new(org, namespace, topic)
 
         for _ in range(retries):
             try:
                 # Attempt to connect to the SLIM server
                 # Connect to slim server
-                _ = await self._gateway.connect(
+                _ = await self._slim.connect(
                     {
                         "endpoint": self._endpoint,
                         "tls": {"insecure": True},
                     }  # TODO: handle with config input
                 )
 
-                logger.info(f"connected to gateway @{self._endpoint}")
+                logger.info(f"connected to slim gateway @{self._endpoint}")
                 return  # Successfully connected, exit the loop
             except Exception as e:
                 logger.error(f"Failed to connect to SLIM server: {e}")

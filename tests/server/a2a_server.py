@@ -18,7 +18,7 @@ from uvicorn import Config, Server
 from agntcy_app_sdk.factory import TransportTypes
 from agntcy_app_sdk.factory import AgntcyFactory
 
-factory = AgntcyFactory(enable_tracing=True)
+factory = AgntcyFactory(enable_tracing=False)
 
 
 async def main(transport_type: str, endpoint: str, version="1.0.0", block: bool = True):

@@ -3,8 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-.gateway_infra
-
 # C extensions
 *.so
 
