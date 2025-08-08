@@ -1,11 +1,11 @@
 # MCP Usage Guide
 
-In this guide, we will walk through some of the key features of the Agntcy Application SDK and explore an end-to-end example of creating two MCP agents that communicate over a custom transport (SLIM, NATS, or MQTT).
+In this guide, we will walk through some of the key features of the Agntcy Application SDK and explore an end-to-end example of creating two MCP agents that communicate over a custom transport (SLIM, NATS).
 
 The following diagram illustrates how the MCP protocol maps to a transport implementation:
 
 <p align="center">
-  <img src="mcp-architecture.png" alt="architecture" width="90%">
+  <img src="mcp-architecture.jpg" alt="architecture" width="90%">
 </p>
 
 The following table summarizes the current MCP and transport support in the Agntcy Application SDK:
@@ -14,7 +14,7 @@ The following table summarizes the current MCP and transport support in the Agnt
 | -------------------- | :--: | :--: | :--: |
 | **MCP**              |  ✅  |  ✅  |  🕐  |
 
-### ⚡️ Connecting an MCP client to an MCP server over an abstract transport (SLIM | NATS | MQTT)
+### ⚡️ Connecting an MCP client to an MCP server over an abstract transport (SLIM | NATS)
 
 A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or Agntcy's SLIM. Below is an example of how to create an MCP client and server that communicate over SLIM's gateway server.
 
@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
 A few notes about the code above:
 
-- The weather server is not binding to a host a port as the MCP server typically would, rather it is listening on a provided topic via the transport. In the current release, both the clent and server must know of and use the same topic to communicate.
+- The weather server is not binding to a host and port as the MCP server typically would, rather it is listening on a provided topic via the transport. In the current release, both the clent and server must know of and use the same topic to communicate.
 
 ### 🏁 Running the Example
 
