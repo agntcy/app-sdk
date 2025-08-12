@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 """
 SLIM implementation of the BaseTransport interface.
 """
-
+print("New SLIMTransport with updated SLIM bindings- test123")
 
 class SLIMTransport(BaseTransport):
     """
@@ -33,6 +33,8 @@ class SLIMTransport(BaseTransport):
         default_namespace: str = "default",
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=10),
         message_retries: int = 2,
+        identity_provider: Optional[slim_bindings.PyIdentityProvider] = None,
+        identity_verifier: Optional[slim_bindings.PyIdentityVerifier] = None,
     ) -> None:
         self._endpoint = endpoint
         self._slim = client
@@ -41,6 +43,10 @@ class SLIMTransport(BaseTransport):
         self._default_namespace = default_namespace
         self.message_timeout = message_timeout
         self.message_retries = message_retries
+        
+        # Auto-create identity components from environment if not provided
+        self._identity_provider = identity_provider or self._create_identity_provider()
+        self._identity_verifier = identity_verifier or self._create_identity_verifier()
 
         self._sessions = {}
 
@@ -51,7 +57,7 @@ class SLIMTransport(BaseTransport):
             SLIMInstrumentor().instrument()
             logger.info("SLIMTransport initialized with tracing enabled")
 
-        logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
+        logger.info(f"SLIMTransport initialized with endpoint: {endpoint}, identity: {'configured' if self._identity_provider else 'none'}")
 
     # ###################################################
     # BaseTransport interface methods
@@ -290,7 +296,7 @@ class SLIMTransport(BaseTransport):
             session_info = await self._slim.create_session(
                 slim_bindings.PySessionConfiguration.Streaming(
                     slim_bindings.PySessionDirection.BIDIRECTIONAL,
-                    topic=slim_bindings.PyAgentType(org, namespace, topic),
+                    topic=slim_bindings.PyName(org, namespace, topic),
                     max_retries=self.message_retries,
                     timeout=self.message_timeout,
                 )
@@ -308,7 +314,15 @@ class SLIMTransport(BaseTransport):
             f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}"
         )
 
-        self._slim = await slim_bindings.Slim.new(org, namespace, topic)
+        # Create PyName object for the new API
+        name = slim_bindings.PyName(org, namespace, topic)
+        
+        # Use new authentication-aware API
+        self._slim = await slim_bindings.Slim.new(
+            name, 
+            self._identity_provider, 
+            self._identity_verifier
+        )
 
         for _ in range(retries):
             try:
@@ -328,6 +342,34 @@ class SLIMTransport(BaseTransport):
                 await asyncio.sleep(1)
 
         raise RuntimeError(f"Failed to connect to SLIM server after {retries} retries.")
+
+    def _create_identity_provider(self) -> Optional[slim_bindings.PyIdentityProvider]:
+        """Create identity provider from environment variables."""
+        identity = os.environ.get("SLIM_IDENTITY")
+        shared_secret = os.environ.get("SLIM_SHARED_SECRET")
+        
+        if identity and shared_secret:
+            logger.info(f"Creating shared secret identity provider for: {identity}")
+            return slim_bindings.PyIdentityProvider.SharedSecret(
+                identity=identity, shared_secret=shared_secret
+            )
+        
+        logger.debug("No SLIM identity configuration found in environment")
+        return None
+    
+    def _create_identity_verifier(self) -> Optional[slim_bindings.PyIdentityVerifier]:
+        """Create identity verifier from environment variables."""
+        identity = os.environ.get("SLIM_IDENTITY")
+        shared_secret = os.environ.get("SLIM_SHARED_SECRET")
+        
+        if identity and shared_secret:
+            logger.info(f"Creating shared secret identity verifier for: {identity}")
+            return slim_bindings.PyIdentityVerifier.SharedSecret(
+                identity=identity, shared_secret=shared_secret
+            )
+        
+        logger.debug("No SLIM identity configuration found in environment")
+        return None
 
     def santize_topic(self, topic: str) -> str:
         """Sanitize the topic name to ensure it is valid for NATS."""
