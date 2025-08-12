@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 """
 SLIM implementation of the BaseTransport interface.
 """
-print("New SLIMTransport with updated SLIM bindings- test123")
+print("New SLIMTransport with updated SLIM bindings- test12345")
 
 class SLIMTransport(BaseTransport):
     """
@@ -58,6 +58,16 @@ class SLIMTransport(BaseTransport):
             logger.info("SLIMTransport initialized with tracing enabled")
 
         logger.info(f"SLIMTransport initialized with endpoint: {endpoint}, identity: {'configured' if self._identity_provider else 'none'}")
+
+        # Runtime check: verify slim_bindings version and publish signature to detect imposters
+        try:
+            version = getattr(slim_bindings, "__version__", "unknown")
+            pub_sig = inspect.signature(slim_bindings.Slim.publish)
+            logger.info(
+                f"SLIM bindings runtime: version={version}, publish_sig={pub_sig}, file={getattr(slim_bindings, '__file__', 'unknown')}"
+            )
+        except Exception as e:
+            logger.warning(f"Unable to introspect slim_bindings runtime info: {e}")
 
     # ###################################################
     # BaseTransport interface methods
@@ -170,6 +180,8 @@ class SLIMTransport(BaseTransport):
             namespace=self._default_namespace,
             topic=topic,
         )
+        
+        print("new subscription v0.4.0")
 
         logger.info(
             f"Subscribed to {self._default_org}/{self._default_namespace}/{topic}"
