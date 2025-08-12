@@ -183,7 +183,9 @@ class SLIMTransport(BaseTransport):
         if not self._slim:
             await self._slim_connect(org, namespace, topic)
 
-        await self._slim.subscribe(org, namespace, topic)
+        # Create PyName object for the new subscribe API
+        name = slim_bindings.PyName(org, namespace, topic)
+        await self._slim.subscribe(name)
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
 
@@ -219,14 +221,15 @@ class SLIMTransport(BaseTransport):
                         payload = output.serialize()
 
                         # Set a slim route to the reply_to topic to enable outbound messages
-                        await self._slim.set_route(org, namespace, reply_to)
+                        # Create PyName object for the new set_route API
+                        reply_name = slim_bindings.PyName(org, namespace, reply_to)
+                        await self._slim.set_route(reply_name)
 
+                        # Create PyName object for the new publish API
                         await self._slim.publish(
                             recv_session,
                             payload,
-                            org,
-                            namespace,
-                            reply_to,
+                            reply_name,
                         )
 
                         logger.debug(f"Replied to {reply_to} with message: {output}")
@@ -247,22 +250,26 @@ class SLIMTransport(BaseTransport):
         logger.debug(f"Publishing to topic: {topic}")
 
         # Set a slim route to this topic, enabling outbound messages to this topic
-        await self._slim.set_route(org, namespace, topic)
+        # Create PyName object for the new set_route API
+        route_name = slim_bindings.PyName(org, namespace, topic)
+        await self._slim.set_route(route_name)
         if message.reply_to:
             logger.info(f"Setting reply_to topic: {message.reply_to}")
             # to get responses, we need to subscribe to the reply_to topic
-            await self._slim.subscribe(org, namespace, message.reply_to)
+            # Create PyName object for the new subscribe API
+            reply_name = slim_bindings.PyName(org, namespace, message.reply_to)
+            await self._slim.subscribe(reply_name)
 
         session_info = await self._get_session(org, namespace, topic, "pubsub")
 
         async with self._slim:
             # Send the message
+            # Create PyName object for the new publish API
+            dest_name = slim_bindings.PyName(org, namespace, topic)
             await self._slim.publish(
                 session_info,
                 message.serialize(),
-                org,
-                namespace,
-                topic,
+                dest_name,
             )
 
             responses = []
