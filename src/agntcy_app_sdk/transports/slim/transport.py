@@ -203,6 +203,10 @@ class SLIMTransport(BaseTransport):
                     else:
                         output = self._callback(msg)
 
+                    if output is None:
+                        logger.error("Callback returned None. Cannot process message.")
+                        continue
+
                     if reply_to:
                         # set a unique broadcast_id if not already set
                         output.headers = output.headers or {}

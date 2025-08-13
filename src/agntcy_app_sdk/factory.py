@@ -14,10 +14,11 @@ from agntcy_app_sdk.transports.streamable_http.transport import StreamableHTTPTr
 
 from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
+from agntcy_app_sdk.protocols.fast_mcp.protocol import FastMCPProtocol
 from a2a.server.apps import A2AStarletteApplication
 
 from mcp.server.lowlevel import Server as MCPServer
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from agntcy_app_sdk.bridge import MessageBridge
 
@@ -156,11 +157,20 @@ class AgntcyFactory:
                 topic = A2AProtocol.create_agent_topic(server.agent_card)
             handler = self.create_protocol("A2A")
             handler.bind_server(server)
-        elif isinstance(server, MCPServer) or isinstance(server, FastMCP):
+        elif isinstance(server, MCPServer):
             if topic is None:
                 raise ValueError("Topic must be provided for MCP server")
+            logger.info(f"Creating MCP bridge for topic: {topic}")
             handler = self.create_protocol("MCP")
             handler.bind_server(server)
+
+        elif isinstance(server, FastMCP):
+            if topic is None:
+                raise ValueError("Topic must be provided for FastMCP server")
+            logger.info(f"Creating FastMCP bridge for topic: {topic}")
+            handler = self.create_protocol("FastMCP")
+            handler.bind_server(server)
+
         else:
             raise ValueError("Unsupported server type")
 
@@ -241,3 +251,4 @@ class AgntcyFactory:
         """
         self._protocol_registry["A2A"] = A2AProtocol
         self._protocol_registry["MCP"] = MCPProtocol
+        self._protocol_registry["FastMCP"] = FastMCPProtocol
