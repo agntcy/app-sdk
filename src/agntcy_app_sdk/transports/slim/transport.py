@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 """
 SLIM implementation of the BaseTransport interface.
 """
-print("New SLIMTransport with updated SLIM bindings- new day")
+print("New SLIMTransport with updated SLIM bindings- new day111111")
 
 class SLIMTransport(BaseTransport):
     """
@@ -111,6 +111,7 @@ class SLIMTransport(BaseTransport):
         respond: Optional[bool] = False,
     ) -> None:
         """Publish a message to a topic."""
+        print(f"DEBUG SLIMTransport.publish CALLED: topic={topic}, respond={respond}, message_type={type(message)}")
         topic = self.santize_topic(topic)
 
         logger.debug(f"Publishing {message.payload} to topic: {topic}")
@@ -120,13 +121,22 @@ class SLIMTransport(BaseTransport):
             message.reply_to = uuid.uuid4().hex
             print(f"Generated reply_to topic: {message.reply_to}")
 
-        resp = await self._publish(
-            org=self._default_org,
-            namespace=self._default_namespace,
-            topic=topic,
-            message=message,
-            expected_responses=1 if respond else 0,
-        )
+        print(f"DEBUG: About to call _publish with org={self._default_org}, namespace={self._default_namespace}, topic={topic}")
+        try:
+            resp = await self._publish(
+                org=self._default_org,
+                namespace=self._default_namespace,
+                topic=topic,
+                message=message,
+                expected_responses=1 if respond else 0,
+            )
+        except Exception as e:
+            print(f"CRITICAL: SLIMTransport.publish caught exception: {e}")
+            print(f"Exception type: {type(e)}")
+            import traceback
+            print(f"Full stack trace:")
+            traceback.print_exc()
+            raise
 
         if respond:
             return resp[0] if resp else None
@@ -238,11 +248,20 @@ class SLIMTransport(BaseTransport):
                         await self._slim.set_route(reply_name)
 
                         # Create PyName object for the new publish API
-                        await self._slim.publish(
-                            recv_session,
-                            payload,
-                            reply_name,
-                        )
+                        print(f"DEBUG REPLY PUBLISH: recv_session={recv_session}, payload_type={type(payload)}, reply_name={reply_name}")
+                        print(f"DEBUG: _slim.publish signature={inspect.signature(self._slim.publish)}")
+                        try:
+                            await self._slim.publish(
+                                recv_session,
+                                payload,
+                                reply_name,
+                            )
+                        except Exception as e:
+                            print(f"CRITICAL BUG CAUGHT: {e}")
+                            print(f"_slim object: {self._slim}")
+                            print(f"_slim type: {type(self._slim)}")
+                            print(f"_slim module: {getattr(self._slim.__class__, '__module__', 'unknown')}")
+                            raise
 
                         logger.debug(f"Replied to {reply_to} with message: {output}")
 
@@ -280,11 +299,21 @@ class SLIMTransport(BaseTransport):
             # Create PyName object for the new publish API
             dest_name = slim_bindings.PyName(org, namespace, topic)
             print("dest_name", dest_name)
-            await self._slim.publish(
-                session_info,
-                message.serialize(),
-                dest_name,
-            )
+            print(f"DEBUG MAIN PUBLISH: session_info={session_info}, message_type={type(message)}, dest_name={dest_name}")
+            print(f"DEBUG: _slim.publish signature={inspect.signature(self._slim.publish)}")
+            print(f"DEBUG: _slim object type={type(self._slim)}, module={getattr(self._slim.__class__, '__module__', 'unknown')}")
+            try:
+                await self._slim.publish(
+                    session_info,
+                    message.serialize(),
+                    dest_name,
+                )
+            except Exception as e:
+                print(f"CRITICAL MAIN BUG CAUGHT: {e}")
+                print(f"Exception type: {type(e)}")
+                import traceback
+                print(f"Full traceback: {traceback.format_exc()}")
+                raise
 
             responses = []
             while len(responses) < expected_responses and expected_responses > 0:
@@ -317,6 +346,7 @@ class SLIMTransport(BaseTransport):
             session_info = await self._slim.create_session(
                 slim_bindings.PySessionConfiguration.Streaming(
                     slim_bindings.PySessionDirection.BIDIRECTIONAL,
+                    moderator=False,
                     topic=slim_bindings.PyName(org, namespace, topic),
                     max_retries=self.message_retries,
                     timeout=self.message_timeout,
