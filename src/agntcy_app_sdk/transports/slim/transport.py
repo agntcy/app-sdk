@@ -264,6 +264,7 @@ class SLIMTransport(BaseTransport):
         # Set a slim route to this topic, enabling outbound messages to this topic
         # Create PyName object for the new set_route API
         route_name = slim_bindings.PyName(org, namespace, topic)
+        print("route_name", route_name)
         await self._slim.set_route(route_name)
         if message.reply_to:
             logger.info(f"Setting reply_to topic: {message.reply_to}")
@@ -278,6 +279,7 @@ class SLIMTransport(BaseTransport):
             # Send the message
             # Create PyName object for the new publish API
             dest_name = slim_bindings.PyName(org, namespace, topic)
+            print("dest_name", dest_name)
             await self._slim.publish(
                 session_info,
                 message.serialize(),
