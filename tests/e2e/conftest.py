@@ -72,3 +72,31 @@ def run_mcp_server():
     for proc in procs:
         if proc.poll() is None:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+
+@pytest.fixture
+def run_fast_mcp_server():
+    procs = []
+
+    def _run(transport, endpoint):
+        cmd = [
+            "uv",
+            "run",
+            "python",
+            "tests/server/fast_mcp_server.py",
+            "--transport",
+            transport,
+            "--endpoint",
+            endpoint,
+        ]
+
+        proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
+
+        procs.append(proc)
+        time.sleep(1)
+        return proc
+
+    yield _run
+
+    for proc in procs:
+        if proc.poll() is None:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)

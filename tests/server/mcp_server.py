@@ -19,7 +19,7 @@ async def main(transport_type: str, endpoint: str, block: bool = True):
         return "Temperature: 30°C\n" "Humidity: 50%\n" "Condition: Sunny\n"
 
     transport = factory.create_transport(transport_type, endpoint=endpoint)
-    bridge = factory.create_bridge(mcp, transport=transport, topic="test_topic.mcp")
+    bridge = factory.create_bridge(mcp._mcp_server, transport=transport, topic="test_topic.mcp")
     await bridge.start(blocking=block)
 
 
