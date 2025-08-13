@@ -36,7 +36,6 @@ dev = [
     "tiktoken>=0.8.0,<0.9",
     "openai>=1.60.2,<2",
     "autogen-core>=0.4.3,<0.5",
-    "agp-bindings>=0.2.4,<0.3",
     "coloredlogs>=15.0.1,<16",
     "langchain-anthropic>=0.3.12,<0.4",
     "cisco-outshift-agent-utils==0.0.2",
