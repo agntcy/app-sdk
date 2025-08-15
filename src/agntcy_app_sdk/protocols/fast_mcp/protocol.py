@@ -1,28 +1,14 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-import os
-from starlette.types import Scope
-from typing import Dict, Any
-from typing import Any,  Callable
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.protocols.message import Message
-from agntcy_app_sdk.transports.transport import BaseTransport
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
-from mcp.client.streamable_http import streamablehttp_client
-from mcp import ClientSession
 import mcp.types as types
 import json
 
-from mcp.server.fastmcp import FastMCP
-from mcp.shared.message import SessionMessage
-from fastmcp import Client, FastMCP as FastMCPServer
+from fastmcp import Client, FastMCP
 
-import anyio
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from contextlib import asynccontextmanager
-import asyncio
 
 configure_logging()
 logger = get_logger(__name__)
@@ -33,7 +19,7 @@ class FastMCPProtocol(MCPProtocol):
   It provides methods to bind the FastMCP server and handle messages.
   """
 
-  def __init__(self, name: str = "FastMCPProtocol", instructions: str | None = None, **kwargs: Any):
+  def __init__(self):
     super().__init__()
 
   def type(self):
@@ -55,15 +41,11 @@ class FastMCPProtocol(MCPProtocol):
     """
     Set up the ingress handler to process incoming FastMCP requests.
     """
-    if not self._server or (not isinstance(self._server, FastMCPServer) and not isinstance(self._server, FastMCP)):
+    if not self._server or not isinstance(self._server, FastMCP):
       raise ValueError("FastMCP server is not bound to the protocol")
 
-    f = FastMCPServer()
-    @f.tool()
-    async def get_forecast(location: str) -> str:
-      return "Temperature: 30°C\n" "Humidity: 50%\n" "Condition: Sunny\n"
     # self._app = f.http_app(transport="streamable-http")
-    await f.run_async(transport="streamable-http")
+    await self._server.run_async(transport="streamable-http")
 
 
   async def handle_message(self, message: Message, timeout: int = 15) -> Message:

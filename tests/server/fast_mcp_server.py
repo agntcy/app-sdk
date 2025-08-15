@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.factory import TransportTypes
 import asyncio

@@ -246,8 +246,6 @@ class A2AProtocol(BaseAgentProtocol):
         """
         assert self._app is not None, "ASGI app is not set up"
 
-        logger.info(f"Handling A2A message: {message}")
-
         body = message.payload
         route_path = (
             message.route_path
