@@ -68,10 +68,8 @@ class MessageBridge:
         try:
             # Handle the request - check if handler is async or sync
             if inspect.iscoroutinefunction(self.handler):
-                logger.info("Processing message asynchronously.")
                 response = await self.handler(message)
             else:
-                logger.info("Processing message synchronously.")
                 result = self.handler(message)
                 # If the result is a coroutine, await it
                 if inspect.iscoroutine(result):
