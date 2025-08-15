@@ -4,11 +4,12 @@
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.protocols.message import Message
+from agntcy_app_sdk.protocols.fast_mcp.config import FASTMCP_HOST, FASTMCP_PORT
 import mcp.types as types
 import json
+import os
 
 from fastmcp import Client, FastMCP
-
 
 configure_logging()
 logger = get_logger(__name__)
@@ -44,8 +45,7 @@ class FastMCPProtocol(MCPProtocol):
     if not self._server or not isinstance(self._server, FastMCP):
       raise ValueError("FastMCP server is not bound to the protocol")
 
-    # self._app = f.http_app(transport="streamable-http")
-    await self._server.run_async(transport="streamable-http")
+    await self._server.run_streamable_http_async(host=FASTMCP_HOST, port=FASTMCP_PORT)
 
 
   async def handle_message(self, message: Message, timeout: int = 15) -> Message:
@@ -53,7 +53,7 @@ class FastMCPProtocol(MCPProtocol):
     rpc_message_dict = rpc_message.dict()  # Convert to dictionary
     logger.info(f"Handling message: {rpc_message_dict} {message.reply_to}")
 
-    client = Client("http://localhost:8000/mcp")
+    client = Client(f'http://{FASTMCP_HOST}:{FASTMCP_PORT}/mcp')
 
     async with client:
       await client.ping()
