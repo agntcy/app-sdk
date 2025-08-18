@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Ignore IntelliJ IDEA project files
+.idea/
+*.iml
+
