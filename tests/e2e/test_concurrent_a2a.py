@@ -19,11 +19,7 @@ pytest_plugins = "pytest_asyncio"
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-<<<<<<< HEAD
 async def test_client(run_a2a_server, transport):
-=======
-async def test_client(run_server, transport):
->>>>>>> main
     """
     End-to-end test for the A2A factory client over different transports with concurrent requests.
     """
@@ -35,11 +31,7 @@ async def test_client(run_server, transport):
     # Launch the server for each version (concurrently, if applicable)
     print("[setup] Launching test servers...")
     for version in ["1.0.0", "2.0.0", "3.0.0"]:
-<<<<<<< HEAD
         run_a2a_server(transport, endpoint, version=version)
-=======
-        run_server(transport, endpoint, version=version)
->>>>>>> main
 
     # Initialize factory and transport
     print("[setup] Initializing client factory and transport...")

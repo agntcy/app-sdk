@@ -170,6 +170,20 @@ Or run a single transport test:
 uv run pytest tests/e2e/test_a2a.py::test_client -s -k "SLIM"
 ```
 
+**✅ Test the factory with FastMCP client and all available transports**
+
+Run a single transport test for FastMCP:
+
+```bash
+uv run pytest tests/e2e/test_fast_mcp.py::test_client -s -k "SLIM"
+```
+
+Run a single transport test for concurrent FastMCP:
+
+```bash
+uv run pytest tests/e2e/test_concurrent_fast_mcp.py::test_client -s -k "SLIM"
+```
+
 # Contributing
 
 Contributions are welcome! Please see the [contribution guide](CONTRIBUTING.md) for details on how to contribute to the Agntcy Application SDK.
