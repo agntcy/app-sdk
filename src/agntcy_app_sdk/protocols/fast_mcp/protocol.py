@@ -14,7 +14,7 @@ from agntcy_app_sdk.protocols.fast_mcp.client import MCPClient
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.protocols.message import Message
 from agntcy_app_sdk.transports.transport import BaseTransport
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 # Configure logging for the application
 configure_logging()
@@ -50,6 +50,7 @@ class FastMCPProtocol(MCPProtocol):
     :param server: Instance of FastMCP server.
     :raises TypeError: If the provided server is not an instance of FastMCP.
     """
+
     if not isinstance(server, FastMCP):
       raise TypeError("Provided server is not an instance of FastMCP")
     self._server = server
@@ -64,7 +65,7 @@ class FastMCPProtocol(MCPProtocol):
     if not self._server:
       raise ValueError("FastMCP server is not bound to the protocol.")
 
-    self._app = self._server.http_app(transport="streamable-http")
+    self._app = self._server.streamable_http_app()
 
     config = uvicorn.Config(
       self._app,

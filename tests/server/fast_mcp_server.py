@@ -4,7 +4,7 @@
 import argparse
 import asyncio
 from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 # Initialize the factory with tracing disabled
 factory = AgntcyFactory(enable_tracing=False)

@@ -18,7 +18,7 @@ from agntcy_app_sdk.protocols.fast_mcp.protocol import FastMCPProtocol
 from a2a.server.apps import A2AStarletteApplication
 
 from mcp.server.lowlevel import Server as MCPServer
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from agntcy_app_sdk.bridge import MessageBridge
 
