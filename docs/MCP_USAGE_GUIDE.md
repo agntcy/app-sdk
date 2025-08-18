@@ -136,6 +136,67 @@ Tool call result: meta=None content=[TextContent(type='text', text='Temperature:
 
 For a fully functional multi-agent example integrating A2A, Agntcy, and Langgraph, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy).
 
+### ✨ FastMCP Support (Updated: 2025/08/18)
+
+The Agntcy Application SDK now fully supports FastMCP, an enhanced version of the MCP protocol designed for high-performance and concurrent operations. FastMCP introduces additional capabilities such as streamable HTTP transport and optimized initialization flows. Developers can leverage these features seamlessly using the `FastMCPProtocol`.
+
+#### Initialization Flow
+
+The FastMCP client initialization involves two POST requests:
+1. **Initialization Request**: Establishes the session and retrieves the `Mcp-Session-Id`.
+2. **Notification Request**: Confirms the session initialization.
+
+The following diagram illustrates the initialization flow:
+
+<p align="center">
+  <img src="./fast-mcp-client-init.png" alt="FastMCP Client Initialization Flow" width="90%">
+</p>
+
+For more details, refer to the [official documentation](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram).
+
+#### Example: Creating a FastMCP Client
+
+The `FastMCPProtocol.create_client` method allows you to create an MCP client for interacting with a FastMCP server. Below is an example demonstrating its usage, including the `route_path` parameter.
+
+```python
+from agntcy_app_sdk.protocols.fast_mcp.protocol import FastMCPProtocol
+from agntcy_app_sdk.factory import AgntcyFactory
+import asyncio
+
+async def main():
+    protocol = FastMCPProtocol()
+    slim_transport = AgntcyFactory().create_transport("SLIM", endpoint="http://localhost:46357")
+
+    # Create a FastMCP client
+    client = await protocol.create_client(
+        url="http://localhost:8000",
+        topic="weather_agent.fastmcp",
+        transport=slim_transport,  # Optional transport instance
+        route_path="/custom-path",  # Custom route path for the client
+        auth="your-bearer-token",  # Optional authentication
+    )
+
+    async with client as mcp_client:
+        tools = await mcp_client.list_tools()
+        print("Available tools:", tools)
+
+        result = await mcp_client.call_tool(
+            name="get_forecast",
+            arguments={"location": "Colombia"},
+        )
+        print("Forecast result:", result)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+#### Key Notes:
+- **`route_path`**: Specifies the custom route path for the client. If not provided, it defaults to `/`.
+- **Authentication**: Supports both bearer tokens and `httpx.Auth` instances for flexible authentication.
+- **Initialization Flow**: The client performs two POST requests to initialize the MCP connection, ensuring proper session setup.
+
+For more details, refer to the [FastMCP API Reference](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram).
+
 ### ⚙️ Contributing additional Transports
 
 To contribute a new transport implementation, follow these steps:
