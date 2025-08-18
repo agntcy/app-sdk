@@ -76,6 +76,7 @@ class FastMCPProtocol(MCPProtocol):
     )
     await uvicorn.Server(config).serve()
 
+
   async def create_client(
           self,
           url: str,
@@ -97,6 +98,10 @@ class FastMCPProtocol(MCPProtocol):
     :return: An instance of MCPClient.
     :raises ValueError: If the URL is not provided.
     :raises RuntimeError: If the client initialization fails.
+
+    References:
+    - Sequence diagram for transport initialization:
+      https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram
     """
     if not url:
       raise ValueError("URL must be provided")
