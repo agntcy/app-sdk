@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 from agntcy_app_sdk.protocols.message import Message
-from typing import Callable, Optional
+from typing import Callable, Optional, List
 from typing import Any, TypeVar, Type
 import asyncio
 
@@ -64,7 +64,7 @@ class BaseTransport(ABC):
         self,
         topic: str,
         message: Message,
-        expected_responses: int = 1,
+        recipients: List[str],
         timeout: Optional[float] = 30.0,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""

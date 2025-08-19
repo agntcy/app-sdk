@@ -73,6 +73,7 @@ def run_mcp_server():
         if proc.poll() is None:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
+
 @pytest.fixture
 def run_fast_mcp_server():
     procs = []

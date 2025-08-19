@@ -143,6 +143,7 @@ The Agntcy Application SDK now fully supports FastMCP, an enhanced version of th
 #### Initialization Flow
 
 The FastMCP client initialization involves two POST requests:
+
 1. **Initialization Request**: Establishes the session and retrieves the `Mcp-Session-Id`.
 2. **Notification Request**: Confirms the session initialization.
 
@@ -191,6 +192,7 @@ if __name__ == "__main__":
 ```
 
 #### Key Notes:
+
 - **`route_path`**: Specifies the custom route path for the client. If not provided, it defaults to `/`.
 - **Authentication**: Supports both bearer tokens and `httpx.Auth` instances for flexible authentication.
 - **Initialization Flow**: The client performs two POST requests to initialize the MCP connection, ensuring proper session setup.

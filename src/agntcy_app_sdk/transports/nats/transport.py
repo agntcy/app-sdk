@@ -150,7 +150,7 @@ class NatsTransport(BaseTransport):
         self,
         topic: str,
         message: Message,
-        expected_responses: int = 1,
+        recipients: List[str],
         timeout: Optional[float] = 30.0,
     ) -> List[Message]:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
@@ -177,6 +177,8 @@ class NatsTransport(BaseTransport):
             message,
             respond=False,  # tell receivers to reply to the reply_topic
         )
+
+        expected_responses = len(recipients)
 
         logger.info(
             f"Collecting up to {expected_responses} response(s) with timeout={timeout}s..."

@@ -1,19 +1,118 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Dict
 import os
-import slim_bindings
 import asyncio
 import inspect
 import datetime
 import uuid
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.transports.transport import BaseTransport, Message
-
+import slim_bindings
+from slim_bindings import (
+    PyName,
+    PySessionInfo,
+    PySessionConfiguration,
+    PySessionDirection,
+)
+from .common import (
+    create_local_app,
+    split_id,
+)
 
 configure_logging()
 logger = get_logger(__name__)
+
+
+class SessionManager:
+    def __init__(self):
+        self._sessions: Dict[str, PySessionInfo] = {}
+        self._slim = None
+
+    def set_slim(self, slim: slim_bindings.Slim):
+        """
+        Set the SLIM client instance for the session manager.
+        """
+        self._slim = slim
+
+    async def request_reply_session(
+        self,
+        max_retries: int = 5,
+        timeout: datetime.timedelta = datetime.timedelta(seconds=5),
+    ):
+        """
+        Create a new request-reply session with predefined configuration.
+        """
+        if not self._slim:
+            raise ValueError("SLIM client is not set")
+
+        # check if we already have a request-reply session
+        session_key = "RequestReply"
+        if session_key in self._sessions:
+            logger.info(f"Reusing existing session: {session_key}")
+            return session_key, self._sessions[session_key]
+
+        session = await self._slim.create_session(
+            PySessionConfiguration.FireAndForget(
+                max_retries=max_retries,
+                timeout=timeout,
+                sticky=True,
+                mls_enabled=False,
+            )
+        )
+        session_key = "RequestReply"
+        self._sessions[session_key] = session
+        return session_key, session
+
+    async def group_broadcast_session(
+        self,
+        channel: PyName,
+        invitees: list[PyName],
+        max_retries: int = 20,
+        timeout: datetime.timedelta = datetime.timedelta(seconds=60),
+    ):
+        """
+        Create a new group broadcast session with predefined configuration.
+        """
+        if not self._slim:
+            raise ValueError("SLIM client is not set")
+
+        # check if we already have a group broadcast session for this channel and invitees
+        session_key = f"GroupChannel:{channel}:" + ",".join(
+            [str(invitee) for invitee in invitees]
+        )
+        if session_key in self._sessions:
+            logger.info(f"Reusing existing group broadcast session: {session_key}")
+            return session_key, self._sessions[session_key]
+
+        session_info = await self._slim.create_session(
+            PySessionConfiguration.Streaming(
+                PySessionDirection.BIDIRECTIONAL,
+                topic=channel,
+                moderator=True,
+                max_retries=max_retries,
+                timeout=timeout,
+                mls_enabled=True,
+            )
+        )
+
+        for invitee in invitees:
+            await self._slim.set_route(invitee)
+            await self._slim.invite(session_info, invitee)
+
+        # store the session info
+        self._sessions[session_key] = session_info
+        return session_key, session_info
+
+    def close_session(self, session_key: str):
+        """
+        Close and remove a session by its key.
+        """
+        session = self._sessions.pop(session_key, None)
+        if session:
+            logger.info(f"Closing session: {session_key}")
+
 
 """
 SLIM implementation of the BaseTransport interface.
@@ -42,7 +141,7 @@ class SLIMTransport(BaseTransport):
         self.message_timeout = message_timeout
         self.message_retries = message_retries
 
-        self._sessions = {}
+        self._session_manager = SessionManager()
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
@@ -102,49 +201,43 @@ class SLIMTransport(BaseTransport):
         # if we are asked to provide a response, use or generate a reply_to topic
         if respond and not message.reply_to:
             message.reply_to = uuid.uuid4().hex
-            print(f"Generated reply_to topic: {message.reply_to}")
 
-        resp = await self._publish(
+        resp = await self._request(
             org=self._default_org,
             namespace=self._default_namespace,
             topic=topic,
             message=message,
-            expected_responses=1 if respond else 0,
         )
 
         if respond:
-            return resp[0] if resp else None
+            return resp
 
     async def broadcast(
         self,
         topic: str,
         message: Message,
-        expected_responses: int = 1,
+        participants: List[str],
         timeout: Optional[float] = 30.0,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         topic = self.santize_topic(topic)
 
         logger.info(
-            f"Broadcasting to topic: {topic} and waiting for {expected_responses} responses"
+            f"Broadcasting to topic: {topic} and waiting for {len(participants)} responses"
         )
 
         # Generate a unique reply_to topic if not provided
         if not message.reply_to:
             message.reply_to = uuid.uuid4().hex
 
-        # set the broadcast_id header to a unique value
-        message.headers = message.headers or {}
-        message.headers["broadcast_id"] = str(uuid.uuid4())
-
         try:
             responses = await asyncio.wait_for(
-                self._publish(
+                self._group_broadcast(
                     org=self._default_org,
                     namespace=self._default_namespace,
-                    topic=topic,
+                    broadcast_topic=topic,
                     message=message,
-                    expected_responses=expected_responses,
+                    participants=participants,
                 ),
                 timeout=timeout,
             )
@@ -159,7 +252,7 @@ class SLIMTransport(BaseTransport):
         """Subscribe to a topic with a callback."""
         topic = self.santize_topic(topic)
 
-        await self._subscribe(
+        await self._receive(
             org=self._default_org,
             namespace=self._default_namespace,
             topic=topic,
@@ -170,168 +263,139 @@ class SLIMTransport(BaseTransport):
         )
 
     # ###################################################
-    # SLIM sub methods
+    # SLIM Transport Internal Methods
     # ###################################################
 
-    async def _subscribe(self, org: str, namespace: str, topic: str) -> None:
+    async def _broadcast(
+        self,
+        org: str,
+        namespace: str,
+        broadcast_topic: str,
+        message: Message,
+        participants: List[str],
+    ) -> None:
         if not self._slim:
-            await self._slim_connect(org, namespace, topic)
+            await self._slim_connect(org, namespace, uuid.uuid4().hex)
 
-        await self._slim.subscribe(org, namespace, topic)
+        logger.debug(f"Publishing to topic: {broadcast_topic}")
 
-        session_info = await self._get_session(org, namespace, topic, "pubsub")
+        channel = PyName(org, namespace, broadcast_topic)
+        invitees = []
+        for participant in participants:
+            if "/" not in participant:
+                invitees.append(PyName(org, namespace, participant))
+            else:
+                try:
+                    invitee = split_id(participant)
+                    invitees.append(invitee)
+                except ValueError:
+                    logger.warning(f"Invalid participant ID: {participant}")
+        if not invitees:
+            logger.error("No valid participants to invite for broadcast.")
+            return []
+        _, session_info = await self._session_manager.group_broadcast_session(
+            channel, invitees
+        )
 
-        async def background_task():
-            async with self._slim:
-                while True:
-                    # Receive the message from the session
-                    recv_session, msg = await self._slim.receive(
-                        session=session_info.id
-                    )
+        async with self._slim:
+            await self._slim.publish(session_info, message.serialize(), channel)
 
-                    msg = Message.deserialize(msg)
+            # wait for responses from all invitees or be interrupted by caller
+            responses = []
+            while len(responses) < len(invitees):
+                _, msg = await self._slim.receive(session=session_info.id)
+                msg = Message.deserialize(msg)
+                responses.append(msg)
 
-                    logger.debug(f"Received message: {msg}")
+            return responses
 
-                    reply_to = msg.reply_to
-                    msg.reply_to = (
-                        None  # we will handle replies instead of the bridge receiver
-                    )
-
-                    if inspect.iscoroutinefunction(self._callback):
-                        output = await self._callback(msg)
-                    else:
-                        output = self._callback(msg)
-
-                    if output is None:
-                        logger.error("Callback returned None. Cannot process message.")
-                        continue
-
-                    if reply_to:
-                        # set a unique broadcast_id if not already set
-                        output.headers = output.headers or {}
-                        output.headers["broadcast_id"] = msg.headers.get(
-                            "broadcast_id", str(uuid.uuid4())
-                        )
-
-                        payload = output.serialize()
-
-                        # Set a slim route to the reply_to topic to enable outbound messages
-                        await self._slim.set_route(org, namespace, reply_to)
-
-                        await self._slim.publish(
-                            recv_session,
-                            payload,
-                            org,
-                            namespace,
-                            reply_to,
-                        )
-
-                        logger.debug(f"Replied to {reply_to} with message: {output}")
-
-        asyncio.create_task(background_task())
-
-    async def _publish(
+    async def _request(
         self,
         org: str,
         namespace: str,
         topic: str,
         message: Message,
-        expected_responses: int = 0,
     ) -> None:
         if not self._slim:
             await self._slim_connect(org, namespace, uuid.uuid4().hex)
 
         logger.debug(f"Publishing to topic: {topic}")
 
-        # Set a slim route to this topic, enabling outbound messages to this topic
-        await self._slim.set_route(org, namespace, topic)
-        if message.reply_to:
-            logger.info(f"Setting reply_to topic: {message.reply_to}")
-            # to get responses, we need to subscribe to the reply_to topic
-            await self._slim.subscribe(org, namespace, message.reply_to)
-
-        session_info = await self._get_session(org, namespace, topic, "pubsub")
-
         async with self._slim:
-            # Send the message
-            await self._slim.publish(
-                session_info,
+            # Set a slim route to this topic, enabling outbound messages to this topic
+            remote_name = split_id(f"{org}/{namespace}/{topic}")
+            await self._slim.set_route(remote_name)
+
+            # create or get a request-reply (sticky fire-and-forget) session
+            _, session = await self._session_manager.request_reply_session()
+
+            _, reply = await self._slim.request_reply(
+                session,
                 message.serialize(),
-                org,
-                namespace,
-                topic,
+                remote_name,
+                timeout=datetime.timedelta(seconds=5),
             )
 
-            responses = []
-            while len(responses) < expected_responses and expected_responses > 0:
-                # Wait for a response if requested
-                session_info, msg = await self._slim.receive(session=session_info.id)
-                response = Message.deserialize(msg)
+            reply = Message.deserialize(reply)
+            return reply
 
-                # Check if the response is from the same broadcast
-                broadcast_id = message.headers.get("broadcast_id")
-                if (
-                    broadcast_id
-                    and response.headers.get("broadcast_id") != broadcast_id
-                ):
-                    logger.warning(
-                        f"Received response with different broadcast_id: {response.headers.get('broadcast_id')}"
-                    )
-                    continue
-                responses.append(response)
+    async def _receive(self, org: str, namespace: str, topic: str) -> None:
+        if not self._slim:
+            await self._slim_connect(org, namespace, topic)
 
-            return responses
+        async def background_task():
+            async with self._slim:
+                while True:
+                    # Receive the message from the session
+                    session_info, _ = await self._slim.receive()
 
-    async def _get_session(self, org, namespace, topic, session_type):
-        session_key = f"{org}_{namespace}_{topic}_{session_type}"
+                    async def inner_task(session_id):
+                        while True:
+                            # Receive the message from the session
+                            session, msg = await self._slim.receive(session=session_id)
+                            msg = Message.deserialize(msg)
 
-        # TODO: handle different session types
-        if session_key in self._sessions:
-            session_info = self._sessions[session_key]
-            logger.debug(f"Reusing existing session: {session_key}")
-        else:
-            session_info = await self._slim.create_session(
-                slim_bindings.PySessionConfiguration.Streaming(
-                    slim_bindings.PySessionDirection.BIDIRECTIONAL,
-                    topic=slim_bindings.PyAgentType(org, namespace, topic),
-                    max_retries=self.message_retries,
-                    timeout=self.message_timeout,
-                )
-            )
-            logger.debug(f"Created new session: {session_key}")
-            self._sessions[session_key] = session_info
+                            reply_to = msg.reply_to
+                            msg.reply_to = None  # we will handle replies instead of the bridge receiver
 
-        return session_info
+                            if inspect.iscoroutinefunction(self._callback):
+                                output = await self._callback(msg)
+                            else:
+                                output = self._callback(msg)
+
+                            if reply_to:
+                                payload = output.serialize()
+                                await self._slim.publish_to(session, payload)
+
+                    asyncio.create_task(inner_task(session_info.id))
+
+        asyncio.create_task(background_task())
 
     async def _slim_connect(
-        self, org: str, namespace: str, topic: str, retries=3
+        self,
+        org: str,
+        namespace: str,
+        topic: str,
     ) -> None:
         # create new gateway object
         logger.info(
             f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}"
         )
 
-        self._slim = await slim_bindings.Slim.new(org, namespace, topic)
+        self._slim: slim_bindings.Slim = await create_local_app(
+            PyName(org, namespace, topic),
+            slim={
+                "endpoint": self._endpoint,
+                "tls": {"insecure": True},
+            },
+            enable_opentelemetry=False,
+            shared_secret="<shared_secret>",
+            jwt=None,
+            bundle=None,
+            audience=None,
+        )
 
-        for _ in range(retries):
-            try:
-                # Attempt to connect to the SLIM server
-                # Connect to slim server
-                _ = await self._slim.connect(
-                    {
-                        "endpoint": self._endpoint,
-                        "tls": {"insecure": True},
-                    }  # TODO: handle with config input
-                )
-
-                logger.info(f"connected to slim gateway @{self._endpoint}")
-                return  # Successfully connected, exit the loop
-            except Exception as e:
-                logger.error(f"Failed to connect to SLIM server: {e}")
-                await asyncio.sleep(1)
-
-        raise RuntimeError(f"Failed to connect to SLIM server after {retries} retries.")
+        self._session_manager.set_slim(self._slim)
 
     def santize_topic(self, topic: str) -> str:
         """Sanitize the topic name to ensure it is valid for NATS."""

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from starlette.types import Scope
-from typing import Dict, Any
+from typing import Dict, Any, List
 import json
 from uuid import uuid4
 import httpx
@@ -154,7 +154,7 @@ class A2AProtocol(BaseAgentProtocol):
 
         async def broadcast_message(
             request: SendMessageRequest,
-            expected_responses: int = 1,
+            recipients: List[str],
             timeout: float = 10.0,
         ) -> dict[str, Any]:
             """
@@ -171,7 +171,7 @@ class A2AProtocol(BaseAgentProtocol):
                 responses = await transport.broadcast(
                     topic,
                     msg,
-                    expected_responses=expected_responses,
+                    recipients=recipients,
                     timeout=timeout,
                 )
             except Exception as e:
