@@ -14,7 +14,7 @@ from agntcy_app_sdk.protocols.message import Message
 
 configure_logging()
 logger = get_logger(__name__)
-print("SLIM2Transport initialized new one")
+logger.info("SLIM2Transport module loaded")
 
 class SLIM2Transport(BaseTransport):
     """
@@ -48,6 +48,7 @@ class SLIM2Transport(BaseTransport):
             request_timeout: Request timeout in seconds
             max_retries: Maximum connection retry attempts
         """
+        logger.info(f"SLIM2Transport initialized: {endpoint} ({org}/{namespace}/{identity})")
         self._endpoint = endpoint
         self._org = org
         self._namespace = namespace
