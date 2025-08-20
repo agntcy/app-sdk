@@ -10,6 +10,7 @@ from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 
 from agntcy_app_sdk.transports.slim.transport import SLIMTransport
 from agntcy_app_sdk.transports.slim2.transport import SLIM2Transport
+from agntcy_app_sdk.transports.slim3.transport import SLIM3Transport
 from agntcy_app_sdk.transports.nats.transport import NatsTransport
 from agntcy_app_sdk.transports.streamable_http.transport import StreamableHTTPTransport
 
@@ -40,6 +41,7 @@ class TransportTypes(Enum):
     A2A = "A2A"
     SLIM = "SLIM"
     SLIM2 = "SLIM2"
+    SLIM3 = "SLIM3"
     NATS = "NATS"
     MQTT = "MQTT"
     STREAMABLE_HTTP = "StreamableHTTP"
@@ -245,6 +247,7 @@ class AgntcyFactory:
         """
         self._transport_registry["SLIM"] = SLIMTransport
         self._transport_registry["SLIM2"] = SLIM2Transport
+        self._transport_registry["SLIM3"] = SLIM3Transport
         self._transport_registry["NATS"] = NatsTransport
         self._transport_registry["STREAMABLE_HTTP"] = StreamableHTTPTransport
 
