@@ -69,3 +69,14 @@ class BaseTransport(ABC):
         """receive a message to a topic."""
         pass
 
+
+    @abstractmethod
+    async def broadcast(
+        self,
+        topic: str,
+        message: Message,
+        expected_responses: int = 1,
+        timeout: Optional[float] = 30.0,
+    ) -> None:
+        """Broadcast a message to all subscribers of a topic and wait for responses."""
+        pass
