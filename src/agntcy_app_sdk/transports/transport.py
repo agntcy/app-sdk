@@ -60,12 +60,12 @@ class BaseTransport(ABC):
         pass
 
     @abstractmethod
-    async def broadcast(
-        self,
-        topic: str,
-        message: Message,
-        expected_responses: int = 1,
-        timeout: Optional[float] = 30.0,
+    async def receive_back(
+            self,
+            topic: str,
+            message: Message,
+            respond: Optional[bool] = False,
     ) -> None:
-        """Broadcast a message to all subscribers of a topic and wait for responses."""
+        """receive a message to a topic."""
         pass
+
