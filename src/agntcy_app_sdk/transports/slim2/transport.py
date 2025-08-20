@@ -176,42 +176,34 @@ class SLIM2Transport(BaseTransport):
                 await asyncio.sleep(0.1)
                 logger.info("publish() - Routing setup complete")
                 
-                if respond:
-                    # Use request_reply for response
-                    logger.info(f"publish() - Sending request-reply to {topic} (timeout: {self._request_timeout}s)")
-                    
-                    serialized_msg = message.serialize()
-                    logger.info(f"publish() - Serialized message length: {len(serialized_msg)} bytes")
-                    
-                    timeout = datetime.timedelta(seconds=self._request_timeout)
-                    logger.info(f"publish() - Calling SLIM request_reply with timeout: {timeout}")
-                    _, reply_bytes = await asyncio.wait_for(
-                        slim.request_reply(session, serialized_msg, receiver_name, timeout=timeout),
-                        timeout=self._request_timeout + 5  # Add buffer to SLIM timeout
-                    )
-                    
-                    # Deserialize response
-                    response_text = reply_bytes.decode()
-                    logger.info(f"publish() - Received response ({len(response_text)} chars): {response_text[:100]}...")
-                    
-                    try:
-                        logger.info("publish() - Attempting to deserialize response as Message")
-                        response_message = Message.deserialize(response_text)
-                        logger.info("publish() - Response deserialized successfully")
-                    except Exception as e:
-                        # Fallback to simple payload if deserialization fails
-                        logger.warning(f"publish() - Response deserialization failed ({e}), using fallback")
-                        response_message = Message(payload=response_text)
-                    
-                    logger.info(f"publish() - Request-reply completed successfully")
-                    return response_message
-                else:
-                    # Fire and forget
-                    serialized_msg = message.serialize()
-                    logger.info(f"publish() - Sending fire-and-forget message ({len(serialized_msg)} bytes)")
-                    await slim.publish(session, serialized_msg, receiver_name)
-                    logger.info(f"publish() - Fire-and-forget message sent successfully")
-                    return None
+                # Use request_reply for response
+                logger.info(f"publish() - Sending request-reply to {topic} (timeout: {self._request_timeout}s)")
+                
+                serialized_msg = message.serialize()
+                logger.info(f"publish() - Serialized message length: {len(serialized_msg)} bytes")
+                
+                timeout = datetime.timedelta(seconds=self._request_timeout)
+                logger.info(f"publish() - Calling SLIM request_reply with timeout: {timeout}")
+                _, reply_bytes = await asyncio.wait_for(
+                    slim.request_reply(session, serialized_msg, receiver_name, timeout=timeout),
+                    timeout=self._request_timeout + 5  # Add buffer to SLIM timeout
+                )
+                
+                # Deserialize response
+                response_text = reply_bytes.decode()
+                logger.info(f"publish() - Received response ({len(response_text)} chars): {response_text[:100]}...")
+                
+                try:
+                    logger.info("publish() - Attempting to deserialize response as Message")
+                    response_message = Message.deserialize(response_text)
+                    logger.info("publish() - Response deserialized successfully")
+                except Exception as e:
+                    # Fallback to simple payload if deserialization fails
+                    logger.warning(f"publish() - Response deserialization failed ({e}), using fallback")
+                    response_message = Message(payload=response_text)
+                
+                logger.info(f"publish() - Request-reply completed successfully")
+                return response_message
                     
         except asyncio.TimeoutError as e:
             error_msg = f"publish() - Request to {topic} timed out after {self._request_timeout}s"
