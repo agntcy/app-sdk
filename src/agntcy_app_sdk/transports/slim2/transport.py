@@ -14,7 +14,7 @@ from agntcy_app_sdk.protocols.message import Message
 
 configure_logging()
 logger = get_logger(__name__)
-logger.info("SLIM2Transport module loaded")
+# logger.info("SLIM2Transport module loaded")
 
 class SLIM2Transport(BaseTransport):
     """
@@ -217,3 +217,8 @@ class SLIM2Transport(BaseTransport):
         sanitized = "".join(c for c in sanitized if c.isalnum() or c == "_")
         logger.info(f"_sanitize_topic() - Result: '{topic}' -> '{sanitized}'")
         return sanitized
+
+    async def broadcast(self, topic: str, message, expected_responses: int = 1, timeout: float = 30.0):
+        """Broadcast method - not implemented in SLIM2Transport."""
+        pass
+
