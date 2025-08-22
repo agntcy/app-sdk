@@ -71,6 +71,10 @@ class MCPProtocol(BaseAgentProtocol):
                 # Use session for MCP communication
                 pass
         """
+
+        if transport:
+            await transport.setup()
+
         # Store timeout and retry configuration for this session
         self.message_timeout = message_timeout
         self.message_retries = message_retries

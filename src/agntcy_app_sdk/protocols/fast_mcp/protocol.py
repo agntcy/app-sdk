@@ -102,6 +102,9 @@ class FastMCPProtocol(MCPProtocol):
         - Sequence diagram for transport initialization:
           https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram
         """
+        if transport:
+            await transport.setup()
+
         if not url:
             raise ValueError("URL must be provided")
 

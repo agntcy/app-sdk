@@ -32,9 +32,10 @@ class MessageBridge:
         # set the message handler to the protocol handler's handle_message method
         self.handler = self.protocol_handler.handle_message
 
+        # Set up the transport layer
+        await self.transport.setup()
         self.transport.set_callback(self._process_message)
 
-        # Start all components
         await self.transport.subscribe(self.topic)
 
         # check if protocol_handler.setup_ingress_handler is async or sync

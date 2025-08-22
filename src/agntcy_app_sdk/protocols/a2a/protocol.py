@@ -90,6 +90,9 @@ class A2AProtocol(BaseAgentProtocol):
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
 
+        if transport:
+            await transport.setup()
+
         # if a transport and a topic are provided, bypass the URL and use the topic
         if topic and transport:
             client = await self.get_client_from_agent_card_topic(topic, transport)
@@ -154,9 +157,10 @@ class A2AProtocol(BaseAgentProtocol):
 
         async def broadcast_message(
             request: SendMessageRequest,
-            recipients: List[str],
+            recipients: List[str] | None = None,
+            broadcast_topic: str = None,
             timeout: float = 10.0,
-        ) -> dict[str, Any]:
+        ) -> List[SendMessageResponse]:
             """
             Broadcast a request using the provided transport.
             """
@@ -167,9 +171,14 @@ class A2AProtocol(BaseAgentProtocol):
                 request=request.model_dump(mode="json", exclude_none=True)
             )
 
+            if not broadcast_topic:
+                broadcast_topic = topic
+
+            print(f"Broadcasting message on topic: {broadcast_topic}")
+
             try:
                 responses = await transport.broadcast(
-                    topic,
+                    broadcast_topic,
                     msg,
                     recipients=recipients,
                     timeout=timeout,

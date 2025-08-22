@@ -19,19 +19,24 @@ class BaseTransport(ABC):
 
     @classmethod
     @abstractmethod
-    def from_client(cls: Type[T], client: Any) -> T:
+    def from_client(cls: Type[T], client: Any, name: str = None) -> T:
         """Create a transport instance from a client."""
         pass
 
     @classmethod
     @abstractmethod
-    def from_config(cls: Type[T], endpoint: str, **kwargs) -> T:
+    def from_config(cls: Type[T], endpoint: str, name: str = None, **kwargs) -> T:
         """Create a transport instance from a configuration."""
         pass
 
     @abstractmethod
     def type(self) -> str:
         """Return the transport type."""
+        pass
+
+    @abstractmethod
+    async def setup(self, **kwargs) -> None:
+        """Setup the transport connection."""
         pass
 
     @abstractmethod
@@ -64,8 +69,8 @@ class BaseTransport(ABC):
         self,
         topic: str,
         message: Message,
-        recipients: List[str],
+        recipients: Optional[List[str]] = None,
         timeout: Optional[float] = 30.0,
-    ) -> None:
+    ) -> List[Message]:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         pass

@@ -9,12 +9,10 @@ import datetime
 import uuid
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.transports.transport import BaseTransport, Message
+from agntcy_app_sdk.transports.slim.session_manager import SessionManager
 import slim_bindings
 from slim_bindings import (
     PyName,
-    PySessionInfo,
-    PySessionConfiguration,
-    PySessionDirection,
 )
 from .common import (
     create_local_app,
@@ -23,95 +21,6 @@ from .common import (
 
 configure_logging()
 logger = get_logger(__name__)
-
-
-class SessionManager:
-    def __init__(self):
-        self._sessions: Dict[str, PySessionInfo] = {}
-        self._slim = None
-
-    def set_slim(self, slim: slim_bindings.Slim):
-        """
-        Set the SLIM client instance for the session manager.
-        """
-        self._slim = slim
-
-    async def request_reply_session(
-        self,
-        max_retries: int = 5,
-        timeout: datetime.timedelta = datetime.timedelta(seconds=5),
-    ):
-        """
-        Create a new request-reply session with predefined configuration.
-        """
-        if not self._slim:
-            raise ValueError("SLIM client is not set")
-
-        # check if we already have a request-reply session
-        session_key = "RequestReply"
-        if session_key in self._sessions:
-            logger.info(f"Reusing existing session: {session_key}")
-            return session_key, self._sessions[session_key]
-
-        session = await self._slim.create_session(
-            PySessionConfiguration.FireAndForget(
-                max_retries=max_retries,
-                timeout=timeout,
-                sticky=True,
-                mls_enabled=False,
-            )
-        )
-        session_key = "RequestReply"
-        self._sessions[session_key] = session
-        return session_key, session
-
-    async def group_broadcast_session(
-        self,
-        channel: PyName,
-        invitees: list[PyName],
-        max_retries: int = 20,
-        timeout: datetime.timedelta = datetime.timedelta(seconds=60),
-    ):
-        """
-        Create a new group broadcast session with predefined configuration.
-        """
-        if not self._slim:
-            raise ValueError("SLIM client is not set")
-
-        # check if we already have a group broadcast session for this channel and invitees
-        session_key = f"GroupChannel:{channel}:" + ",".join(
-            [str(invitee) for invitee in invitees]
-        )
-        if session_key in self._sessions:
-            logger.info(f"Reusing existing group broadcast session: {session_key}")
-            return session_key, self._sessions[session_key]
-
-        session_info = await self._slim.create_session(
-            PySessionConfiguration.Streaming(
-                PySessionDirection.BIDIRECTIONAL,
-                topic=channel,
-                moderator=True,
-                max_retries=max_retries,
-                timeout=timeout,
-                mls_enabled=True,
-            )
-        )
-
-        for invitee in invitees:
-            await self._slim.set_route(invitee)
-            await self._slim.invite(session_info, invitee)
-
-        # store the session info
-        self._sessions[session_key] = session_info
-        return session_key, session_info
-
-    def close_session(self, session_key: str):
-        """
-        Close and remove a session by its key.
-        """
-        session = self._sessions.pop(session_key, None)
-        if session:
-            logger.info(f"Closing session: {session_key}")
 
 
 """
@@ -126,25 +35,46 @@ class SLIMTransport(BaseTransport):
 
     def __init__(
         self,
-        client=None,
+        routable_name: str = None,
+        slim_instance=None,
         endpoint: Optional[str] = None,
-        default_org: str = "default",
-        default_namespace: str = "default",
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=10),
         message_retries: int = 2,
+        shared_secret_identity: str = "slim-secret-change-me",
     ) -> None:
+        if not routable_name:
+            raise ValueError(
+                "routable_name must be provided in the form 'org/namespace/local_name'"
+            )
+        if not endpoint:
+            raise ValueError(
+                "SLIM dataplane endpoint must be provided for SLIMTransport"
+            )
+
+        org, namespace, local_name = routable_name.split("/", 2)
+        self.pyname = PyName(org, namespace, local_name)
+        # PyName encrypts the components so we need to store the original values separately
+        self.org = org
+        self.namespace = namespace
+        self.local_name = local_name
         self._endpoint = endpoint
-        self._slim = client
+        self._slim = slim_instance
+
         self._callback = None
-        self._default_org = default_org
-        self._default_namespace = default_namespace
         self.message_timeout = message_timeout
         self.message_retries = message_retries
+        self._shared_secret_identity = shared_secret_identity
+        self.enable_opentelemetry = False
+
+        # keep track of topics we are "subscribed" to, will be used to filter incoming
+        # messages in the receive loop
+        self.active_subscription_topics: Dict[str, PyName] = {}
 
         self._session_manager = SessionManager()
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
+            self.enable_opentelemetry = True
             from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
             SLIMInstrumentor().instrument()
@@ -157,24 +87,32 @@ class SLIMTransport(BaseTransport):
     # ###################################################
 
     @classmethod
-    def from_client(cls, client, org="default", namespace="default") -> "SLIMTransport":
-        # Optionally validate client
-        return cls(client=client, default_org=org, default_namespace=namespace)
+    def from_client(cls, client, name: str = None) -> "SLIMTransport":
+        """
+        Create a SLIM transport instance from an existing SLIM client.
+        :param client: An instance of slim_bindings.Slim
+        :param name: Optional routable name in the form 'org/namespace/local_name'
+        """
+        if not isinstance(client, slim_bindings.Slim):
+            raise TypeError(f"Expected a SLIM instance, got {type(client)}")
+
+        # TODO: get local_name from client
+        raise NotImplementedError("from_client method is not yet implemented")
 
     @classmethod
-    def from_config(
-        cls, endpoint: str, org: str = "default", namespace: str = "default", **kwargs
-    ) -> "SLIMTransport":
+    def from_config(cls, endpoint: str, name: str, **kwargs) -> "SLIMTransport":
         """
         Create a SLIM transport instance from a configuration.
         :param endpoint: The SLIM server endpoint.
-        :param org: The organization name.
-        :param namespace: The namespace name.
+        :param routable_name: The routable name in the form 'org/namespace/local_name'.
         :param kwargs: Additional configuration parameters.
         """
-        return cls(
-            endpoint=endpoint, default_org=org, default_namespace=namespace, **kwargs
-        )
+        if not name:
+            raise ValueError(
+                "Routable name must be provided in the form 'org/namespace/local_name'"
+            )
+
+        return cls(routable_name=name, endpoint=endpoint, **kwargs)
 
     def type(self) -> str:
         """Return the transport type."""
@@ -187,25 +125,55 @@ class SLIMTransport(BaseTransport):
         """Set the message handler function."""
         self._callback = handler
 
+    async def setup(self):
+        """
+        Start the async receive loop for incoming messages.
+        """
+        await self._slim_connect()
+        await self._receive()
+
+    def build_pyname(
+        self, topic: str, org: Optional[str] = None, namespace: Optional[str] = None
+    ) -> PyName:
+        """
+        Build a PyName object from a topic string, optionally using provided org and namespace.
+        If org or namespace are not provided, use the transport's local org and namespace.
+        """
+        if org and namespace:
+            return PyName(org, namespace, topic)
+
+        try:
+            return split_id(topic)
+        except ValueError:
+            logger.warning(
+                f"org or namespace not provided, using locals: {self.org}, {self.namespace}"
+            )
+            return PyName(self.org, self.namespace, topic)
+        except Exception as e:
+            logger.error(f"Error building PyName from topic '{topic}': {e}")
+            raise
+
     async def publish(
         self,
         topic: str,
         message: Message,
+        org: Optional[str] = None,
+        namespace: Optional[str] = None,
         respond: Optional[bool] = False,
-    ) -> None:
+    ) -> Optional[Message]:
         """Publish a message to a topic."""
         topic = self.santize_topic(topic)
 
-        logger.debug(f"Publishing {message.payload} to topic: {topic}")
+        remote_name = self.build_pyname(topic, org, namespace)
+
+        logger.info(f"Publishing {message.payload} to topic: {topic}")
 
         # if we are asked to provide a response, use or generate a reply_to topic
         if respond and not message.reply_to:
             message.reply_to = uuid.uuid4().hex
 
         resp = await self._request(
-            org=self._default_org,
-            namespace=self._default_namespace,
-            topic=topic,
+            remote_name=remote_name,
             message=message,
         )
 
@@ -216,28 +184,27 @@ class SLIMTransport(BaseTransport):
         self,
         topic: str,
         message: Message,
-        participants: List[str],
+        recipients: List[str],
         timeout: Optional[float] = 30.0,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         topic = self.santize_topic(topic)
 
         logger.info(
-            f"Broadcasting to topic: {topic} and waiting for {len(participants)} responses"
+            f"Broadcasting to topic: {topic} and waiting for {len(recipients)} responses"
         )
 
-        # Generate a unique reply_to topic if not provided
-        if not message.reply_to:
-            message.reply_to = uuid.uuid4().hex
+        print(f"[debug] Recipients: {recipients}")
+
+        # convert recipients to PyName objects
+        invitees = [self.build_pyname(recipient) for recipient in recipients]
 
         try:
             responses = await asyncio.wait_for(
-                self._group_broadcast(
-                    org=self._default_org,
-                    namespace=self._default_namespace,
-                    broadcast_topic=topic,
+                self._broadcast(
+                    channel=self.build_pyname(topic),
                     message=message,
-                    participants=participants,
+                    invitees=invitees,
                 ),
                 timeout=timeout,
             )
@@ -248,19 +215,15 @@ class SLIMTransport(BaseTransport):
             )
             return []
 
-    async def subscribe(self, topic: str) -> None:
-        """Subscribe to a topic with a callback."""
+    async def subscribe(self, topic: str, org=None, namespace=None) -> None:
+        """
+        Store the subscription information for a given topic, org, and namespace
+        to be used for receive filtering.
+        """
         topic = self.santize_topic(topic)
 
-        await self._receive(
-            org=self._default_org,
-            namespace=self._default_namespace,
-            topic=topic,
-        )
-
-        logger.info(
-            f"Subscribed to {self._default_org}/{self._default_namespace}/{topic}"
-        )
+        sub_pyname = self.build_pyname(topic, org, namespace)
+        self.active_subscription_topics[sub_pyname.id] = sub_pyname
 
     # ###################################################
     # SLIM Transport Internal Methods
@@ -268,34 +231,24 @@ class SLIMTransport(BaseTransport):
 
     async def _broadcast(
         self,
-        org: str,
-        namespace: str,
-        broadcast_topic: str,
+        channel: PyName,
         message: Message,
-        participants: List[str],
-    ) -> None:
+        invitees: List[PyName],
+    ) -> List[Message]:
         if not self._slim:
-            await self._slim_connect(org, namespace, uuid.uuid4().hex)
+            raise ValueError("SLIM client is not set, please call setup() first.")
 
-        logger.debug(f"Publishing to topic: {broadcast_topic}")
+        logger.debug(f"Publishing to topic: {channel}")
 
-        channel = PyName(org, namespace, broadcast_topic)
-        invitees = []
-        for participant in participants:
-            if "/" not in participant:
-                invitees.append(PyName(org, namespace, participant))
-            else:
-                try:
-                    invitee = split_id(participant)
-                    invitees.append(invitee)
-                except ValueError:
-                    logger.warning(f"Invalid participant ID: {participant}")
-        if not invitees:
-            logger.error("No valid participants to invite for broadcast.")
-            return []
         _, session_info = await self._session_manager.group_broadcast_session(
             channel, invitees
         )
+
+        if not message.headers:
+            message.headers = {}
+
+        # Signal to the receiver that we expect a direct response from each invitee
+        message.headers["respond-to-source"] = "true"
 
         async with self._slim:
             await self._slim.publish(session_info, message.serialize(), channel)
@@ -311,23 +264,28 @@ class SLIMTransport(BaseTransport):
 
     async def _request(
         self,
-        org: str,
-        namespace: str,
-        topic: str,
+        remote_name: PyName,
         message: Message,
     ) -> None:
         if not self._slim:
-            await self._slim_connect(org, namespace, uuid.uuid4().hex)
+            raise ValueError(
+                "SLIM client is not initialized, please call setup() first."
+            )
 
-        logger.debug(f"Publishing to topic: {topic}")
+        logger.debug(f"Publishing to topic: {remote_name}")
 
         async with self._slim:
-            # Set a slim route to this topic, enabling outbound messages to this topic
-            remote_name = split_id(f"{org}/{namespace}/{topic}")
             await self._slim.set_route(remote_name)
 
             # create or get a request-reply (sticky fire-and-forget) session
             _, session = await self._session_manager.request_reply_session()
+
+            if not message.headers:
+                message.headers = {}
+
+            # the transport receiver can handle both request-reply and group-chat,
+            # signal we want a direct reply
+            message.headers["respond-to-source"] = "true"
 
             _, reply = await self._slim.request_reply(
                 session,
@@ -339,9 +297,20 @@ class SLIMTransport(BaseTransport):
             reply = Message.deserialize(reply)
             return reply
 
-    async def _receive(self, org: str, namespace: str, topic: str) -> None:
+    def can_receive(self, session_destination: PyName) -> bool:
+        """
+        Determine if the transport can receive messages for the given session destination.
+        """
+        for active_sub in self.active_subscription_topics:
+            print(
+                "sub id:", active_sub, "session_destination id:", session_destination.id
+            )
+
+    async def _receive(self) -> None:
         if not self._slim:
-            await self._slim_connect(org, namespace, topic)
+            raise ValueError(
+                "SLIM client is not initialized, please call setup() first."
+            )
 
         async def background_task():
             async with self._slim:
@@ -353,19 +322,38 @@ class SLIMTransport(BaseTransport):
                         while True:
                             # Receive the message from the session
                             session, msg = await self._slim.receive(session=session_id)
+
+                            self.can_receive(session.destination_name)
+
                             msg = Message.deserialize(msg)
 
-                            reply_to = msg.reply_to
-                            msg.reply_to = None  # we will handle replies instead of the bridge receiver
+                            print(
+                                f"Received message on session {session_id}: {msg.headers}"
+                            )
+
+                            msg.reply_to = None
 
                             if inspect.iscoroutinefunction(self._callback):
                                 output = await self._callback(msg)
                             else:
                                 output = self._callback(msg)
 
-                            if reply_to:
+                            if (
+                                msg.headers.get("respond-to-source", "false").lower()
+                                == "true"
+                            ):
                                 payload = output.serialize()
                                 await self._slim.publish_to(session, payload)
+                            elif (
+                                msg.headers.get("respond_to_group", "false").lower()
+                                == "true"
+                            ):
+                                payload = output.serialize()
+                                await self._slim.publish(
+                                    session,
+                                    payload,
+                                    session.destination_name,
+                                )
 
                     asyncio.create_task(inner_task(session_info.id))
 
@@ -373,23 +361,18 @@ class SLIMTransport(BaseTransport):
 
     async def _slim_connect(
         self,
-        org: str,
-        namespace: str,
-        topic: str,
     ) -> None:
-        # create new gateway object
-        logger.info(
-            f"Creating new gateway for org: {org}, namespace: {namespace}, topic: {topic}"
-        )
+        if self._slim:
+            return  # Already connected
 
         self._slim: slim_bindings.Slim = await create_local_app(
-            PyName(org, namespace, topic),
+            self.pyname,
             slim={
                 "endpoint": self._endpoint,
                 "tls": {"insecure": True},
             },
-            enable_opentelemetry=False,
-            shared_secret="<shared_secret>",
+            enable_opentelemetry=self.enable_opentelemetry,
+            shared_secret=self._shared_secret_identity,
             jwt=None,
             bundle=None,
             audience=None,

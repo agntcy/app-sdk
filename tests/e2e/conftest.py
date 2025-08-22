@@ -18,7 +18,13 @@ TRANSPORT_CONFIGS = {
 def run_a2a_server():
     procs = []
 
-    def _run(transport, endpoint, version="1.0.0"):
+    def _run(
+        transport,
+        endpoint,
+        version="1.0.0",
+        name="default/default/Hello_World_Agent_1.0.0",
+        topic="",
+    ):
         cmd = [
             "uv",
             "run",
@@ -26,6 +32,10 @@ def run_a2a_server():
             "tests/server/a2a_server.py",
             "--transport",
             transport,
+            "--name",
+            name,
+            "--topic",
+            topic,
             "--endpoint",
             endpoint,
             "--version",

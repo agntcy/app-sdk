@@ -61,6 +61,9 @@ class NatsTransport(BaseTransport):
         sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
 
+    async def setup(self):
+        await self._connect()
+
     async def _connect(self):
         """Connect to the NATS server."""
         if self._nc is not None and self._nc.is_connected:
@@ -95,8 +98,10 @@ class NatsTransport(BaseTransport):
 
     async def subscribe(self, topic: str) -> None:
         """Subscribe to a topic with a callback."""
-        if self._nc is None:
-            await self._connect()
+        if self._nc is None or not self._nc.is_connected:
+            raise RuntimeError(
+                "NATS client is not connected, please call setup() before subscribing"
+            )
 
         if not self._callback:
             raise ValueError("Message handler must be set before starting transport")
@@ -118,7 +123,9 @@ class NatsTransport(BaseTransport):
         logger.debug(f"Publishing {message.payload} to topic: {topic}")
 
         if self._nc is None:
-            await self._connect()
+            raise RuntimeError(
+                "NATS client is not connected, please call setup() before subscribing"
+            )
 
         if message.headers is None:
             message.headers = {}
@@ -155,7 +162,9 @@ class NatsTransport(BaseTransport):
     ) -> List[Message]:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
         if self._nc is None:
-            await self._connect()
+            raise RuntimeError(
+                "NATS client is not connected, please call setup() before subscribing"
+            )
 
         publish_topic = self.santize_topic(topic)
         reply_topic = uuid4().hex

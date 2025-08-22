@@ -3,10 +3,7 @@
 
 import base64
 import json
-
 import click
-import logging
-
 import slim_bindings
 
 
@@ -18,10 +15,9 @@ def split_id(id):
     try:
         organization, namespace, app = id.split("/")
     except ValueError as e:
-        logging.error(
-            "Error: IDs must be in the format organization/namespace/app-or-stream."
-        )
         raise e
+
+    print(f"split_id: {id} -> {organization}, {namespace}, {app}")
 
     return slim_bindings.PyName(organization, namespace, app)
 
