@@ -51,8 +51,13 @@ class SLIMTransport(BaseTransport):
                 "SLIM dataplane endpoint must be provided for SLIMTransport"
             )
 
-        org, namespace, local_name = routable_name.split("/", 2)
-        self.pyname = PyName(org, namespace, local_name)
+        try:
+            org, namespace, local_name = routable_name.split("/", 2)
+            self.pyname = self.build_pyname(routable_name)
+        except ValueError:
+            raise ValueError(
+                "routable_name must be in the form 'org/namespace/local_name'"
+            )
         # PyName encrypts the components so we need to store the original values separately
         self.org = org
         self.namespace = namespace
@@ -139,7 +144,11 @@ class SLIMTransport(BaseTransport):
         Build a PyName object from a topic string, optionally using provided org and namespace.
         If org or namespace are not provided, use the transport's local org and namespace.
         """
+        topic = self.sanitize_topic(topic)
+
         if org and namespace:
+            org = self.sanitize_topic(org)
+            namespace = self.sanitize_topic(namespace)
             return PyName(org, namespace, topic)
 
         try:
@@ -162,7 +171,7 @@ class SLIMTransport(BaseTransport):
         respond: Optional[bool] = False,
     ) -> Optional[Message]:
         """Publish a message to a topic."""
-        topic = self.santize_topic(topic)
+        topic = self.sanitize_topic(topic)
 
         remote_name = self.build_pyname(topic, org, namespace)
 
@@ -188,7 +197,7 @@ class SLIMTransport(BaseTransport):
         timeout: Optional[float] = 30.0,
     ) -> None:
         """Broadcast a message to all subscribers of a topic and wait for responses."""
-        topic = self.santize_topic(topic)
+        topic = self.sanitize_topic(topic)
 
         logger.info(
             f"Broadcasting to topic: {topic} and waiting for {len(recipients)} responses"
@@ -220,7 +229,7 @@ class SLIMTransport(BaseTransport):
         Store the subscription information for a given topic, org, and namespace
         to be used for receive filtering.
         """
-        topic = self.santize_topic(topic)
+        topic = self.sanitize_topic(topic)
 
         sub_pyname = self.build_pyname(topic, org, namespace)
         self.active_subscription_topics[sub_pyname.id] = sub_pyname
@@ -380,7 +389,7 @@ class SLIMTransport(BaseTransport):
 
         self._session_manager.set_slim(self._slim)
 
-    def santize_topic(self, topic: str) -> str:
+    def sanitize_topic(self, topic: str) -> str:
         """Sanitize the topic name to ensure it is valid for NATS."""
         # NATS topics should not contain spaces or special characters
         sanitized_topic = topic.replace(" ", "_")
