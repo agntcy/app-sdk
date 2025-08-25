@@ -70,7 +70,7 @@ class FastMCPProtocol(MCPProtocol):
     config = uvicorn.Config(
       self._app,
       host=os.getenv("FAST_MCP_HOST", "localhost"),
-      port=int(os.getenv("FAST_MCP_PORT", 8000)),
+      port=int(os.getenv("FAST_MCP_PORT", 8081)),
       timeout_graceful_shutdown=3,
       lifespan="on",
     )
