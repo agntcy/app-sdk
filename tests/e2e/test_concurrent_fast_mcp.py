@@ -52,7 +52,7 @@ async def test_client(run_fast_mcp_server, transport):
       "FastMCP",
       agent_topic=f"test_topic.mcp",
       transport=transport_instance,
-      agent_url="http://localhost:8000/mcp",
+      agent_url="http://localhost:8081/mcp",
     )
 
     async with mcp_client as client:
