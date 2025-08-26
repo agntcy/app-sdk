@@ -70,7 +70,7 @@ class FastMCPProtocol(MCPProtocol):
         config = uvicorn.Config(
             self._app,
             host=os.getenv("FAST_MCP_HOST", "localhost"),
-            port=int(os.getenv("FAST_MCP_PORT", 8000)),
+            port=int(os.getenv("FAST_MCP_PORT", 8081)),
             timeout_graceful_shutdown=3,
             lifespan="on",
         )
@@ -102,11 +102,11 @@ class FastMCPProtocol(MCPProtocol):
         - Sequence diagram for transport initialization:
           https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram
         """
-        if transport:
-            await transport.setup()
-
         if not url:
             raise ValueError("URL must be provided")
+
+        if transport:
+            await transport.setup()
 
         parsed_url = urllib.parse.urlparse(url)
         base_url = parsed_url._replace(path="").geturl()

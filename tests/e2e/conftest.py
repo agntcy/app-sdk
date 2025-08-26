@@ -59,7 +59,7 @@ def run_a2a_server():
 def run_mcp_server():
     procs = []
 
-    def _run(transport, endpoint):
+    def _run(transport, endpoint, name="default/default/mcp"):
         cmd = [
             "uv",
             "run",
@@ -69,6 +69,8 @@ def run_mcp_server():
             transport,
             "--endpoint",
             endpoint,
+            "--name",
+            name,
         ]
 
         proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
@@ -88,7 +90,7 @@ def run_mcp_server():
 def run_fast_mcp_server():
     procs = []
 
-    def _run(transport, endpoint):
+    def _run(transport, endpoint, name="default/default/fastmcp"):
         cmd = [
             "uv",
             "run",
@@ -98,6 +100,8 @@ def run_fast_mcp_server():
             transport,
             "--endpoint",
             endpoint,
+            "--name",
+            name,
         ]
 
         proc = subprocess.Popen(cmd, preexec_fn=os.setsid)

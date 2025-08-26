@@ -155,6 +155,61 @@ The following diagram illustrates the initialization flow:
 
 For more details, refer to the [official documentation](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram).
 
+#### Example: Creating and Running a FastMCP Server
+
+```python
+import asyncio
+from agntcy_app_sdk.factory import AgntcyFactory
+from mcp.server.fastmcp import FastMCP
+
+# Create an MCP server instance
+mcp = FastMCP()
+
+# Add a tool to the MCP server
+@mcp.tool()
+async def get_forecast(location: str) -> str:
+    """
+    Tool to fetch the weather forecast for a given location.
+
+    :param location: The location for which the forecast is requested.
+    :return: A string containing the weather forecast.
+    """
+    return "Temperature: 30°C\nHumidity: 50%\nCondition: Sunny\n"
+
+# Initialize the Agntcy factory
+factory = AgntcyFactory()
+
+async def main():
+    # Create the transport instance
+    transport_type = "SLIM"  # Replace with "NATS" if using NATS transport
+    endpoint = "http://localhost:46357"  # Replace with your transport endpoint
+    transport = factory.create_transport(transport_type, endpoint=endpoint)
+    print(f"[setup] Transport created: {transport_type} | Endpoint: {endpoint}")
+
+    # Create the bridge between MCP and transport
+    bridge = factory.create_bridge(mcp, transport=transport, topic="test_topic.mcp")
+    print("[setup] Bridge created with topic: test_topic.mcp")
+
+    # Start the bridge
+    print("[start] Starting the bridge...")
+    await bridge.start(blocking=True)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+#### Default Port Configuration
+
+The FastMCP server uses **port 8081** by default to avoid conflicts with other common ports like 8000. However, you can configure the port by setting the `FAST_MCP_PORT` environment variable.
+
+For example, to change the port to 9090, you can run:
+
+```bash
+export FAST_MCP_PORT=9090
+```
+
+Then, start your server as usual. The server will now listen on port 9090.
+
 #### Example: Creating a FastMCP Client
 
 The `FastMCPProtocol.create_client` method allows you to create an MCP client for interacting with a FastMCP server. Below is an example demonstrating its usage, including the `route_path` parameter.
@@ -170,7 +225,7 @@ async def main():
 
     # Create a FastMCP client
     client = await protocol.create_client(
-        url="http://localhost:8000",
+        url="http://localhost:8081",
         topic="weather_agent.fastmcp",
         transport=slim_transport,  # Optional transport instance
         route_path="/custom-path",  # Custom route path for the client
