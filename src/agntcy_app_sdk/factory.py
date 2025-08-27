@@ -162,7 +162,6 @@ class AgntcyFactory:
                 raise ValueError("Topic must be provided for MCP server")
             logger.info(f"Creating MCP bridge for topic: {topic}")
             handler = self.create_protocol("MCP")
-            print("here")
             handler.bind_server(server)
 
         elif isinstance(server, FastMCP):
