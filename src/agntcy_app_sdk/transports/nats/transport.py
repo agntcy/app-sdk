@@ -8,6 +8,7 @@ import os
 import nats
 from nats.aio.client import Client as NATS
 from opentelemetry import trace
+from opentelemetry.propagate import inject, extract
 
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
@@ -156,6 +157,10 @@ class NatsTransport(BaseTransport):
                         span.set_attribute("message.payload.messageId",
                                            message_id)
 
+                    # inject contxt
+                    if message.headers is None:
+                        message.headers = {}
+                    inject(message.headers)
             if respond:
                 resp = await self._nc.request(topic, message.serialize(),
                                               headers=message.headers,
@@ -163,7 +168,7 @@ class NatsTransport(BaseTransport):
                 message = Message.deserialize(resp.data)
                 return message
             else:
-                await self._nc.publish(topic, message.serialize())
+                await self._nc.publish(topic, message.serialize(), headers=message.headers)
         except nats.errors.TimeoutError:
             logger.error(f"Timeout while publishing to {topic}")
             raise
@@ -281,8 +286,15 @@ class NatsTransport(BaseTransport):
             message.reply_to = nats_msg.reply
 
         # Process the message with the registered handler
-        if self._callback:
-            await self._callback(message)
+        ctx = extract(nats_msg.headers or {})
+        if self.tracing_enabled:
+            with tracer.start_as_current_span("handle-ingress-message",
+                                              context=ctx):
+                if self._callback:
+                    await self._callback(message)
+        else:
+            if self._callback:
+                await self._callback(message)
 
     def _extract_message_payload_ids(self, payload: Any) -> Tuple[
         Optional[str], Optional[str]]:
