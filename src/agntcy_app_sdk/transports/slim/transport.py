@@ -314,9 +314,11 @@ class SLIMTransport(BaseTransport):
         Determine if the transport can receive messages for the given session destination.
         """
         for active_sub in self.active_subscription_topics:
-            print(
-                "sub id:", active_sub, "session_destination id:", session_destination.id
+            logger.debug(
+                f"Checking if can receive: {active_sub} == {session_destination.id}"
             )
+
+        return True
 
     async def _receive(self) -> None:
         if not self._slim:
