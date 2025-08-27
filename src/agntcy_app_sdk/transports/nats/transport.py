@@ -205,31 +205,37 @@ class NatsTransport(BaseTransport):
                 responses.append(msg)
                 logger.info(f"Received {len(responses)} response(s)")
 
+        sub = None
+        parent_cm = None
+        if self.tracing_enabled:
+            # Start the parent span so all NATS operations (including unsubscribe) are children
+            parent_cm = tracer.start_as_current_span("nats.broadcast")
+            parent_span = parent_cm.__enter__()
+            parent_span.set_attribute("topic", topic)
+
         try:
             if self.tracing_enabled:
-                with tracer.start_as_current_span("nats.broadcast") as parent_span:
-                    parent_span.set_attribute("topic", topic)
-                    # Subscribe to the reply topic to handle responses
-                    with tracer.start_as_current_span("nats.subscribe") as sub_span:
-                        sub_span.set_attribute("topic", reply_topic)
-                        sub = await self._nc.subscribe(reply_topic,
-                                                       cb=_response_handler)
+                # Subscribe to the reply topic to handle responses
+                with tracer.start_as_current_span("nats.subscribe") as sub_span:
+                    sub_span.set_attribute("topic", reply_topic)
+                    sub = await self._nc.subscribe(reply_topic,
+                                                   cb=_response_handler)
 
-                    # Publish the message
-                    # Note: the publish() already creates a child span
-                    await self.publish(
-                        topic,
-                        message,
-                        respond=False  # tell receivers to reply to the reply_topic
-                    )
+                # Publish the message
+                # Note: the publish() already creates a child span
+                await self.publish(
+                    topic,
+                    message,
+                    respond=False  # tell receivers to reply to the reply_topic
+                )
 
-                    logger.info(
-                        f"Collecting up to {expected_responses} response(s) with timeout={timeout}s...")
+                logger.info(
+                    f"Collecting up to {expected_responses} response(s) with timeout={timeout}s...")
 
-                    # Collect responses
-                    with tracer.start_as_current_span("nats.collect_responses") as col_span:
-                        col_span.set_attribute("expected_responses",expected_responses)
-                        await collect_responses()
+                # Collect responses
+                with tracer.start_as_current_span("nats.collect_responses") as col_span:
+                    col_span.set_attribute("expected_responses", expected_responses)
+                    await collect_responses()
             else:
                 # Subscribe to the reply topic to handle responses
                 sub = await self._nc.subscribe(reply_topic,cb=_response_handler)
@@ -251,11 +257,18 @@ class NatsTransport(BaseTransport):
                 f"Timeout reached after {timeout}s; collected {len(responses)} response(s)"
             )
         finally:
-            # Clean up request specific subscription
-            if self.tracing_enabled:
-                with tracer.start_as_current_span("nats.unsubscribe") as unsub_span:
-                    unsub_span.set_attribute("topic", reply_topic)
-            await sub.unsubscribe()
+            if sub is not None:
+                if self.tracing_enabled:
+                    with tracer.start_as_current_span(
+                            "nats.unsubscribe") as unsub_span:
+                        unsub_span.set_attribute("topic", reply_topic)
+                        await sub.unsubscribe()
+                else:
+                    await sub.unsubscribe()
+
+            # Exit parent span context after all child spans are finished
+            if self.tracing_enabled and parent_cm is not None:
+                parent_cm.__exit__(None, None, None)  # Clean up span context
 
         return responses
 
