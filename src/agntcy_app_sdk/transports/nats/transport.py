@@ -2,12 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import json
+import os
+
 import nats
 from nats.aio.client import Client as NATS
+from opentelemetry import trace
+
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple, Any
 from uuid import uuid4
 
 configure_logging()
@@ -17,6 +22,7 @@ logger = get_logger(__name__)
 Nats implementation of BaseTransport.
 """
 
+tracer = trace.get_tracer(__name__)
 
 class NatsTransport(BaseTransport):
     def __init__(
@@ -37,6 +43,9 @@ class NatsTransport(BaseTransport):
         self.endpoint = endpoint
         self._callback = None
         self.subscriptions = []
+
+        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+            self.tracing_enabled = True
 
     @classmethod
     def from_client(cls, client: NATS) -> "NatsTransport":
@@ -101,10 +110,22 @@ class NatsTransport(BaseTransport):
         if not self._callback:
             raise ValueError("Message handler must be set before starting transport")
 
-        topic = self.santize_topic(topic)
-        sub = await self._nc.subscribe(topic, cb=self._message_handler)
-        self.subscriptions.append(sub)
-        logger.info(f"Subscribed to topic: {topic}")
+        try:
+            topic = self.santize_topic(topic)
+
+            if self.tracing_enabled:
+                with tracer.start_as_current_span("nats.subscribe") as span:
+                    span.set_attribute("topic", topic)
+                    sub = await self._nc.subscribe(topic,
+                                                   cb=self._message_handler)
+            else:
+                sub = await self._nc.subscribe(topic, cb=self._message_handler)
+
+            self.subscriptions.append(sub)
+            logger.info(f"Subscribed to topic: {topic}")
+        except Exception as e:
+            logger.error(f"Error subscribe to topic '{topic}': {e}")
+
 
     async def publish(
         self,
@@ -124,21 +145,25 @@ class NatsTransport(BaseTransport):
             message.headers = {}
 
         try:
-            if respond:
-                resp = await self._nc.request(
-                    topic,
-                    message.serialize(),
-                    headers=message.headers,
-                    timeout=timeout,
-                )
+            if self.tracing_enabled:
+                with tracer.start_as_current_span("nats.publish") as span:
+                    span.set_attribute("topic", topic)
+                    id_, message_id = self._extract_message_payload_ids(message.payload)
 
+                    if id_:
+                        span.set_attribute("message.id", id_)
+                    if message_id:
+                        span.set_attribute("message.payload.messageId",
+                                           message_id)
+
+            if respond:
+                resp = await self._nc.request(topic, message.serialize(),
+                                              headers=message.headers,
+                                              timeout=timeout)
                 message = Message.deserialize(resp.data)
                 return message
             else:
-                await self._nc.publish(
-                    topic,
-                    message.serialize(),
-                )
+                await self._nc.publish(topic, message.serialize())
         except nats.errors.TimeoutError:
             logger.error(f"Timeout while publishing to {topic}")
             raise
@@ -170,36 +195,66 @@ class NatsTransport(BaseTransport):
             msg = Message.deserialize(nats_msg.data)
             await response_queue.put(msg)
 
-        # Subscribe to the reply topic to handle responses
-        sub = await self._nc.subscribe(reply_topic, cb=_response_handler)
-        await self.publish(
-            topic,
-            message,
-            respond=False,  # tell receivers to reply to the reply_topic
-        )
-
-        logger.info(
-            f"Collecting up to {expected_responses} response(s) with timeout={timeout}s..."
-        )
         responses: List[Message] = []
 
-        try:
-            # Use a timeout to collect responses
-            async def collect_responses():
-                while len(responses) < expected_responses:
-                    msg = await asyncio.wait_for(response_queue.get(), timeout=timeout)
-                    responses.append(msg)
-                    logger.info(f"Received {len(responses)} response(s)")
+        # Use a timeout to collect responses
+        async def collect_responses():
+            while len(responses) < expected_responses:
+                msg = await asyncio.wait_for(response_queue.get(),
+                                             timeout=timeout)
+                responses.append(msg)
+                logger.info(f"Received {len(responses)} response(s)")
 
-            await collect_responses()
+        try:
+            if self.tracing_enabled:
+                with tracer.start_as_current_span("nats.broadcast") as parent_span:
+                    parent_span.set_attribute("topic", topic)
+                    # Subscribe to the reply topic to handle responses
+                    with tracer.start_as_current_span("nats.subscribe") as sub_span:
+                        sub_span.set_attribute("topic", reply_topic)
+                        sub = await self._nc.subscribe(reply_topic,
+                                                       cb=_response_handler)
+
+                    # Publish the message
+                    # Note: the publish() already creates a child span
+                    await self.publish(
+                        topic,
+                        message,
+                        respond=False  # tell receivers to reply to the reply_topic
+                    )
+
+                    logger.info(
+                        f"Collecting up to {expected_responses} response(s) with timeout={timeout}s...")
+
+                    # Collect responses
+                    with tracer.start_as_current_span("nats.collect_responses") as col_span:
+                        col_span.set_attribute("expected_responses",expected_responses)
+                        await collect_responses()
+            else:
+                # Subscribe to the reply topic to handle responses
+                sub = await self._nc.subscribe(reply_topic,cb=_response_handler)
+
+                # Publish the message
+                await self.publish(
+                    topic,
+                    message,
+                    respond=False  # tell receivers to reply to the reply_topic
+                )
+
+                logger.info(f"Collecting up to {expected_responses} response(s) with timeout={timeout}s...")
+
+                # Collect responses
+                await collect_responses()
 
         except asyncio.TimeoutError:
             logger.warning(
                 f"Timeout reached after {timeout}s; collected {len(responses)} response(s)"
             )
-
         finally:
             # Clean up request specific subscription
+            if self.tracing_enabled:
+                with tracer.start_as_current_span("nats.unsubscribe") as unsub_span:
+                    unsub_span.set_attribute("topic", reply_topic)
             await sub.unsubscribe()
 
         return responses
@@ -215,6 +270,33 @@ class NatsTransport(BaseTransport):
         # Process the message with the registered handler
         if self._callback:
             await self._callback(message)
+
+    def _extract_message_payload_ids(self, payload: Any) -> Tuple[
+        Optional[str], Optional[str]]:
+        """
+        Extracts the top-level 'id' and nested 'messageId' (if available) from the payload.
+        Handles dict or JSON string payloads gracefully.
+        Returns a tuple: (id, messageId) -- either or both may be None.
+        """
+        payload_dict = {}
+        if isinstance(payload, dict):
+            payload_dict = payload
+        else:
+            try:
+                payload_dict = json.loads(payload)
+            except Exception:
+                payload_dict = {}
+
+        id_ = payload_dict.get("id")
+        message_id = None
+        try:
+            params = payload_dict.get("params", {})
+            message = params.get("message", {})
+            message_id = message.get("messageId")
+        except Exception:
+            message_id = None
+
+        return id_, message_id
 
     # Callbacks and error handling
     async def error_cb(self, e):
