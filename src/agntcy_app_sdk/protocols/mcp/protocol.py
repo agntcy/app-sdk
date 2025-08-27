@@ -71,7 +71,6 @@ class MCPProtocol(BaseAgentProtocol):
                 # Use session for MCP communication
                 pass
         """
-
         if transport:
             await transport.setup()
 

@@ -139,6 +139,9 @@ class SLIMTransport(BaseTransport):
         """
         Start the async receive loop for incoming messages.
         """
+        if self._slim:
+            return  # Already connected
+
         await self._slim_connect()
         await self._receive()
 
@@ -159,9 +162,6 @@ class SLIMTransport(BaseTransport):
         try:
             return split_id(topic)
         except ValueError:
-            logger.warning(
-                f"org or namespace not provided, using locals: {self.org}, {self.namespace}"
-            )
             return PyName(self.org, self.namespace, topic)
         except Exception as e:
             logger.error(f"Error building PyName from topic '{topic}': {e}")
@@ -207,8 +207,6 @@ class SLIMTransport(BaseTransport):
         logger.info(
             f"Broadcasting to topic: {topic} and waiting for {len(recipients)} responses"
         )
-
-        print(f"[debug] Recipients: {recipients}")
 
         # convert recipients to PyName objects
         invitees = [self.build_pyname(recipient) for recipient in recipients]
@@ -340,10 +338,6 @@ class SLIMTransport(BaseTransport):
                             self.can_receive(session.destination_name)
 
                             msg = Message.deserialize(msg)
-
-                            print(
-                                f"Received message on session {session_id}: {msg.headers}"
-                            )
 
                             msg.reply_to = None
 

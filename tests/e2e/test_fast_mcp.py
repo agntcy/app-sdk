@@ -22,12 +22,12 @@ async def test_client(run_fast_mcp_server, transport):
     factory = AgntcyFactory()
 
     transport_instance = factory.create_transport(
-        transport=transport, endpoint=endpoint, name="default/default/fastmcp"
+        transport=transport, endpoint=endpoint, name="default/default/fastmcp_client"
     )
 
     mcp_client = await factory.create_client(
         "FastMCP",
-        agent_topic="test_topic.mcp",
+        agent_topic="fastmcp",
         transport=transport_instance,
         agent_url="http://localhost:8081/mcp",
     )
@@ -52,6 +52,7 @@ async def test_client(run_fast_mcp_server, transport):
                 },
                 "isError": False,
             }
+            print("[tools] call_tool result:", result)
             assert result == expected, f"[tools] Unexpected tool result: {result}"
 
             # --- Resources ---

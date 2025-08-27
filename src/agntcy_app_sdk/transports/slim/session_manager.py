@@ -39,6 +39,8 @@ class SessionManager:
         if not self._slim:
             raise ValueError("SLIM client is not set")
 
+        print("Creating new request-reply session")
+
         # check if we already have a request-reply session
         session_key = "RequestReply"
         if session_key in self._sessions:
