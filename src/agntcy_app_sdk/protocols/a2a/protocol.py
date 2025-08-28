@@ -13,7 +13,7 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
-from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.protocols.message import Message
 from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
@@ -52,11 +52,7 @@ class A2AProtocol(BaseAgentProtocol):
             method=method,
         )
 
-        response = await transport.publish(
-            topic,
-            request,
-            respond=True,
-        )
+        response = await transport.request(topic, request, ResponseMode.FIRST)
 
         response.payload = json.loads(response.payload.decode("utf-8"))
         card = AgentCard.model_validate(response.payload)
@@ -139,12 +135,12 @@ class A2AProtocol(BaseAgentProtocol):
             headers = http_kwargs.get("headers", {})
 
             try:
-                response = await transport.publish(
+                response = await transport.request(
                     topic,
                     self.message_translator(
                         request=rpc_request_payload, headers=headers
                     ),
-                    respond=True,
+                    response_mode=ResponseMode.FIRST,
                 )
 
                 response.payload = json.loads(response.payload.decode("utf-8"))
@@ -177,9 +173,10 @@ class A2AProtocol(BaseAgentProtocol):
             print(f"Broadcasting message on topic: {broadcast_topic}")
 
             try:
-                responses = await transport.broadcast(
+                responses = await transport.request(
                     broadcast_topic,
                     msg,
+                    response_mode=ResponseMode.COLLECT_ALL,
                     recipients=recipients,
                     timeout=timeout,
                 )

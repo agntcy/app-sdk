@@ -7,7 +7,7 @@ import json
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
-from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 
 from mcp import ClientSession
@@ -196,13 +196,13 @@ class MCPProtocol(BaseAgentProtocol):
         )
 
         # Send message through transport and wait for response
-        resp = await transport.publish(
+        resp = await transport.request(
             topic=topic,
-            respond=True,  # Expect a response from the server
             message=Message(
                 type=str(types.JSONRPCMessage),
                 payload=json.dumps(msg_dict),
             ),
+            response_mode=ResponseMode.FIRST,
         )
 
         # Validate that we received a response

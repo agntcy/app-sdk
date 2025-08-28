@@ -6,10 +6,6 @@ import os
 import asyncio
 import inspect
 import datetime
-import uuid
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
-from agntcy_app_sdk.transports.transport import BaseTransport, Message
-from agntcy_app_sdk.transports.slim.session_manager import SessionManager
 import slim_bindings
 from slim_bindings import (
     PyName,
@@ -18,10 +14,12 @@ from .common import (
     create_local_app,
     split_id,
 )
+from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode, Message
+from agntcy_app_sdk.transports.slim.session_manager import SessionManager
 
 configure_logging()
 logger = get_logger(__name__)
-
 
 """
 SLIM implementation of the BaseTransport interface.
@@ -79,12 +77,6 @@ class SLIMTransport(BaseTransport):
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
-            """self.enable_opentelemetry = True
-            from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
-
-            SLIMInstrumentor().instrument()
-            logger.info("SLIMTransport initialized with tracing enabled")"""
-
             # See open issue: https://github.com/agntcy/observe/issues/45
             logger.warning(
                 "SLIMInstrumentor not currently supported with slim_bindings 0.4.0"
@@ -129,7 +121,10 @@ class SLIMTransport(BaseTransport):
         return "SLIM"
 
     async def close(self) -> None:
-        pass
+        if not self._slim:
+            return
+
+        # TODO: handle slim session close
 
     def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
@@ -140,7 +135,7 @@ class SLIMTransport(BaseTransport):
         Start the async receive loop for incoming messages.
         """
         if self._slim:
-            return  # Already connected
+            return
 
         await self._slim_connect()
         await self._receive()
@@ -169,43 +164,94 @@ class SLIMTransport(BaseTransport):
 
     async def publish(
         self,
-        topic: str,
+        topic,
         message: Message,
-        org: Optional[str] = None,
-        namespace: Optional[str] = None,
-        respond: Optional[bool] = False,
-    ) -> Optional[Message]:
-        """Publish a message to a topic."""
-        topic = self.sanitize_topic(topic)
+    ) -> None:
+        if not self._slim:
+            raise ValueError("SLIM client is not set, please call setup() first.")
 
-        remote_name = self.build_pyname(topic, org, namespace)
-
-        logger.info(f"Publishing {message.payload} to topic: {topic}")
-
-        # if we are asked to provide a response, use or generate a reply_to topic
-        if respond and not message.reply_to:
-            message.reply_to = uuid.uuid4().hex
-
-        resp = await self._request(
-            remote_name=remote_name,
-            message=message,
+        raise NotImplementedError(
+            "publish method is not yet implemented, not consumed by any protocols"
         )
 
-        if respond:
-            return resp
-
-    async def broadcast(
+    async def request(
         self,
         topic: str,
         message: Message,
-        recipients: List[str],
-        timeout: Optional[float] = 30.0,
-    ) -> None:
-        """Broadcast a message to all subscribers of a topic and wait for responses."""
+        response_mode: ResponseMode = ResponseMode.FIRST,
+        timeout: Optional[float] = 60.0,
+        **kwargs,
+    ) -> Optional[Message]:
+        """Publish a message to a topic."""
         topic = self.sanitize_topic(topic)
+        remote_name = self.build_pyname(topic)
+
+        if response_mode == ResponseMode.FIRST:
+            return await self._request_first(
+                remote_name=remote_name, message=message, timeout=timeout, **kwargs
+            )
+        elif response_mode == ResponseMode.COLLECT_N:
+            raise NotImplementedError("COLLECT_N response mode is not yet implemented.")
+        elif response_mode == ResponseMode.COLLECT_ALL:
+            return await self._request_all(
+                remote_name=remote_name, message=message, timeout=timeout, **kwargs
+            )
+        elif response_mode == ResponseMode.GROUP:
+            return await self._request_group(
+                remote_name=remote_name, message=message, timeout=timeout, **kwargs
+            )
+        else:
+            raise ValueError(f"Unknown response mode: {response_mode}")
+
+    async def _request_first(
+        self, remote_name: PyName, message: Message, timeout: float = 30.0
+    ) -> None:
+        if not self._slim:
+            raise ValueError(
+                "SLIM client is not initialized, please call setup() first."
+            )
+
+        logger.info(f"Requesting response from topic: {remote_name}")
+
+        async with self._slim:
+            await self._slim.set_route(remote_name)
+
+            # create or get a request-reply (sticky fire-and-forget) session
+            _, session = await self._session_manager.request_reply_session()
+
+            if not message.headers:
+                message.headers = {}
+
+            message.headers["respond-to-source"] = "true"
+
+            _, reply = await self._slim.request_reply(
+                session,
+                message.serialize(),
+                remote_name,
+                timeout=datetime.timedelta(seconds=timeout),
+            )
+
+            reply = Message.deserialize(reply)
+            return reply
+
+    async def _request_all(
+        self,
+        remote_name: PyName,
+        message: Message,
+        recipients: List[str] = None,
+        timeout: Optional[float] = 30.0,
+    ) -> List[Message]:
+        """
+        Send a message to topic and wait for a response from all recipients
+        or until the timeout is reached.
+        """
+        if not recipients:
+            raise ValueError(
+                "recipients list must be provided for SLIM COLLECT_ALL mode."
+            )
 
         logger.info(
-            f"Broadcasting to topic: {topic} and waiting for {len(recipients)} responses"
+            f"Sending message to topic: {remote_name} and waiting for {len(recipients)} responses"
         )
 
         # convert recipients to PyName objects
@@ -213,8 +259,8 @@ class SLIMTransport(BaseTransport):
 
         try:
             responses = await asyncio.wait_for(
-                self._broadcast(
-                    channel=self.build_pyname(topic),
+                self._collect_all(
+                    channel=remote_name,
                     message=message,
                     invitees=invitees,
                 ),
@@ -223,25 +269,22 @@ class SLIMTransport(BaseTransport):
             return responses
         except asyncio.TimeoutError:
             logger.warning(
-                f"Broadcast to topic {topic} timed out after {timeout} seconds"
+                f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
             return []
 
-    async def subscribe(self, topic: str, org=None, namespace=None) -> None:
-        """
-        Store the subscription information for a given topic, org, and namespace
-        to be used for receive filtering.
-        """
-        topic = self.sanitize_topic(topic)
+    async def _request_group(
+        self, remote_name: PyName, message: Message, timeout: float = 30.0
+    ) -> List[Message]:
+        if not self._slim:
+            raise ValueError(
+                "SLIM client is not initialized, please call setup() first."
+            )
 
-        sub_pyname = self.build_pyname(topic, org, namespace)
-        self.active_subscription_topics[sub_pyname.id] = sub_pyname
+        logger.debug(f"Requesting group response from topic: {remote_name}")
+        raise NotImplementedError("Group request is not yet implemented.")
 
-    # ###################################################
-    # SLIM Transport Internal Methods
-    # ###################################################
-
-    async def _broadcast(
+    async def _collect_all(
         self,
         channel: PyName,
         message: Message,
@@ -274,40 +317,15 @@ class SLIMTransport(BaseTransport):
 
             return responses
 
-    async def _request(
-        self,
-        remote_name: PyName,
-        message: Message,
-    ) -> None:
-        if not self._slim:
-            raise ValueError(
-                "SLIM client is not initialized, please call setup() first."
-            )
+    async def subscribe(self, topic: str, org=None, namespace=None) -> None:
+        """
+        Store the subscription information for a given topic, org, and namespace
+        to be used for receive filtering.
+        """
+        topic = self.sanitize_topic(topic)
 
-        logger.debug(f"Publishing to topic: {remote_name}")
-
-        async with self._slim:
-            await self._slim.set_route(remote_name)
-
-            # create or get a request-reply (sticky fire-and-forget) session
-            _, session = await self._session_manager.request_reply_session()
-
-            if not message.headers:
-                message.headers = {}
-
-            # the transport receiver can handle both request-reply and group-chat,
-            # signal we want a direct reply
-            message.headers["respond-to-source"] = "true"
-
-            _, reply = await self._slim.request_reply(
-                session,
-                message.serialize(),
-                remote_name,
-                timeout=datetime.timedelta(seconds=5),
-            )
-
-            reply = Message.deserialize(reply)
-            return reply
+        sub_pyname = self.build_pyname(topic, org, namespace)
+        self.active_subscription_topics[sub_pyname.id] = sub_pyname
 
     def can_receive(self, session_destination: PyName) -> bool:
         """
@@ -337,11 +355,10 @@ class SLIMTransport(BaseTransport):
                             # Receive the message from the session
                             session, msg = await self._slim.receive(session=session_id)
 
+                            # perform filtering on the incoming message destination name, have we subscribe to this?
                             self.can_receive(session.destination_name)
 
                             msg = Message.deserialize(msg)
-
-                            msg.reply_to = None
 
                             if inspect.iscoroutinefunction(self._callback):
                                 output = await self._callback(msg)

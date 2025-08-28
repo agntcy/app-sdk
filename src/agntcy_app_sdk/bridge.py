@@ -80,30 +80,8 @@ class MessageBridge:
 
             if not response:
                 logger.warning("Handler returned no response for message.")
-                return
 
-            # Send response if reply is expected
-            if message.reply_to:
-                response.reply_to = message.reply_to
-
-                # Send the response back through the transport using publish
-                await self.transport.publish(
-                    topic=response.reply_to,
-                    message=response,
-                    respond=False,
-                )
-            else:
-                return response
+            return response
 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
-            # Send error response if reply is expected
-            if message.reply_to:
-                error_response = Message(
-                    type="error", payload=str(e), reply_to=message.reply_to
-                )
-                await self.transport.publish(
-                    topic=message.reply_to,
-                    message=error_response,
-                    respond=False,
-                )

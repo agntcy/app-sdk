@@ -128,11 +128,16 @@ async def test_broadcast(run_a2a_server, transport):
     ]:
         run_a2a_server(transport, endpoint, name=name, topic="broadcast")
 
+    if transport_instance.type() == "SLIM":
+        client_handshake_topic = "default/default/agent1"
+    else:
+        client_handshake_topic = "broadcast"
+
     # Create A2A client
     print("[test] Creating A2A client...")
     client = await factory.create_client(
         "A2A",
-        agent_topic="default/default/agent1",  # for SLIM, this can't be a shared topic
+        agent_topic=client_handshake_topic,
         transport=transport_instance,
     )
     assert client is not None, "Client was not created"
@@ -162,6 +167,7 @@ async def test_broadcast(run_a2a_server, transport):
 
     print(f"[debug] Received {len(responses)} responses from broadcast")
     print(f"[debug] Broadcast responses: {responses}")
+    assert len(responses) == 3, "Did not receive expected number of broadcast responses"
 
     # test a broadcast timeout
     '''responses = await client.broadcast_message(

@@ -4,7 +4,7 @@
 import asyncio
 import nats
 from nats.aio.client import Client as NATS
-from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
 from typing import Callable, List, Optional
@@ -38,6 +38,12 @@ class NatsTransport(BaseTransport):
         self._callback = None
         self.subscriptions = []
 
+        # connection options
+        self.connect_timeout = kwargs.get("connect_timeout", 5)
+        self.reconnect_time_wait = kwargs.get("reconnect_time_wait", 2)
+        self.max_reconnect_attempts = kwargs.get("max_reconnect_attempts", 30)
+        self.drain_timeout = kwargs.get("drain_timeout", 2)
+
     @classmethod
     def from_client(cls, client: NATS) -> "NatsTransport":
         # Optionally validate client
@@ -62,7 +68,8 @@ class NatsTransport(BaseTransport):
         return sanitized_topic
 
     async def setup(self):
-        await self._connect()
+        if self._nc is None or not self._nc.is_connected:
+            await self._connect()
 
     async def _connect(self):
         """Connect to the NATS server."""
@@ -72,14 +79,14 @@ class NatsTransport(BaseTransport):
 
         self._nc = await nats.connect(
             self.endpoint,
-            reconnect_time_wait=2,  # Time between reconnect attempts
-            max_reconnect_attempts=30,  # Retry for 2 minutes before giving up
+            reconnect_time_wait=self.reconnect_time_wait,  # Time between reconnect attempts
+            max_reconnect_attempts=self.max_reconnect_attempts,  # Retry for 2 minutes before giving up
             error_cb=self.error_cb,
             closed_cb=self.closed_cb,
             disconnected_cb=self.disconnected_cb,
             reconnected_cb=self.reconnected_cb,
-            connect_timeout=5,
-            drain_timeout=2,
+            connect_timeout=self.connect_timeout,
+            drain_timeout=self.drain_timeout,
         )
         logger.info("Connected to NATS server")
 
@@ -92,31 +99,10 @@ class NatsTransport(BaseTransport):
         else:
             logger.warning("No NATS connection to close")
 
-    def set_callback(self, callback: Callable[[Message], asyncio.Future]) -> None:
-        """Set the message handler function."""
-        self._callback = callback
-
-    async def subscribe(self, topic: str) -> None:
-        """Subscribe to a topic with a callback."""
-        if self._nc is None or not self._nc.is_connected:
-            raise RuntimeError(
-                "NATS client is not connected, please call setup() before subscribing"
-            )
-
-        if not self._callback:
-            raise ValueError("Message handler must be set before starting transport")
-
-        topic = self.santize_topic(topic)
-        sub = await self._nc.subscribe(topic, cb=self._message_handler)
-        self.subscriptions.append(sub)
-        logger.info(f"Subscribed to topic: {topic}")
-
     async def publish(
         self,
         topic: str,
         message: Message,
-        respond: Optional[bool] = False,
-        timeout=10,
     ) -> None:
         """Publish a message to a topic."""
         topic = self.santize_topic(topic)
@@ -130,48 +116,70 @@ class NatsTransport(BaseTransport):
         if message.headers is None:
             message.headers = {}
 
-        try:
-            if respond:
-                resp = await self._nc.request(
-                    topic,
-                    message.serialize(),
-                    headers=message.headers,
-                    timeout=timeout,
-                )
+        await self._nc.publish(
+            topic,
+            message.serialize(),
+        )
 
-                message = Message.deserialize(resp.data)
-                return message
-            else:
-                await self._nc.publish(
-                    topic,
-                    message.serialize(),
-                )
-        except nats.errors.TimeoutError:
-            logger.error(f"Timeout while publishing to {topic}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error while publishing to {topic}: {e}")
-            raise
-
-    async def broadcast(
+    async def request(
         self,
         topic: str,
         message: Message,
-        recipients: List[str],
-        timeout: Optional[float] = 30.0,
+        response_mode: ResponseMode = ResponseMode.FIRST,
+        timeout: Optional[float] = 60.0,
+        **kwargs,
+    ) -> Optional[Message]:
+        topic = self.santize_topic(topic)
+
+        if response_mode == ResponseMode.FIRST:
+            return await self._request_first(
+                topic=topic, message=message, timeout=timeout, **kwargs
+            )
+        elif response_mode == ResponseMode.COLLECT_N:
+            raise NotImplementedError("COLLECT_N response mode is not yet implemented.")
+        elif response_mode == ResponseMode.COLLECT_ALL:
+            return await self._request_all(
+                topic=topic, message=message, timeout=timeout, **kwargs
+            )
+        elif response_mode == ResponseMode.GROUP:
+            raise NotImplementedError("GROUP response mode is not yet implemented.")
+        else:
+            raise ValueError(f"Unknown response mode: {response_mode}")
+
+    async def _request_first(
+        self, topic: str, message: Message, timeout: float, **kwargs
+    ) -> Optional[Message]:
+        print("Sending request to", topic)
+        response = await self._nc.request(
+            topic, message.serialize(), timeout=timeout, **kwargs
+        )
+        return Message.deserialize(response.data) if response else None
+
+    async def _request_all(
+        self,
+        topic: str,
+        message: Message,
+        recipients: List[str] = None,
+        timeout: float = 30.0,
     ) -> List[Message]:
-        """Broadcast a message to all subscribers of a topic and wait for responses."""
+        """
+        Send a message to topic and wait for a response from all recipients
+        or until the timeout is reached.
+        """
         if self._nc is None:
             raise RuntimeError(
                 "NATS client is not connected, please call setup() before subscribing"
             )
 
+        if not recipients:
+            raise ValueError(
+                "recipients list must be provided for NATS COLLECT_ALL mode."
+            )
+
         publish_topic = self.santize_topic(topic)
         reply_topic = uuid4().hex
         message.reply_to = reply_topic
-        logger.info(
-            f"Broadcasting to: {publish_topic} and receiving from: {reply_topic}"
-        )
+        logger.info(f"Publishing to: {publish_topic} and receiving from: {reply_topic}")
 
         response_queue: asyncio.Queue = asyncio.Queue()
 
@@ -184,7 +192,6 @@ class NatsTransport(BaseTransport):
         await self.publish(
             topic,
             message,
-            respond=False,  # tell receivers to reply to the reply_topic
         )
 
         expected_responses = len(recipients)
@@ -215,17 +222,47 @@ class NatsTransport(BaseTransport):
 
         return responses
 
+    def set_callback(self, callback: Callable[[Message], asyncio.Future]) -> None:
+        """Set the message handler function."""
+        self._callback = callback
+
+    async def subscribe(self, topic: str) -> None:
+        """Subscribe to a topic with a callback."""
+        if self._nc is None or not self._nc.is_connected:
+            raise RuntimeError(
+                "NATS client is not connected, please call setup() before subscribing"
+            )
+
+        if not self._callback:
+            raise ValueError("Message handler must be set before starting transport")
+
+        topic = self.santize_topic(topic)
+        sub = await self._nc.subscribe(topic, cb=self._message_handler)
+        self.subscriptions.append(sub)
+        logger.info(f"Subscribed to topic: {topic}")
+
     async def _message_handler(self, nats_msg):
         """Internal handler for NATS messages."""
         message = Message.deserialize(nats_msg.data)
 
-        # Add reply_to from NATS message if not in payload, receiver bridge may use it
+        # Add reply_to from NATS message if not in payload
         if nats_msg.reply and not message.reply_to:
             message.reply_to = nats_msg.reply
 
         # Process the message with the registered handler
         if self._callback:
-            await self._callback(message)
+            resp = await self._callback(message)
+            if not resp and message.reply_to:
+                logger.warning("Handler returned no response for message.")
+                err_msg = Message(
+                    type="error",
+                    payload="No response from handler",
+                    reply_to=message.reply_to,
+                )
+                await self.publish(message.reply_to, err_msg)
+
+            # publish response to the reply topic
+            await self.publish(message.reply_to, resp)
 
     # Callbacks and error handling
     async def error_cb(self, e):
