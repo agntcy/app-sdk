@@ -131,20 +131,23 @@ class NatsTransport(BaseTransport):
     ) -> Optional[Message]:
         topic = self.santize_topic(topic)
 
-        if response_mode == ResponseMode.FIRST:
-            return await self._request_first(
-                topic=topic, message=message, timeout=timeout, **kwargs
-            )
-        elif response_mode == ResponseMode.COLLECT_N:
-            raise NotImplementedError("COLLECT_N response mode is not yet implemented.")
-        elif response_mode == ResponseMode.COLLECT_ALL:
-            return await self._request_all(
-                topic=topic, message=message, timeout=timeout, **kwargs
-            )
-        elif response_mode == ResponseMode.GROUP:
-            raise NotImplementedError("GROUP response mode is not yet implemented.")
-        else:
-            raise ValueError(f"Unknown response mode: {response_mode}")
+        match response_mode:
+            case ResponseMode.FIRST:
+                return await self._request_first(
+                    topic=topic, message=message, timeout=timeout, **kwargs
+                )
+            case ResponseMode.COLLECT_N:
+                raise NotImplementedError(
+                    "COLLECT_N response mode is not yet implemented."
+                )
+            case ResponseMode.COLLECT_ALL:
+                return await self._request_all(
+                    topic=topic, message=message, timeout=timeout, **kwargs
+                )
+            case ResponseMode.GROUP:
+                raise NotImplementedError("GROUP response mode is not yet implemented.")
+            case _:
+                raise ValueError(f"Unknown response mode: {response_mode}")
 
     async def _request_first(
         self, topic: str, message: Message, timeout: float, **kwargs

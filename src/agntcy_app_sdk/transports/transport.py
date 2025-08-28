@@ -17,10 +17,10 @@ class ResponseMode(Enum):
     """First-response-wins. Return as soon as the first reply arrives."""
 
     COLLECT_N = auto()
-    """Collect N responses, then return (or until timeout)."""
+    """Collect N responses from a topic, then return (or until timeout)."""
 
     COLLECT_ALL = auto()
-    """Collect all available responses (requires timeout or known member list)."""
+    """Collect all available responses (requires known member list)."""
 
     GROUP = auto()
     """Respond to a group of subscribers."""
