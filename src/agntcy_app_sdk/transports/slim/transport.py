@@ -38,7 +38,11 @@ class SLIMTransport(BaseTransport):
         endpoint: Optional[str] = None,
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=10),
         message_retries: int = 2,
-        shared_secret_identity: str = "slim-secret-change-me",
+        shared_secret_identity: str = "slim-mls-secret",
+        tls_insecure: bool = True,
+        jwt: str = None,
+        bundle: str | None = None,
+        audience: list[str] | None = None,
     ) -> None:
         if not routable_name:
             raise ValueError(
@@ -67,6 +71,11 @@ class SLIMTransport(BaseTransport):
         self.message_timeout = message_timeout
         self.message_retries = message_retries
         self._shared_secret_identity = shared_secret_identity
+        self._tls_insecure = tls_insecure
+        self._jwt = jwt
+        self._bundle = bundle
+        self._audience = audience
+
         self.enable_opentelemetry = False
 
         # keep track of topics we are "subscribed" to, will be used to filter incoming
@@ -98,7 +107,6 @@ class SLIMTransport(BaseTransport):
         if not isinstance(client, slim_bindings.Slim):
             raise TypeError(f"Expected a SLIM instance, got {type(client)}")
 
-        # TODO: get local_name from client
         raise NotImplementedError("from_client method is not yet implemented")
 
     @classmethod
@@ -113,6 +121,11 @@ class SLIMTransport(BaseTransport):
             raise ValueError(
                 "Routable name must be provided in the form 'org/namespace/local_name'"
             )
+        shared_secret_identity = kwargs.get("shared_secret_identity", "slim-mls-secret")
+        jwt = kwargs.get("jwt", None)
+
+        if not jwt and not shared_secret_identity:
+            logger.warning("No JWT or shared_secret_identity provided, using defaults.")
 
         return cls(routable_name=name, endpoint=endpoint, **kwargs)
 
@@ -124,7 +137,8 @@ class SLIMTransport(BaseTransport):
         if not self._slim:
             return
 
-        # TODO: handle slim session close
+        # handle slim server disconnection
+        self._slim.disconnect(self._endpoint)
 
     def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
@@ -210,9 +224,8 @@ class SLIMTransport(BaseTransport):
         self, remote_name: PyName, message: Message, timeout: float = 30.0
     ) -> None:
         if not self._slim:
-            raise ValueError(
-                "SLIM client is not initialized, please call setup() first."
-            )
+            logger.warning("SLIM client is not initialized, calling setup() ...")
+            await self.setup()
 
         logger.debug(f"Requesting response from topic: {remote_name}")
 
@@ -280,9 +293,8 @@ class SLIMTransport(BaseTransport):
         self, remote_name: PyName, message: Message, timeout: float = 30.0
     ) -> List[Message]:
         if not self._slim:
-            raise ValueError(
-                "SLIM client is not initialized, please call setup() first."
-            )
+            logger.warning("SLIM client is not initialized, calling setup() ...")
+            await self.setup()
 
         logger.debug(f"Requesting group response from topic: {remote_name}")
         raise NotImplementedError("Group request is not yet implemented.")
@@ -343,9 +355,8 @@ class SLIMTransport(BaseTransport):
 
     async def _receive(self) -> None:
         if not self._slim:
-            raise ValueError(
-                "SLIM client is not initialized, please call setup() first."
-            )
+            logger.warning("SLIM client is not initialized, calling setup() ...")
+            await self.setup()
 
         async def background_task():
             async with self._slim:
@@ -399,19 +410,19 @@ class SLIMTransport(BaseTransport):
             self.pyname,
             slim={
                 "endpoint": self._endpoint,
-                "tls": {"insecure": True},
+                "tls": {"insecure": self._tls_insecure},
             },
             enable_opentelemetry=self.enable_opentelemetry,
             shared_secret=self._shared_secret_identity,
-            jwt=None,
-            bundle=None,
-            audience=None,
+            jwt=self._jwt,
+            bundle=self._bundle,
+            audience=self._audience,
         )
 
         self._session_manager.set_slim(self._slim)
 
     def sanitize_topic(self, topic: str) -> str:
-        """Sanitize the topic name to ensure it is valid for NATS."""
-        # NATS topics should not contain spaces or special characters
+        """Sanitize the topic name to ensure it is valid for SLIM."""
+        # SLIM topics should not contain spaces or special characters
         sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
