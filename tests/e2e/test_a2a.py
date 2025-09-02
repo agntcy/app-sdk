@@ -9,6 +9,7 @@ from a2a.types import (
 from typing import Any
 import uuid
 import pytest
+import asyncio
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
@@ -33,9 +34,11 @@ async def test_client(run_a2a_server, transport):
     print("[setup] Launching test server...")
     run_a2a_server(transport, endpoint)
 
+    await asyncio.sleep(1)  # Give the server a moment to start
+
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = AgntcyFactory(enable_tracing=False)
+    factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
         transport, endpoint=endpoint, name="default/default/default"
     )
@@ -114,7 +117,7 @@ async def test_broadcast(run_a2a_server, transport):
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = AgntcyFactory(enable_tracing=False)
+    factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
         transport, endpoint=endpoint, name="default/default/default"
     )
@@ -127,6 +130,8 @@ async def test_broadcast(run_a2a_server, transport):
         "default/default/agent3",
     ]:
         run_a2a_server(transport, endpoint, name=name, topic="broadcast")
+
+    await asyncio.sleep(4)  # Give the server a moment to start
 
     if transport_instance.type() == "SLIM":
         client_handshake_topic = "default/default/agent1"

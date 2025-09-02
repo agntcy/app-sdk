@@ -170,8 +170,6 @@ class A2AProtocol(BaseAgentProtocol):
             if not broadcast_topic:
                 broadcast_topic = topic
 
-            print(f"Broadcasting message on topic: {broadcast_topic}")
-
             try:
                 responses = await transport.request(
                     broadcast_topic,

@@ -214,7 +214,7 @@ class SLIMTransport(BaseTransport):
                 "SLIM client is not initialized, please call setup() first."
             )
 
-        logger.info(f"Requesting response from topic: {remote_name}")
+        logger.debug(f"Requesting response from topic: {remote_name}")
 
         async with self._slim:
             await self._slim.set_route(remote_name)

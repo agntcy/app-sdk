@@ -20,7 +20,7 @@ from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.factory import TransportTypes
 from agntcy_app_sdk.factory import AgntcyFactory
 
-factory = AgntcyFactory(enable_tracing=False)
+factory = AgntcyFactory(enable_tracing=True)
 
 
 async def main(
