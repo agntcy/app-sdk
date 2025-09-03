@@ -11,6 +11,7 @@ from slim_bindings import (
     PySessionConfiguration,
     PySessionDirection,
 )
+from threading import Lock
 
 configure_logging()
 logger = get_logger(__name__)
@@ -20,6 +21,7 @@ class SessionManager:
     def __init__(self):
         self._sessions: Dict[str, PySessionInfo] = {}
         self._slim = None
+        self._lock = Lock()
 
     def set_slim(self, slim: slim_bindings.Slim):
         """
@@ -39,33 +41,33 @@ class SessionManager:
         if not self._slim:
             raise ValueError("SLIM client is not set")
 
-        print("Creating new request-reply session")
-
         # check if we already have a request-reply session
         session_key = "RequestReply"
-        if session_key in self._sessions:
-            logger.info(f"Reusing existing session: {session_key}")
-            return session_key, self._sessions[session_key]
 
-        # TODO: figure out timeout and fields and move to constructor
-        session = await self._slim.create_session(
-            PySessionConfiguration.FireAndForget(
-                max_retries=max_retries,
-                timeout=timeout,
-                sticky=True,
-                mls_enabled=mls_enabled,
+        with self._lock:
+            if session_key in self._sessions:
+                logger.info(f"Reusing existing session: {session_key}")
+                return session_key, self._sessions[session_key]
+
+        with self._lock:
+            session = await self._slim.create_session(
+                PySessionConfiguration.FireAndForget(
+                    max_retries=max_retries,
+                    timeout=timeout,
+                    sticky=True,
+                    mls_enabled=mls_enabled,
+                )
             )
-        )
-        session_key = "RequestReply"
-        self._sessions[session_key] = session
-        return session_key, session
+            session_key = "RequestReply"
+            self._sessions[session_key] = session
+            return session_key, session
 
     async def group_broadcast_session(
         self,
         channel: PyName,
         invitees: list[PyName],
         max_retries: int = 20,
-        timeout: datetime.timedelta = datetime.timedelta(seconds=60),
+        timeout: datetime.timedelta = datetime.timedelta(seconds=30),
         mls_enabled: bool = True,
     ):
         """
@@ -78,28 +80,31 @@ class SessionManager:
         session_key = f"GroupChannel:{channel}:" + ",".join(
             [str(invitee) for invitee in invitees]
         )
-        if session_key in self._sessions:
-            logger.info(f"Reusing existing group broadcast session: {session_key}")
-            return session_key, self._sessions[session_key]
+        with self._lock:
+            if session_key in self._sessions:
+                logger.info(f"Reusing existing group broadcast session: {session_key}")
+                return session_key, self._sessions[session_key]
 
-        session_info = await self._slim.create_session(
-            PySessionConfiguration.Streaming(
-                PySessionDirection.BIDIRECTIONAL,
-                topic=channel,
-                moderator=True,
-                max_retries=max_retries,
-                timeout=timeout,
-                mls_enabled=mls_enabled,
+        logger.info(f"Creating new group broadcast session: {session_key}")
+        with self._lock:
+            session_info = await self._slim.create_session(
+                PySessionConfiguration.Streaming(
+                    PySessionDirection.BIDIRECTIONAL,
+                    topic=channel,
+                    moderator=True,
+                    max_retries=max_retries,
+                    timeout=timeout,
+                    mls_enabled=mls_enabled,
+                )
             )
-        )
 
-        for invitee in invitees:
-            await self._slim.set_route(invitee)
-            await self._slim.invite(session_info, invitee)
+            for invitee in invitees:
+                await self._slim.set_route(invitee)
+                await self._slim.invite(session_info, invitee)
 
-        # store the session info
-        self._sessions[session_key] = session_info
-        return session_key, session_info
+            # store the session info
+            self._sessions[session_key] = session_info
+            return session_key, session_info
 
     def close_session(self, session_key: str):
         """

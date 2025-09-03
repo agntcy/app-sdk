@@ -155,7 +155,7 @@ class A2AProtocol(BaseAgentProtocol):
             request: SendMessageRequest,
             recipients: List[str] | None = None,
             broadcast_topic: str = None,
-            timeout: float = 10.0,
+            timeout: float = 30.0,
         ) -> List[SendMessageResponse]:
             """
             Broadcast a request using the provided transport.

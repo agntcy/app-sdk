@@ -273,9 +273,18 @@ class MCPProtocol(BaseAgentProtocol):
                 session_message: The response message from the MCP server
             """
             request_id = session_message.message.root.id
-            if request_id in self._response_futures:
-                # Fulfill the waiting future with the response
-                self._response_futures[request_id].set_result(session_message)
+            fut = self._response_futures.get(request_id)
+
+            if fut:
+                if not fut.done():
+                    # Fulfill the waiting future with the response
+                    fut.set_result(session_message)
+                else:
+                    # Already fulfilled/cancelled, likely duplicate or late response
+                    logger.debug(
+                        f"Ignoring response for id={request_id} "
+                        f"(future already done: cancelled={fut.cancelled()})"
+                    )
             else:
                 # Log unexpected responses (possible timing issues)
                 logger.warning(f"Unexpected response for id={request_id}")
@@ -286,7 +295,7 @@ class MCPProtocol(BaseAgentProtocol):
                 read_stream,
                 write_stream,
                 self._low_level_server.create_initialization_options(),
-                stateless=True,  # Enable stateless operation for scalability
+                stateless=True,
             )
 
             logger.info("[setup] MCP server started successfully.")

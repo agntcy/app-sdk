@@ -84,6 +84,8 @@ class SLIMTransport(BaseTransport):
 
         self._session_manager = SessionManager()
 
+        self.session_ids = {}
+
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
             # See open issue: https://github.com/agntcy/observe/issues/45
@@ -240,12 +242,16 @@ class SLIMTransport(BaseTransport):
 
             message.headers["respond-to-source"] = "true"
 
-            _, reply = await self._slim.request_reply(
-                session,
-                message.serialize(),
-                remote_name,
-                timeout=datetime.timedelta(seconds=timeout),
-            )
+            try:
+                _, reply = await self._slim.request_reply(
+                    session,
+                    message.serialize(),
+                    remote_name,
+                    timeout=datetime.timedelta(seconds=timeout),
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Request timed out after {timeout} seconds")
+                return None
 
             reply = Message.deserialize(reply)
             return reply
@@ -308,7 +314,9 @@ class SLIMTransport(BaseTransport):
         if not self._slim:
             raise ValueError("SLIM client is not set, please call setup() first.")
 
-        logger.debug(f"Publishing to topic: {channel}")
+        import uuid
+
+        logger.info(f"Publishing to topic: {channel} - {uuid.uuid4()}")
 
         _, session_info = await self._session_manager.group_broadcast_session(
             channel, invitees
@@ -326,9 +334,15 @@ class SLIMTransport(BaseTransport):
             # wait for responses from all invitees or be interrupted by caller
             responses = []
             while len(responses) < len(invitees):
-                _, msg = await self._slim.receive(session=session_info.id)
-                msg = Message.deserialize(msg)
-                responses.append(msg)
+                try:
+                    _, msg = await self._slim.receive(session=session_info.id)
+                    msg = Message.deserialize(msg)
+                    responses.append(msg)
+                except Exception as e:
+                    logger.error(
+                        f"Error receiving message on session {session_info.id}: {e}"
+                    )
+                    continue
 
             return responses
 
@@ -354,51 +368,97 @@ class SLIMTransport(BaseTransport):
         return True
 
     async def _receive(self) -> None:
+        """Main receive method that sets up the background session listener."""
         if not self._slim:
             logger.warning("SLIM client is not initialized, calling setup() ...")
             await self.setup()
 
-        async def background_task():
-            async with self._slim:
-                while True:
-                    # Receive the message from the session
+        asyncio.create_task(self._listen_for_sessions())
+
+    async def _listen_for_sessions(self) -> None:
+        """Background task that listens for new sessions and spawns handlers."""
+        async with self._slim:
+            while True:
+                try:
                     session_info, _ = await self._slim.receive()
+                    # Spawn a new task to handle this session
+                    asyncio.create_task(self._handle_session_receive(session_info.id))
+                except Exception as e:
+                    logger.error(f"Error receiving session info: {e}")
+                    continue
 
-                    async def inner_task(session_id):
-                        while True:
-                            # Receive the message from the session
-                            session, msg = await self._slim.receive(session=session_id)
+    async def _handle_session_receive(self, session_id: str) -> None:
+        """Handle message receiving for a specific session."""
+        while True:
+            try:
+                session, msg = await self._slim.receive(session=session_id)
+            except Exception as e:
+                logger.error(f"Error receiving message on session {session_id}: {e}")
+                continue
 
-                            # perform filtering on the incoming message destination name, have we subscribe to this?
-                            self.can_receive(session.destination_name)
+            # Process the received message
+            await self._process_received_message(session, msg)
 
-                            msg = Message.deserialize(msg)
+    async def _process_received_message(self, session, msg) -> None:
+        """Process a single received message and handle response logic."""
+        # Check if we should receive messages for this destination
+        if not self.can_receive(session.destination_name):
+            logger.debug(
+                f"Filtering out message for destination: {session.destination_name}"
+            )
+            return
 
-                            if inspect.iscoroutinefunction(self._callback):
-                                output = await self._callback(msg)
-                            else:
-                                output = self._callback(msg)
+        if msg is None:
+            logger.debug("Received empty message, skipping.")
+            return
 
-                            if (
-                                msg.headers.get("respond-to-source", "false").lower()
-                                == "true"
-                            ):
-                                payload = output.serialize()
-                                await self._slim.publish_to(session, payload)
-                            elif (
-                                msg.headers.get("respond_to_group", "false").lower()
-                                == "true"
-                            ):
-                                payload = output.serialize()
-                                await self._slim.publish(
-                                    session,
-                                    payload,
-                                    session.destination_name,
-                                )
+        # Deserialize the message
+        try:
+            deserialized_msg = Message.deserialize(msg)
+        except Exception as e:
+            logger.error(f"Failed to deserialize message: {e}")
+            return
 
-                    asyncio.create_task(inner_task(session_info.id))
+        # Call the callback function
+        try:
+            if inspect.iscoroutinefunction(self._callback):
+                output = await self._callback(deserialized_msg)
+            else:
+                output = self._callback(deserialized_msg)
+        except Exception as e:
+            logger.error(f"Error in callback function: {e}")
+            return
 
-        asyncio.create_task(background_task())
+        if output is None:
+            logger.info("Received empty output from callback, skipping response.")
+            return
+
+        # Handle response logic
+        await self._handle_response(session, deserialized_msg, output)
+
+    async def _handle_response(self, session, original_msg, output) -> None:
+        """Handle response publishing based on message headers."""
+        try:
+            payload = output.serialize()
+
+            respond_to_source = (
+                original_msg.headers.get("respond-to-source", "false").lower() == "true"
+            )
+            respond_to_group = (
+                original_msg.headers.get("respond_to_group", "false").lower() == "true"
+            )
+
+            if respond_to_source:
+                await self._slim.publish_to(session, payload)
+                logger.debug("Response sent to source")
+            elif respond_to_group:
+                await self._slim.publish(session, payload, session.destination_name)
+                logger.debug(f"Response sent to group: {session.destination_name}")
+            else:
+                logger.debug("No response required based on message headers")
+
+        except Exception as e:
+            logger.error(f"Error handling response: {e}")
 
     async def _slim_connect(
         self,
