@@ -82,10 +82,10 @@ class SessionManager:
         )
         with self._lock:
             if session_key in self._sessions:
-                logger.info(f"Reusing existing group broadcast session: {session_key}")
+                logger.debug(f"Reusing existing group broadcast session: {session_key}")
                 return session_key, self._sessions[session_key]
 
-        logger.info(f"Creating new group broadcast session: {session_key}")
+        logger.debug(f"Creating new group broadcast session: {session_key}")
         with self._lock:
             session_info = await self._slim.create_session(
                 PySessionConfiguration.Streaming(

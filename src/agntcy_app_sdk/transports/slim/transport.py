@@ -316,7 +316,7 @@ class SLIMTransport(BaseTransport):
 
         import uuid
 
-        logger.info(f"Publishing to topic: {channel} - {uuid.uuid4()}")
+        logger.debug(f"Publishing to topic: {channel} - {uuid.uuid4()}")
 
         _, session_info = await self._session_manager.group_broadcast_session(
             channel, invitees
