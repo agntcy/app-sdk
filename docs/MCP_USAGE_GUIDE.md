@@ -143,6 +143,7 @@ The Agntcy Application SDK now fully supports FastMCP, an enhanced version of th
 #### Initialization Flow
 
 The FastMCP client initialization involves two POST requests:
+
 1. **Initialization Request**: Establishes the session and retrieves the `Mcp-Session-Id`.
 2. **Notification Request**: Confirms the session initialization.
 
@@ -209,9 +210,6 @@ export FAST_MCP_PORT=9090
 
 Then, start your server as usual. The server will now listen on port 9090.
 
-
-
-
 #### Example: Creating a FastMCP Client
 
 The `FastMCPProtocol.create_client` method allows you to create an MCP client for interacting with a FastMCP server. Below is an example demonstrating its usage, including the `route_path` parameter.
@@ -249,6 +247,7 @@ if __name__ == "__main__":
 ```
 
 #### Key Notes:
+
 - **`route_path`**: Specifies the custom route path for the client. If not provided, it defaults to `/`.
 - **Authentication**: Supports both bearer tokens and `httpx.Auth` instances for flexible authentication.
 - **Initialization Flow**: The client performs two POST requests to initialize the MCP connection, ensuring proper session setup.

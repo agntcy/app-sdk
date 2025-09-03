@@ -32,14 +32,14 @@ async def test_client(run_mcp_server, transport):
     print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory()
     transport_instance = factory.create_transport(
-        transport=transport, endpoint=endpoint
+        transport=transport, endpoint=endpoint, name="default/default/mcp_client"
     )
 
     # Create a MCP client
     print("[test] Creating MCP client...")
     mcp_client = factory.create_client(
         "MCP",
-        agent_topic="test_topic.mcp",
+        agent_topic="mcp",
         transport=transport_instance,
     )
     async with mcp_client as client:

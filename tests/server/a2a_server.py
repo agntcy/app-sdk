@@ -15,13 +15,22 @@ from a2a.types import (
 import asyncio
 import argparse
 from uvicorn import Config, Server
+
+from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.factory import TransportTypes
 from agntcy_app_sdk.factory import AgntcyFactory
 
-factory = AgntcyFactory(enable_tracing=False)
+factory = AgntcyFactory(enable_tracing=True)
 
 
-async def main(transport_type: str, endpoint: str, version="1.0.0", block: bool = True):
+async def main(
+    transport_type: str,
+    name: str,
+    topic: str,
+    endpoint: str,
+    version="1.0.0",
+    block: bool = True,
+):
     """
     This is a simple example of how to create a bridge between an A2A server and a transport.
     It creates a Hello World agent and sets up the transport to communicate with it.
@@ -60,8 +69,14 @@ async def main(transport_type: str, endpoint: str, version="1.0.0", block: bool 
         userver = Server(config)
         await userver.serve()
     else:
-        transport = factory.create_transport(transport_type, endpoint=endpoint)
-        bridge = factory.create_bridge(server, transport=transport)
+        print(f"Creating transport for {transport_type} at {endpoint} with name {name}")
+        transport = factory.create_transport(
+            transport_type, endpoint=endpoint, name=name
+        )
+
+        if not topic or topic == "":
+            topic = A2AProtocol.create_agent_topic(server.agent_card)
+        bridge = factory.create_bridge(server, transport=transport, topic=topic)
         await bridge.start(blocking=block)
 
 
@@ -76,6 +91,18 @@ if __name__ == "__main__":
         choices=[t.value for t in TransportTypes],
         default=TransportTypes.NATS.value,
         help="Transport type to use (default: NATS)",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default="default/default/Hello_World_Agent_1.0.0",
+        help="Routable name for the transport in the form 'org/namespace/local_name' (default: default/default/Hello_World_Agent_1.0.0)",
+    )
+    parser.add_argument(
+        "--topic",
+        type=str,
+        default=None,
+        help="Topic for the A2A communication (default: None, which uses the agent's default topic)",
     )
     parser.add_argument(
         "--endpoint",
@@ -98,4 +125,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    asyncio.run(main(args.transport, args.endpoint, args.version, args.block))
+    asyncio.run(
+        main(
+            args.transport,
+            args.name,
+            args.topic,
+            args.endpoint,
+            args.version,
+            args.block,
+        )
+    )

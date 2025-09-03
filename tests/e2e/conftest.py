@@ -18,7 +18,13 @@ TRANSPORT_CONFIGS = {
 def run_a2a_server():
     procs = []
 
-    def _run(transport, endpoint, version="1.0.0"):
+    def _run(
+        transport,
+        endpoint,
+        version="1.0.0",
+        name="default/default/Hello_World_Agent_1.0.0",
+        topic="",
+    ):
         cmd = [
             "uv",
             "run",
@@ -26,6 +32,10 @@ def run_a2a_server():
             "tests/server/a2a_server.py",
             "--transport",
             transport,
+            "--name",
+            name,
+            "--topic",
+            topic,
             "--endpoint",
             endpoint,
             "--version",
@@ -49,7 +59,7 @@ def run_a2a_server():
 def run_mcp_server():
     procs = []
 
-    def _run(transport, endpoint):
+    def _run(transport, endpoint, name="default/default/mcp"):
         cmd = [
             "uv",
             "run",
@@ -59,6 +69,8 @@ def run_mcp_server():
             transport,
             "--endpoint",
             endpoint,
+            "--name",
+            name,
         ]
 
         proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
@@ -73,11 +85,12 @@ def run_mcp_server():
         if proc.poll() is None:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
+
 @pytest.fixture
 def run_fast_mcp_server():
     procs = []
 
-    def _run(transport, endpoint):
+    def _run(transport, endpoint, name="default/default/fastmcp"):
         cmd = [
             "uv",
             "run",
@@ -87,6 +100,8 @@ def run_fast_mcp_server():
             transport,
             "--endpoint",
             endpoint,
+            "--name",
+            name,
         ]
 
         proc = subprocess.Popen(cmd, preexec_fn=os.setsid)

@@ -10,7 +10,7 @@ import argparse
 factory = AgntcyFactory(enable_tracing=False)
 
 
-async def main(transport_type: str, endpoint: str, block: bool = True):
+async def main(transport_type: str, endpoint: str, name: str, block: bool = True):
     # Create the MCP server
     mcp = FastMCP()
 
@@ -18,8 +18,8 @@ async def main(transport_type: str, endpoint: str, block: bool = True):
     async def get_forecast(location: str) -> str:
         return "Temperature: 30°C\n" "Humidity: 50%\n" "Condition: Sunny\n"
 
-    transport = factory.create_transport(transport_type, endpoint=endpoint)
-    bridge = factory.create_bridge(mcp._mcp_server, transport=transport, topic="test_topic.mcp")
+    transport = factory.create_transport(transport_type, endpoint=endpoint, name=name)
+    bridge = factory.create_bridge(mcp._mcp_server, transport=transport, topic="mcp")
     await bridge.start(blocking=block)
 
 
@@ -42,6 +42,12 @@ if __name__ == "__main__":
         help="Endpoint for the transport (default: localhost:4222)",
     )
     parser.add_argument(
+        "--name",
+        type=str,
+        default="test_server",
+        help="Name of the server instance (default: test_server)",
+    )
+    parser.add_argument(
         "--non-blocking",
         action="store_false",
         dest="block",
@@ -50,4 +56,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    asyncio.run(main(args.transport, args.endpoint, args.block))
+    asyncio.run(main(args.transport, args.endpoint, args.name, args.block))

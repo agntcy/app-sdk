@@ -7,7 +7,7 @@ import json
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
-from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 
 from mcp import ClientSession
@@ -71,6 +71,9 @@ class MCPProtocol(BaseAgentProtocol):
                 # Use session for MCP communication
                 pass
         """
+        if transport:
+            await transport.setup()
+
         # Store timeout and retry configuration for this session
         self.message_timeout = message_timeout
         self.message_retries = message_retries
@@ -193,13 +196,13 @@ class MCPProtocol(BaseAgentProtocol):
         )
 
         # Send message through transport and wait for response
-        resp = await transport.publish(
+        resp = await transport.request(
             topic=topic,
-            respond=True,  # Expect a response from the server
             message=Message(
                 type=str(types.JSONRPCMessage),
                 payload=json.dumps(msg_dict),
             ),
+            response_mode=ResponseMode.FIRST,
         )
 
         # Validate that we received a response
@@ -270,9 +273,18 @@ class MCPProtocol(BaseAgentProtocol):
                 session_message: The response message from the MCP server
             """
             request_id = session_message.message.root.id
-            if request_id in self._response_futures:
-                # Fulfill the waiting future with the response
-                self._response_futures[request_id].set_result(session_message)
+            fut = self._response_futures.get(request_id)
+
+            if fut:
+                if not fut.done():
+                    # Fulfill the waiting future with the response
+                    fut.set_result(session_message)
+                else:
+                    # Already fulfilled/cancelled, likely duplicate or late response
+                    logger.debug(
+                        f"Ignoring response for id={request_id} "
+                        f"(future already done: cancelled={fut.cancelled()})"
+                    )
             else:
                 # Log unexpected responses (possible timing issues)
                 logger.warning(f"Unexpected response for id={request_id}")
@@ -283,7 +295,7 @@ class MCPProtocol(BaseAgentProtocol):
                 read_stream,
                 write_stream,
                 self._low_level_server.create_initialization_options(),
-                stateless=True,  # Enable stateless operation for scalability
+                stateless=True,
             )
 
             logger.info("[setup] MCP server started successfully.")

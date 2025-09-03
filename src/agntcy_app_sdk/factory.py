@@ -184,7 +184,9 @@ class AgntcyFactory:
 
         return bridge
 
-    def create_transport(self, transport: str, client=None, endpoint: str = None):
+    def create_transport(
+        self, transport: str, name=None, client=None, endpoint: str = None, **kwargs
+    ):
         """
         Get the transport class for the specified transport type. Enables users to
         instantiate a transport class with a string name or a client instance.
@@ -199,9 +201,9 @@ class AgntcyFactory:
 
         if client:
             # create the transport instance from the client
-            transport = gateway_class.from_client(client)
+            transport = gateway_class.from_client(client, name=name, **kwargs)
         else:
-            transport = gateway_class.from_config(endpoint)
+            transport = gateway_class.from_config(endpoint, name=name, **kwargs)
 
         return transport
 

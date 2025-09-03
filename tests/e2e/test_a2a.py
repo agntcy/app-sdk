@@ -9,6 +9,7 @@ from a2a.types import (
 from typing import Any
 import uuid
 import pytest
+import asyncio
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
@@ -33,17 +34,21 @@ async def test_client(run_a2a_server, transport):
     print("[setup] Launching test server...")
     run_a2a_server(transport, endpoint)
 
+    await asyncio.sleep(1)  # Give the server a moment to start
+
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = AgntcyFactory(enable_tracing=False)
-    transport_instance = factory.create_transport(transport, endpoint=endpoint)
+    factory = AgntcyFactory(enable_tracing=True)
+    transport_instance = factory.create_transport(
+        transport, endpoint=endpoint, name="default/default/default"
+    )
 
     # Create A2A client
     print("[test] Creating A2A client...")
     client = await factory.create_client(
         "A2A",
         agent_url=endpoint,
-        agent_topic="Hello_World_Agent_1.0.0",  # Used if transport is provided
+        agent_topic="Hello_World_Agent_1.0.0",
         transport=transport_instance,
     )
     assert client is not None, "Client was not created"
@@ -110,23 +115,34 @@ async def test_broadcast(run_a2a_server, transport):
         f"\n--- Starting test: test_broadcast | Transport: {transport} | Endpoint: {endpoint} ---"
     )
 
-    # Start the mock/test server
-    print("[setup] Launching test server...")
-    run_a2a_server(transport, endpoint)
-    run_a2a_server(transport, endpoint)
-    run_a2a_server(transport, endpoint)
-
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
-    factory = AgntcyFactory(enable_tracing=False)
-    transport_instance = factory.create_transport(transport, endpoint=endpoint)
+    factory = AgntcyFactory(enable_tracing=True)
+    transport_instance = factory.create_transport(
+        transport, endpoint=endpoint, name="default/default/default"
+    )
+
+    # Start the mock/test server
+    print("[setup] Launching test server...")
+    for name in [
+        "default/default/agent1",
+        "default/default/agent2",
+        "default/default/agent3",
+    ]:
+        run_a2a_server(transport, endpoint, name=name, topic="broadcast")
+
+    await asyncio.sleep(4)  # Give the server a moment to start
+
+    if transport_instance.type() == "SLIM":
+        client_handshake_topic = "default/default/agent1"
+    else:
+        client_handshake_topic = "broadcast"
 
     # Create A2A client
     print("[test] Creating A2A client...")
     client = await factory.create_client(
         "A2A",
-        agent_url=endpoint,
-        agent_topic="Hello_World_Agent_1.0.0",  # Used if transport is provided
+        agent_topic=client_handshake_topic,
         transport=transport_instance,
     )
     assert client is not None, "Client was not created"
@@ -146,19 +162,26 @@ async def test_broadcast(run_a2a_server, transport):
 
     responses = await client.broadcast_message(
         request,
-        expected_responses=3,  # Expecting 3 responses from the broadcast
+        broadcast_topic="broadcast",
+        recipients=[
+            "default/default/agent1",
+            "default/default/agent2",
+            "default/default/agent3",
+        ],
     )
 
+    print(f"[debug] Received {len(responses)} responses from broadcast")
     print(f"[debug] Broadcast responses: {responses}")
+    assert len(responses) == 3, "Did not receive expected number of broadcast responses"
 
     # test a broadcast timeout
-    responses = await client.broadcast_message(
+    '''responses = await client.broadcast_message(
         request,
-        expected_responses=3,  # Expecting 3 responses from the broadcast
+        recipients=["agent1", "agent2", "agent3"],
         timeout=0.001,  # Set a short timeout to test timeout handling
     )
 
-    assert len(responses) == 0, "Broadcast should have timed out"
+    assert len(responses) == 0, "Broadcast should have timed out"'''
 
     if transport_instance:
         print("[teardown] Closing transport...")

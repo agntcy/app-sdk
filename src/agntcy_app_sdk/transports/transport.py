@@ -7,6 +7,25 @@ from typing import Callable, Optional
 from typing import Any, TypeVar, Type
 import asyncio
 
+from enum import Enum, auto
+
+
+class ResponseMode(Enum):
+    """Defines how responses to a topic request should be handled."""
+
+    FIRST = auto()
+    """First-response-wins. Return as soon as the first reply arrives."""
+
+    COLLECT_N = auto()
+    """Collect N responses from a topic, then return (or until timeout)."""
+
+    COLLECT_ALL = auto()
+    """Collect all available responses (requires known member list)."""
+
+    GROUP = auto()
+    """Respond to a group of subscribers."""
+
+
 T = TypeVar("T", bound="BaseTransport")
 
 
@@ -14,18 +33,18 @@ class BaseTransport(ABC):
     """
     Abstract base class for transport protocols.
     This class defines the interface for different transport protocols
-    such as AGP, NATS, MQTT, etc.
+    such as SLIM, NATS, MQTT, KAFKA, etc.
     """
 
     @classmethod
     @abstractmethod
-    def from_client(cls: Type[T], client: Any) -> T:
+    def from_client(cls: Type[T], client: Any, name: str = None) -> T:
         """Create a transport instance from a client."""
         pass
 
     @classmethod
     @abstractmethod
-    def from_config(cls: Type[T], endpoint: str, **kwargs) -> T:
+    def from_config(cls: Type[T], endpoint: str, name: str = None, **kwargs) -> T:
         """Create a transport instance from a configuration."""
         pass
 
@@ -35,13 +54,13 @@ class BaseTransport(ABC):
         pass
 
     @abstractmethod
-    async def close(self) -> None:
-        """Close the transport connection."""
+    async def setup(self, **kwargs) -> None:
+        """Perform any necessary setup for the transport, useful for async initialization."""
         pass
 
     @abstractmethod
-    def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
-        """Set the message handler function."""
+    async def close(self) -> None:
+        """Close the transport connection."""
         pass
 
     @abstractmethod
@@ -49,10 +68,20 @@ class BaseTransport(ABC):
         self,
         topic: str,
         message: Message,
-        respond: Optional[bool] = False,
     ) -> None:
-        """Publish a message to a topic."""
+        """Publish a message to a topic, fire and forget."""
         pass
+
+    @abstractmethod
+    async def request(
+        self,
+        topic: str,
+        message: Message,
+        response_mode: ResponseMode = ResponseMode.FIRST,
+        timeout: Optional[float] = 60.0,
+        **kwargs,
+    ) -> Optional[Message]:
+        """Publish with expectation of replies, governed by ResponseMode."""
 
     @abstractmethod
     async def subscribe(self, topic: str, callback: callable = None) -> None:
@@ -60,12 +89,6 @@ class BaseTransport(ABC):
         pass
 
     @abstractmethod
-    async def broadcast(
-        self,
-        topic: str,
-        message: Message,
-        expected_responses: int = 1,
-        timeout: Optional[float] = 30.0,
-    ) -> None:
-        """Broadcast a message to all subscribers of a topic and wait for responses."""
+    def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
+        """Set the message handler function."""
         pass

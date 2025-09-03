@@ -22,12 +22,12 @@ def test_extract_message_payload_ids_realistic():
                 "parts": [
                     {
                         "kind": "text",
-                        "text": "Please provide the total coffee yield inventory across all farms."
+                        "text": "Please provide the total coffee yield inventory across all farms.",
                     }
                 ],
-                "role": "user"
+                "role": "user",
             }
-        }
+        },
     }
     id_, message_id = t._extract_message_payload_ids(payload2)
     assert id_ == "c8f0f828-978a-4503-a613-17822b05a87c"
@@ -35,6 +35,7 @@ def test_extract_message_payload_ids_realistic():
 
     # Case 3: Same as above but as JSON string
     import json
+
     payload2_str = json.dumps(payload2)
     id_, message_id = t._extract_message_payload_ids(payload2_str)
     assert id_ == "c8f0f828-978a-4503-a613-17822b05a87c"

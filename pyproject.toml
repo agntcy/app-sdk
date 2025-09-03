@@ -1,9 +1,9 @@
 [project]
 name = "agntcy-app-sdk"
-version = "0.1.6"
+version = "0.2.0"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
-requires-python = "~=3.12"
+requires-python = ">=3.13,<4.0"
 license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
@@ -12,13 +12,13 @@ dependencies = [
     "coloredlogs>=15.0.1,<16",
     "langchain-community>=0.3.24",
     "uvicorn>=0.34.3",
-    "slim-bindings==0.3.6",
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
     "ioa-observe-sdk==1.0.15",
     "opentelemetry-instrumentation-requests>=0.54b1",
     "opentelemetry-instrumentation-starlette>=0.54b0",
     "asgi-lifespan>=2.1.0",
+    "slim-bindings>=0.4.0",
 ]
 
 [project.urls]

@@ -22,7 +22,8 @@ The Agntcy Application SDK offers an interoperable factory hub for constructing 
 <pre>
 ✅ A2A over SLIM           ✅ A2A over NATS              🕐 A2A over MQTT             
 ✅ Request-reply           ✅ Publish-subscribe          ✅ Broadcast                 
-✅ MCP over SLIM | NATS    ✅ Observability provider     🕐 Identity provider         
+✅ MCP over SLIM           ✅ MCP over NATS              ✅ Observability provider       
+🕐 Identity provider         
 </pre>
 
 <div align='center'>
@@ -69,7 +70,7 @@ protocols = factory.registered_protocols()
 transports = factory.registered_transports()
 observability_providers = factory.registered_observability_providers()
 
-# ['A2A', 'MCP']
+# ['A2A', 'MCP', 'FastMCP']
 # ['SLIM', 'NATS', 'STREAMABLE_HTTP']
 # ['ioa_observe']
 ```
@@ -126,11 +127,11 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
 
 # Agntcy Component Usage
 
-### SLIM
+### SLIM (0.4.0)
 
-SLIM (Secure Low-Latency Interactive Messaging) may be used to facilitate communication between AI agents with various communication patterns such as request-reply, publish-subscribe, and broadcast. The AgntcyFactory implements a high-level SLIM transport wrapper which is used to standardize integration with agntcy-app-sdk protocol implementations including A2A and MCP. For more details and usage guides for SLIM, see the [SLIM repository](https://github.com/agntcy/slim).
+SLIM (Secure Low-Latency Interactive Messaging) may be used to facilitate communication between AI agents with various communication patterns such as request-reply, and moderated group-chat. The AgntcyFactory implements a high-level SLIM transport wrapper which is used to standardize integration with agntcy-app-sdk protocol implementations including A2A and MCP. For more details and usage guides for SLIM, see the [docs](https://docs.agntcy.org/messaging/slim-core/) and [repository](https://github.com/agntcy/slim).
 
-### Observe
+### Observe (1.0.15)
 
 The AgntcyFactory may be configured to use the Observe-SDK for multi-agentic application observability by setting the `enable_tracing` parameter to `True` when creating the factory instance. This will initialize an observe tracer and enable SLIM and A2A auto-instrumentation if necessary.
 

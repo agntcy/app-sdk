@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from starlette.types import Scope
-from typing import Dict, Any
+from typing import Dict, Any, List
 import json
 from uuid import uuid4
 import httpx
@@ -13,7 +13,7 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
-from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.protocols.message import Message
 from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
@@ -52,11 +52,7 @@ class A2AProtocol(BaseAgentProtocol):
             method=method,
         )
 
-        response = await transport.publish(
-            topic,
-            request,
-            respond=True,
-        )
+        response = await transport.request(topic, request, ResponseMode.FIRST)
 
         response.payload = json.loads(response.payload.decode("utf-8"))
         card = AgentCard.model_validate(response.payload)
@@ -89,6 +85,9 @@ class A2AProtocol(BaseAgentProtocol):
 
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
+
+        if transport:
+            await transport.setup()
 
         # if a transport and a topic are provided, bypass the URL and use the topic
         if topic and transport:
@@ -136,12 +135,12 @@ class A2AProtocol(BaseAgentProtocol):
             headers = http_kwargs.get("headers", {})
 
             try:
-                response = await transport.publish(
+                response = await transport.request(
                     topic,
                     self.message_translator(
                         request=rpc_request_payload, headers=headers
                     ),
-                    respond=True,
+                    response_mode=ResponseMode.FIRST,
                 )
 
                 response.payload = json.loads(response.payload.decode("utf-8"))
@@ -154,9 +153,10 @@ class A2AProtocol(BaseAgentProtocol):
 
         async def broadcast_message(
             request: SendMessageRequest,
-            expected_responses: int = 1,
-            timeout: float = 10.0,
-        ) -> dict[str, Any]:
+            recipients: List[str] | None = None,
+            broadcast_topic: str = None,
+            timeout: float = 30.0,
+        ) -> List[SendMessageResponse]:
             """
             Broadcast a request using the provided transport.
             """
@@ -167,11 +167,15 @@ class A2AProtocol(BaseAgentProtocol):
                 request=request.model_dump(mode="json", exclude_none=True)
             )
 
+            if not broadcast_topic:
+                broadcast_topic = topic
+
             try:
-                responses = await transport.broadcast(
-                    topic,
+                responses = await transport.request(
+                    broadcast_topic,
                     msg,
-                    expected_responses=expected_responses,
+                    response_mode=ResponseMode.COLLECT_ALL,
+                    recipients=recipients,
                     timeout=timeout,
                 )
             except Exception as e:
