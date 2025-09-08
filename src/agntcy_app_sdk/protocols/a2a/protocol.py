@@ -9,6 +9,7 @@ import httpx
 import os
 
 from a2a.client import A2AClient, A2ACardResolver
+from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH
 from a2a.server.apps import A2AStarletteApplication
 from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
 
@@ -21,6 +22,34 @@ from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
 configure_logging()
 logger = get_logger(__name__)
+
+
+async def get_client_from_agent_card_url(httpx_client: httpx.AsyncClient, base_url: str,
+    http_kwargs: dict[str, Any] | None = None,
+) -> A2AClient:
+    """
+    Replacement for removed get_client_from_agent_card_url().
+    Tries both agent-card.json (v0.3.0) and legacy agent.json.
+    """
+    try:
+        agent_card: AgentCard = await A2ACardResolver(
+            httpx_client, base_url=base_url,
+            agent_card_path=AGENT_CARD_WELL_KNOWN_PATH,
+        ).get_agent_card(http_kwargs=http_kwargs)
+    except Exception as e:
+        logger.info(f"Failed to get client from agent card url with v3 path, "
+                    f"falling back to v2 path: {e}")
+        try:
+            agent_card: AgentCard = await (A2ACardResolver(
+                httpx_client, base_url=base_url,
+                agent_card_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
+            ).get_agent_card(http_kwargs=http_kwargs))
+        except Exception as e:
+            logger.error(f"Failed to get client from agent card url with v2 "
+                         f"path: {e}")
+            raise e
+
+    return A2AClient(httpx_client=httpx_client, agent_card=agent_card)
 
 
 class A2AProtocol(BaseAgentProtocol):
@@ -42,24 +71,37 @@ class A2AProtocol(BaseAgentProtocol):
         """
         logger.info(f"Getting agent card from topic {topic}")
 
-        path = ".well-known/agent.json"
         method = "GET"
 
-        request = Message(
-            type="A2ARequest",
-            payload=json.dumps({"path": path, "method": method}),
-            route_path=path,
-            method=method,
-        )
+        # Try v3 path first, fall back to v2 if anything goes wrong
+        try:
+            request = Message(
+                type="A2ARequest",
+                payload=json.dumps({"path": AGENT_CARD_WELL_KNOWN_PATH, "method": method}),
+                route_path=AGENT_CARD_WELL_KNOWN_PATH,
+                method=method
+            )
+            response = await transport.request(topic, request, ResponseMode.FIRST)
 
-        response = await transport.request(topic, request, ResponseMode.FIRST)
+            response.payload = json.loads(response.payload.decode("utf-8"))
+            card = AgentCard.model_validate(response.payload)
+        except Exception as e:
+            logger.info(f"A2A v3 path failed or invalid payload, falling back to v2: {e}")
 
-        response.payload = json.loads(response.payload.decode("utf-8"))
-        card = AgentCard.model_validate(response.payload)
+            request = Message(
+                type="A2ARequest",
+                payload=json.dumps({"path": PREV_AGENT_CARD_WELL_KNOWN_PATH, "method": method}),
+                route_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
+                method=method
+            )
+            response = await transport.request(topic, request, ResponseMode.FIRST)
+
+            response.payload = json.loads(response.payload.decode("utf-8"))
+            card = AgentCard.model_validate(response.payload)
 
         cl = A2AClient(
             agent_card=card,
-            httpx_client=None,
+            httpx_client=None,  # Set the httpx_client to None so it will use the overridden version of _send_request() below
             url=None,
         )
         cl.agent_card = card
@@ -93,8 +135,13 @@ class A2AProtocol(BaseAgentProtocol):
         if topic and transport:
             client = await self.get_client_from_agent_card_topic(topic, transport)
         else:
-            httpx_client = httpx.AsyncClient()
-            client = await A2AClient.get_client_from_agent_card_url(httpx_client, url)
+            try:
+                async with httpx.AsyncClient() as httpx_client:
+                    client = await get_client_from_agent_card_url(httpx_client, url)
+            except Exception as e:
+                logger.error(f"Failed to retrieve A2A client: {e}")
+                raise e
+
             # ensure the client has an agent card
             if not hasattr(client, "agent_card"):
                 agent_card = await A2ACardResolver(
@@ -196,7 +243,7 @@ class A2AProtocol(BaseAgentProtocol):
             return broadcast_responses
 
         # override the _send_request method to use the provided transport
-        client._send_request = _send_request
+        client.transport._send_request = _send_request
         client.broadcast_message = broadcast_message
 
     def message_translator(

@@ -7,7 +7,7 @@ requires-python = ">=3.13,<4.0"
 license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
-    "a2a-sdk==0.2.16",
+    "a2a-sdk==0.3.0",
     "nats-py>=2.10.0,<3",
     "coloredlogs>=15.0.1,<16",
     "langchain-community>=0.3.24",
