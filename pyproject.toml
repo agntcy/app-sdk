@@ -14,7 +14,7 @@ dependencies = [
     "uvicorn>=0.34.3",
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
-    "ioa-observe-sdk==1.0.15",
+    "ioa-observe-sdk==1.0.17",
     "opentelemetry-instrumentation-requests>=0.54b1",
     "opentelemetry-instrumentation-starlette>=0.54b0",
     "asgi-lifespan>=2.1.0",
