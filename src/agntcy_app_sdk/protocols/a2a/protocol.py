@@ -243,7 +243,7 @@ class A2AProtocol(BaseAgentProtocol):
             return broadcast_responses
 
         # override the _send_request method to use the provided transport
-        client.transport._send_request = _send_request
+        client._transport._send_request = _send_request
         client.broadcast_message = broadcast_message
 
     def message_translator(
