@@ -51,7 +51,7 @@ class NatsTransport(BaseTransport):
         self.drain_timeout = kwargs.get("drain_timeout", 2)
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            logger.info("Tracing is enabled for NATS transport")
+            logger.info("NatsTransport initialized with tracing enabled")
             self.tracing_enabled = True
 
     @classmethod
