@@ -73,7 +73,7 @@ requires-dist = [
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "coloredlogs", specifier = ">=15.0.1,<16" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "ioa-observe-sdk", specifier = "==1.0.17" },
+    { name = "ioa-observe-sdk", specifier = "==1.0.18" },
     { name = "langchain-community", specifier = ">=0.3.24" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.10.1" },
     { name = "nats-py", specifier = ">=2.10.0,<3" },
@@ -886,7 +886,7 @@ wheels = [
 
 [[package]]
 name = "ioa-observe-sdk"
-version = "1.0.17"
+version = "1.0.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -929,9 +929,9 @@ dependencies = [
     { name = "pytest-vcr" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/75/26/9b1055d52c0ca8da92b8e8f65ef77dc6080e5a213e8663458d4f4257484c/ioa_observe_sdk-1.0.17.tar.gz", hash = "sha256:e6bb68b052b46550df9288b481177342e2f751e1e5b4453a25c9f31d2f665ae5", size = 64296, upload-time = "2025-09-05T06:34:48.657Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/2c/0ab1b495bd2c5c3f7da5c8e43fb094fe2e7caa9753af8eb105a9c69dace3/ioa_observe_sdk-1.0.18.tar.gz", hash = "sha256:17a3e1774c6b7ab4f281aee638db83d1d1f05d236bf9591923535ff08bc317d7", size = 64206, upload-time = "2025-09-09T14:34:05.785Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/bd/68a667e2f2b7ca6a07ae6cfd67fd8571336169452564112679459594db9e/ioa_observe_sdk-1.0.17-py3-none-any.whl", hash = "sha256:1c2f57efb23277cee4b01c06d982a3ff29e4b959e9663d063996300823f71401", size = 71494, upload-time = "2025-09-05T06:34:47.776Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/9c/c8b4c81f550d2ce59b10ddb2a018c02b247db3de446a78c41f18ef00ad75/ioa_observe_sdk-1.0.18-py3-none-any.whl", hash = "sha256:5b7e9c22ecc5ef36fc0094695395fce54309bf50242fd21a12849ee75ab0e13a", size = 71503, upload-time = "2025-09-09T14:34:04.496Z" },
 ]
 
 [[package]]
