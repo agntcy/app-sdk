@@ -88,10 +88,10 @@ class SLIMTransport(BaseTransport):
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
-            # See open issue: https://github.com/agntcy/observe/issues/45
-            logger.warning(
-                "SLIMInstrumentor not currently supported with slim_bindings 0.4.0"
-            )
+            from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
+
+            SLIMInstrumentor().instrument()
+            logger.info("SLIMTransport initialized with tracing enabled")
 
         logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
 

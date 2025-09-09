@@ -5,7 +5,7 @@ def test_extract_message_payload_ids_realistic():
     t = NatsTransport(endpoint="nats://localhost:4222")
 
     # Case 1: Message with no id or messageId (path/method only)
-    payload1 = {"path": ".well-known/agent.json", "method": "GET"}
+    payload1 = {"path": ".well-known/agent-card.json", "method": "GET"}
     id_, message_id = t._extract_message_payload_ids(payload1)
     assert id_ is None
     assert message_id is None
