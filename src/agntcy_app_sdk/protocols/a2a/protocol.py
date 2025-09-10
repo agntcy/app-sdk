@@ -203,6 +203,7 @@ class A2AProtocol(BaseAgentProtocol):
             recipients: List[str] | None = None,
             broadcast_topic: str = None,
             timeout: float = 30.0,
+            to_group: bool = False,
         ) -> List[SendMessageResponse]:
             """
             Broadcast a request using the provided transport.
@@ -218,10 +219,11 @@ class A2AProtocol(BaseAgentProtocol):
                 broadcast_topic = topic
 
             try:
+                resp_mode = ResponseMode.GROUP if to_group else ResponseMode.COLLECT_ALL
                 responses = await transport.request(
                     broadcast_topic,
                     msg,
-                    response_mode=ResponseMode.COLLECT_ALL,
+                    response_mode=resp_mode,
                     recipients=recipients,
                     timeout=timeout,
                 )
