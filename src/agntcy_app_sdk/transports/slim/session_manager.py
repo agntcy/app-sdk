@@ -42,12 +42,17 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         # check if we already have a request-reply session
-        session_key = "RequestReply"
-
-        with self._lock:
-            if session_key in self._sessions:
-                logger.info(f"Reusing existing session: {session_key}")
-                return session_key, self._sessions[session_key]
+        for session_id, (session, q) in self._slim.sessions.items():
+            try:
+                conf = await self._slim.get_session_config(session_id)
+                # compare the type of conf to PySessionConfiguration.FireAndForget
+                if isinstance(conf, PySessionConfiguration.FireAndForget):
+                    return session_id, session
+            except Exception as e:
+                logger.warning(
+                    f"Error retrieving SLIM session config for {session_id}: {e}"
+                )
+                continue
 
         with self._lock:
             session = await self._slim.create_session(
@@ -58,9 +63,7 @@ class SessionManager:
                     mls_enabled=mls_enabled,
                 )
             )
-            session_key = "RequestReply"
-            self._sessions[session_key] = session
-            return session_key, session
+            return session.id, session
 
     async def group_broadcast_session(
         self,
