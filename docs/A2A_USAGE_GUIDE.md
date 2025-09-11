@@ -120,7 +120,7 @@ async def main():
         agent_card=agent_card, http_handler=request_handler
     )
 
-    transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
+    transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name="")
     bridge = factory.create_bridge(server, transport=transport)
     await bridge.start(blocking=True)
 
@@ -147,7 +147,7 @@ from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from weather_agent import agent_card
 
 factory = AgntcyFactory()
-transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
+transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name="")
 
 async def main():
     # create an app-sdk factory to create the transport and bridge

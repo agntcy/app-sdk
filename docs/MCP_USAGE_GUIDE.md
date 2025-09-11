@@ -56,7 +56,7 @@ async def get_forecast(location: str) -> str:
 factory = AgntcyFactory()
 
 # create an Agntcy factory transport instance
-transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
+transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name="")
 # transport = factory.create_transport("NATS", endpoint="localhost:4222")
 
 async def main():
@@ -75,7 +75,7 @@ from agntcy_app_sdk.factory import AgntcyFactory
 import asyncio
 
 factory = AgntcyFactory()
-transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
+transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name="")
 # transport = factory.create_transport("NATS", endpoint="localhost:4222")
 
 async def main():
@@ -183,7 +183,7 @@ async def main():
     # Create the transport instance
     transport_type = "SLIM"  # Replace with "NATS" if using NATS transport
     endpoint = "http://localhost:46357"  # Replace with your transport endpoint
-    transport = factory.create_transport(transport_type, endpoint=endpoint)
+    transport = factory.create_transport(transport_type, endpoint=endpoint, name="")
     print(f"[setup] Transport created: {transport_type} | Endpoint: {endpoint}")
 
     # Create the bridge between MCP and transport
@@ -221,7 +221,7 @@ import asyncio
 
 async def main():
     protocol = FastMCPProtocol()
-    slim_transport = AgntcyFactory().create_transport("SLIM", endpoint="http://localhost:46357")
+    slim_transport = AgntcyFactory().create_transport("SLIM", endpoint="http://localhost:46357", name="")
 
     # Create a FastMCP client
     client = await protocol.create_client(
