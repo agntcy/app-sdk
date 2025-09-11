@@ -4,12 +4,19 @@
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils import new_agent_text_message
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class HelloWorldAgent:
     """Hello World Agent."""
 
-    async def invoke(self) -> str:
+    async def invoke(self, context: RequestContext) -> str:
+        prompt = context.get_user_input()
+        if prompt == "end_chat":
+            return "_end_chat_"
         return "Hello World"
 
 
@@ -24,7 +31,7 @@ class HelloWorldAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
-        result = await self.agent.invoke()
+        result = await self.agent.invoke(context)
         await event_queue.enqueue_event(new_agent_text_message(result))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:

@@ -384,6 +384,9 @@ class SLIMTransport(BaseTransport):
             raise ValueError("SLIM client is not set, please call setup() first.")
 
         logger.debug(f"Publishing to topic: {channel} for group invitees")
+        print(
+            f"[SLIMTransport] Requesting group response with end_message: {end_message}"
+        )
 
         _, session_info = await self._session_manager.group_broadcast_session(
             channel, invitees
@@ -403,9 +406,14 @@ class SLIMTransport(BaseTransport):
             responses = []
             while True:
                 try:
+                    print(
+                        f"[SLIMTransport] Waiting for message on session: {session_info.id}"
+                    )
                     _, msg = await self._slim.receive(session=session_info.id)
                     msg = Message.deserialize(msg)
-                    if end_message in msg.payload:
+                    print(f"[SLIMTransport] Received group message: {msg.payload}")
+                    print(f"[SLIMTransport] end_message: {end_message}")
+                    if end_message in str(msg.payload):
                         logger.debug("Received end message, stopping collection.")
                         break
                     responses.append(msg)
@@ -512,11 +520,14 @@ class SLIMTransport(BaseTransport):
         try:
             payload = output.serialize()
 
+            print(f"[SLIMTransport] Responding to message on session: {session.id}")
+            print(f"[SLIMTransport] Original message headers: {original_msg.headers}")
+
             respond_to_source = (
                 original_msg.headers.get("respond-to-source", "false").lower() == "true"
             )
             respond_to_group = (
-                original_msg.headers.get("respond_to_group", "false").lower() == "true"
+                original_msg.headers.get("respond-to-group", "false").lower() == "true"
             )
 
             if respond_to_source:
@@ -526,7 +537,7 @@ class SLIMTransport(BaseTransport):
                 await self._slim.publish(session, payload, session.destination_name)
                 logger.debug(f"Response sent to group: {session.destination_name}")
             else:
-                logger.debug("No response required based on message headers")
+                logger.warning("No response required based on message headers")
 
         except Exception as e:
             logger.error(f"Error handling response: {e}")
