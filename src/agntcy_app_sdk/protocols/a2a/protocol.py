@@ -24,7 +24,9 @@ configure_logging()
 logger = get_logger(__name__)
 
 
-async def get_client_from_agent_card_url(httpx_client: httpx.AsyncClient, base_url: str,
+async def get_client_from_agent_card_url(
+    httpx_client: httpx.AsyncClient,
+    base_url: str,
     http_kwargs: dict[str, Any] | None = None,
 ) -> A2AClient:
     """
@@ -33,20 +35,25 @@ async def get_client_from_agent_card_url(httpx_client: httpx.AsyncClient, base_u
     """
     try:
         agent_card: AgentCard = await A2ACardResolver(
-            httpx_client, base_url=base_url,
+            httpx_client,
+            base_url=base_url,
             agent_card_path=AGENT_CARD_WELL_KNOWN_PATH,
         ).get_agent_card(http_kwargs=http_kwargs)
     except Exception as e:
-        logger.info(f"Failed to get client from agent card url with v3 path, "
-                    f"falling back to v2 path: {e}")
+        logger.info(
+            f"Failed to get client from agent card url with v3 path, "
+            f"falling back to v2 path: {e}"
+        )
         try:
-            agent_card: AgentCard = await (A2ACardResolver(
-                httpx_client, base_url=base_url,
+            agent_card: AgentCard = await A2ACardResolver(
+                httpx_client,
+                base_url=base_url,
                 agent_card_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
-            ).get_agent_card(http_kwargs=http_kwargs))
+            ).get_agent_card(http_kwargs=http_kwargs)
         except Exception as e:
-            logger.error(f"Failed to get client from agent card url with v2 "
-                         f"path: {e}")
+            logger.error(
+                f"Failed to get client from agent card url with v2 " f"path: {e}"
+            )
             raise e
 
     return A2AClient(httpx_client=httpx_client, agent_card=agent_card)
@@ -77,22 +84,28 @@ class A2AProtocol(BaseAgentProtocol):
         try:
             request = Message(
                 type="A2ARequest",
-                payload=json.dumps({"path": AGENT_CARD_WELL_KNOWN_PATH, "method": method}),
+                payload=json.dumps(
+                    {"path": AGENT_CARD_WELL_KNOWN_PATH, "method": method}
+                ),
                 route_path=AGENT_CARD_WELL_KNOWN_PATH,
-                method=method
+                method=method,
             )
             response = await transport.request(topic, request, ResponseMode.FIRST)
 
             response.payload = json.loads(response.payload.decode("utf-8"))
             card = AgentCard.model_validate(response.payload)
         except Exception as e:
-            logger.info(f"A2A v3 path failed or invalid payload, falling back to v2: {e}")
+            logger.info(
+                f"A2A v3 path failed or invalid payload, falling back to v2: {e}"
+            )
 
             request = Message(
                 type="A2ARequest",
-                payload=json.dumps({"path": PREV_AGENT_CARD_WELL_KNOWN_PATH, "method": method}),
+                payload=json.dumps(
+                    {"path": PREV_AGENT_CARD_WELL_KNOWN_PATH, "method": method}
+                ),
                 route_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
-                method=method
+                method=method,
             )
             response = await transport.request(topic, request, ResponseMode.FIRST)
 
@@ -203,7 +216,8 @@ class A2AProtocol(BaseAgentProtocol):
             recipients: List[str] | None = None,
             broadcast_topic: str = None,
             timeout: float = 30.0,
-            to_group: bool = False,
+            group_chat: bool = False,
+            end_message: str = "done",
         ) -> List[SendMessageResponse]:
             """
             Broadcast a request using the provided transport.
@@ -219,12 +233,15 @@ class A2AProtocol(BaseAgentProtocol):
                 broadcast_topic = topic
 
             try:
-                resp_mode = ResponseMode.GROUP if to_group else ResponseMode.COLLECT_ALL
+                resp_mode = (
+                    ResponseMode.GROUP if group_chat else ResponseMode.COLLECT_ALL
+                )
                 responses = await transport.request(
                     broadcast_topic,
                     msg,
                     response_mode=resp_mode,
                     recipients=recipients,
+                    end_message=end_message if group_chat else None,
                     timeout=timeout,
                 )
             except Exception as e:

@@ -296,14 +296,43 @@ class SLIMTransport(BaseTransport):
             return []
 
     async def _request_group(
-        self, remote_name: PyName, message: Message, timeout: float = 30.0
+        self,
+        remote_name: PyName,
+        message: Message,
+        recipients: List[str] = None,
+        end_message: str = "done",
+        timeout: float = 60.0,
     ) -> List[Message]:
         if not self._slim:
             logger.warning("SLIM client is not initialized, calling setup() ...")
             await self.setup()
 
+        if not recipients:
+            raise ValueError(
+                "recipients list must be provided for SLIM COLLECT_ALL mode."
+            )
+
         logger.debug(f"Requesting group response from topic: {remote_name}")
-        raise NotImplementedError("Group request is not yet implemented.")
+
+        # convert recipients to PyName objects
+        invitees = [self.build_pyname(recipient) for recipient in recipients]
+
+        try:
+            responses = await asyncio.wait_for(
+                self._collect_until_done(
+                    channel=remote_name,
+                    message=message,
+                    invitees=invitees,
+                    end_message=end_message,
+                ),
+                timeout=timeout,
+            )
+            return responses
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
+            )
+            return []
 
     async def _collect_all(
         self,
@@ -314,9 +343,7 @@ class SLIMTransport(BaseTransport):
         if not self._slim:
             raise ValueError("SLIM client is not set, please call setup() first.")
 
-        import uuid
-
-        logger.info(f"Publishing to topic: {channel} - {uuid.uuid4()}")
+        logger.debug(f"Publishing to topic: {channel} for all invitees")
 
         _, session_info = await self._session_manager.group_broadcast_session(
             channel, invitees
@@ -337,6 +364,50 @@ class SLIMTransport(BaseTransport):
                 try:
                     _, msg = await self._slim.receive(session=session_info.id)
                     msg = Message.deserialize(msg)
+                    responses.append(msg)
+                except Exception as e:
+                    logger.error(
+                        f"Error receiving message on session {session_info.id}: {e}"
+                    )
+                    continue
+
+            return responses
+
+    async def _collect_until_done(
+        self,
+        channel: PyName,
+        message: Message,
+        invitees: List[PyName],
+        end_message: str = "done",
+    ) -> List[Message]:
+        if not self._slim:
+            raise ValueError("SLIM client is not set, please call setup() first.")
+
+        logger.debug(f"Publishing to topic: {channel} for group invitees")
+
+        _, session_info = await self._session_manager.group_broadcast_session(
+            channel, invitees
+        )
+
+        if not message.headers:
+            message.headers = {}
+
+        # Signal to the receiver that they should respond to the group
+        message.headers["respond-to-group"] = "true"
+
+        async with self._slim:
+            # initiate the group broadcast
+            await self._slim.publish(session_info, message.serialize(), channel)
+
+            # wait for responses from invitees until we receive the end_message
+            responses = []
+            while True:
+                try:
+                    _, msg = await self._slim.receive(session=session_info.id)
+                    msg = Message.deserialize(msg)
+                    if end_message in msg.payload:
+                        logger.debug("Received end message, stopping collection.")
+                        break
                     responses.append(msg)
                 except Exception as e:
                     logger.error(
