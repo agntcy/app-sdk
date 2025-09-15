@@ -245,7 +245,7 @@ class SLIMTransport(BaseTransport):
             if not message.headers:
                 message.headers = {}
 
-            message.headers["respond-to-source"] = "true"
+            message.headers["x-respond-to-source"] = "true"
 
             try:
                 _, reply = await self._slim.request_reply(
@@ -361,7 +361,7 @@ class SLIMTransport(BaseTransport):
             message.headers = {}
 
         # Signal to the receiver that we expect a direct response from each invitee
-        message.headers["respond-to-source"] = "true"
+        message.headers["x-respond-to-source"] = "true"
 
         async with self._slim:
             await self._slim.publish(session_info, message.serialize(), channel)
@@ -399,7 +399,9 @@ class SLIMTransport(BaseTransport):
             message.headers = {}
 
         # Signal to the receiver that they should respond to the group
-        message.headers["respond-to-group"] = "true"
+        message.headers["x-respond-to-group"] = "true"
+        # Optionally include an end message to signal to receivers they can close the session
+        message.headers["x-session-end-message"] = end_message
 
         async with self._slim:
             _, session_info = await self._session_manager.group_broadcast_session(
@@ -418,12 +420,12 @@ class SLIMTransport(BaseTransport):
                 try:
                     _, msg = await self._slim.receive(session=session_info.id)
                     msg = Message.deserialize(msg)
-                    print(f"[SLIMTransport] Received group message: {msg}")
                     responses.append(msg)
 
                     # check for end message to stop collection
                     if end_message in str(msg.payload):
                         logger.info("Received end message, stopping collection.")
+                        await self._session_manager.close_session(session_info.id)
                         break
                 except Exception as e:
                     logger.error(
@@ -431,9 +433,6 @@ class SLIMTransport(BaseTransport):
                     )
                     continue
 
-            # TODO: handle session cleanup, currently servers session will not
-            # terminate regardless of whether we close it on the client here
-            # await self._session_manager.close_session(session_info.id)
             return responses
 
     async def subscribe(self, topic: str, org=None, namespace=None) -> None:
@@ -488,7 +487,11 @@ class SLIMTransport(BaseTransport):
             while not self._shutdown_event.is_set():
                 try:
                     session, msg = await self._slim.receive(session=session_id)
-                    await self._process_received_message(session, msg)
+                    end_session = await self._process_received_message(session, msg)
+                    if end_session:
+                        logger.info(f"Ending session {session_id} as requested")
+                        await self._session_manager.close_session(session.id)
+                        break
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -500,21 +503,21 @@ class SLIMTransport(BaseTransport):
             logger.info(f"Session {session_id} handler cancelled")
             raise
 
-    async def _process_received_message(self, session, msg) -> None:
+    async def _process_received_message(self, session, msg) -> bool:
         """Process a single received message and handle response logic."""
-        # Check if we should receive messages for this destination
-        if not self.can_receive(session.destination_name):
-            logger.debug(
-                f"Filtering out message for destination: {session.destination_name}"
-            )
-            return
-
         # Deserialize the message
         try:
             deserialized_msg = Message.deserialize(msg)
         except Exception as e:
             logger.error(f"Failed to deserialize message: {e}")
-            return
+            return False
+
+        end_msg = deserialized_msg.headers.get("x-session-end-message", "")
+        if end_msg != "" and end_msg in str(deserialized_msg.payload):
+            logger.info(
+                "Received end session message, will close session after handling."
+            )
+            return True  # Signal to end the session
 
         # Call the callback function
         try:
@@ -524,36 +527,43 @@ class SLIMTransport(BaseTransport):
                 output = self._callback(deserialized_msg)
         except Exception as e:
             logger.error(f"Error in callback function: {e}")
-            return
+            return False
 
         if output is None:
             logger.info("Received empty output from callback, skipping response.")
-            return
+            return False
 
         # Handle response logic
         await self._handle_response(session, deserialized_msg, output)
+        return False
 
     async def _handle_response(self, session, original_msg, output: Message) -> None:
         """Handle response publishing based on message headers."""
         try:
             respond_to_source = (
-                original_msg.headers.get("respond-to-source", "false").lower() == "true"
+                original_msg.headers.get("x-respond-to-source", "false").lower()
+                == "true"
             )
             respond_to_group = (
-                original_msg.headers.get("respond-to-group", "false").lower() == "true"
+                original_msg.headers.get("x-respond-to-group", "false").lower()
+                == "true"
             )
 
             if not output.headers:
                 output.headers = {}
 
             # add the response type headers from the original message to the output message if not already present
-            if "respond-to-source" not in output.headers:
-                output.headers["respond-to-source"] = original_msg.headers.get(
-                    "respond-to-source", "false"
+            if "x-respond-to-source" not in output.headers:
+                output.headers["x-respond-to-source"] = original_msg.headers.get(
+                    "x-respond-to-source", "false"
                 )
-            if "respond-to-group" not in output.headers:
-                output.headers["respond-to-group"] = original_msg.headers.get(
-                    "respond-to-group", "false"
+            if "x-respond-to-group" not in output.headers:
+                output.headers["x-respond-to-group"] = original_msg.headers.get(
+                    "x-respond-to-group", "false"
+                )
+            if "x-session-end-message" not in output.headers:
+                output.headers["x-session-end-message"] = original_msg.headers.get(
+                    "x-session-end-message", ""
                 )
 
             payload = output.serialize()

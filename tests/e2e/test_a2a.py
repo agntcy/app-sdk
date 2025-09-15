@@ -207,7 +207,7 @@ async def test_groupchat(run_a2a_server, transport):
     endpoint = TRANSPORT_CONFIGS[transport]
 
     print(
-        f"\n--- Starting test: test_broadcast | Transport: {transport} | Endpoint: {endpoint} ---"
+        f"\n--- Starting test: test_groupchat | Transport: {transport} | Endpoint: {endpoint} ---"
     )
 
     # Create factory and transport
@@ -249,7 +249,7 @@ async def test_groupchat(run_a2a_server, transport):
 
     responses = await client.broadcast_message(
         request,
-        broadcast_topic="zoo",
+        broadcast_topic="zoozoo",
         recipients=[
             "default/default/foo",
             "default/default/bar",

@@ -88,7 +88,7 @@ from agntcy_app_sdk.factory import AgntcyFactory
 # Create factory and transport
 factory = AgntcyFactory()
 transport_instance = factory.create_transport(
-    transport="SLIM", endpoint="http://localhost:46357"
+    transport="SLIM", endpoint="http://localhost:46357", name="org/namespace/agent-foo"
 )
 
 # Create MCP client

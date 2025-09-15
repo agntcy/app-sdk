@@ -24,6 +24,8 @@ class HelloWorldAgent:
             # add a random sleep so we dont get a flood of messages
             chatter_sleep = random.uniform(0.5, 3.0)
             await asyncio.sleep(chatter_sleep)
+
+            # immediately return the DELIVERED message to trigger end_message
             return (
                 "DELIVERED by "
                 + self.name
