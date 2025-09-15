@@ -4,6 +4,7 @@
 from typing import Optional, Callable, List, Dict
 import os
 import asyncio
+from uuid import uuid4
 import inspect
 import datetime
 import slim_bindings
@@ -401,7 +402,8 @@ class SLIMTransport(BaseTransport):
         # Signal to the receiver that they should respond to the group
         message.headers["x-respond-to-group"] = "true"
         # Optionally include an end message to signal to receivers they can close the session
-        message.headers["x-session-end-message"] = end_message
+        end_signal = uuid4().hex
+        message.headers["x-session-end-message"] = end_signal
 
         async with self._slim:
             _, session_info = await self._session_manager.group_broadcast_session(
@@ -425,13 +427,21 @@ class SLIMTransport(BaseTransport):
                     # check for end message to stop collection
                     if end_message in str(msg.payload):
                         logger.info("Received end message, stopping collection.")
-                        await self._session_manager.close_session(session_info.id)
                         break
                 except Exception as e:
                     logger.error(
                         f"Error receiving message on session {session_info.id}: {e}"
                     )
                     continue
+
+            # end the group chat by sending the end message
+            end_msg = Message(
+                type="text/plain",
+                headers={"x-session-end-message": end_signal},
+                payload=end_signal,
+            )
+            await self._slim.publish(session_info, end_msg.serialize(), channel)
+            await self._session_manager.close_session(session_info.id)
 
             return responses
 
@@ -514,9 +524,7 @@ class SLIMTransport(BaseTransport):
 
         end_msg = deserialized_msg.headers.get("x-session-end-message", "")
         if end_msg != "" and end_msg in str(deserialized_msg.payload):
-            logger.info(
-                "Received end session message, will close session after handling."
-            )
+            logger.info(f"Received end message {end_msg}, closing session {session.id}")
             return True  # Signal to end the session
 
         # Call the callback function
