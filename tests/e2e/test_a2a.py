@@ -219,17 +219,9 @@ async def test_groupchat(run_a2a_server, transport):
 
     # Start the mock/test server
     print("[setup] Launching test server...")
-    for name in [
-        "default/default/agent1",
-        # "default/default/agent2",
-        # "default/default/agent3",
-    ]:
-        run_a2a_server(transport, endpoint, name=name, topic="broadcast")
-
-    await asyncio.sleep(4)  # Give the server a moment to start
 
     if transport_instance.type() == "SLIM":
-        client_handshake_topic = "default/default/agent1"
+        client_handshake_topic = "default/default/foo"
     else:
         client_handshake_topic = "broadcast"
 
@@ -247,7 +239,7 @@ async def test_groupchat(run_a2a_server, transport):
     send_message_payload: dict[str, Any] = {
         "message": {
             "role": "user",
-            "parts": [{"type": "text", "text": "end_chat"}],
+            "parts": [{"type": "text", "text": "This is a groupchat message"}],
             "messageId": "1234",
         },
     }
@@ -257,31 +249,18 @@ async def test_groupchat(run_a2a_server, transport):
 
     responses = await client.broadcast_message(
         request,
-        broadcast_topic="broadcast",
+        broadcast_topic="zoo",
         recipients=[
-            "default/default/agent1",
-            # "default/default/agent2",
-            # "default/default/agent3",
+            "default/default/foo",
+            "default/default/bar",
         ],
         group_chat=True,
-        end_message="end_chat",
+        end_message="DELIVERED",
+        timeout=30,
     )
 
     print(f"[debug] Received {len(responses)} responses from group chat")
     print(f"[debug] Group chat responses: {responses}")
-
-    '''print(f"[debug] Received {len(responses)} responses from broadcast")
-    print(f"[debug] Broadcast responses: {responses}")
-    assert len(responses) == 3, "Did not receive expected number of broadcast responses"'''
-
-    # test a broadcast timeout
-    '''responses = await client.broadcast_message(
-        request,
-        recipients=["agent1", "agent2", "agent3"],
-        timeout=0.001,  # Set a short timeout to test timeout handling
-    )
-
-    assert len(responses) == 0, "Broadcast should have timed out"'''
 
     if transport_instance:
         print("[teardown] Closing transport...")

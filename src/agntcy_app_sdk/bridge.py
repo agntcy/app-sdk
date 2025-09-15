@@ -66,22 +66,17 @@ class MessageBridge:
     async def _process_message(self, message: Message):
         """Process an incoming message through the handler and send response."""
 
-        try:
-            # Handle the request - check if handler is async or sync
-            if inspect.iscoroutinefunction(self.handler):
-                response = await self.handler(message)
+        if inspect.iscoroutinefunction(self.handler):
+            response = await self.handler(message)
+        else:
+            result = self.handler(message)
+            # If the result is a coroutine, await it
+            if inspect.iscoroutine(result):
+                response = await result
             else:
-                result = self.handler(message)
-                # If the result is a coroutine, await it
-                if inspect.iscoroutine(result):
-                    response = await result
-                else:
-                    response = result
+                response = result
 
-            if not response:
-                logger.warning("Handler returned no response for message.")
+        if not response:
+            logger.warning("Handler returned no response for message.")
 
-            return response
-
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
+        return response

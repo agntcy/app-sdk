@@ -42,12 +42,17 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         # check if we already have a request-reply session
-        session_key = "RequestReply"
-
-        with self._lock:
-            if session_key in self._sessions:
-                logger.info(f"Reusing existing session: {session_key}")
-                return session_key, self._sessions[session_key]
+        for session_id, (session, q) in self._slim.sessions.items():
+            try:
+                conf = await self._slim.get_session_config(session_id)
+                # compare the type of conf to PySessionConfiguration.FireAndForget
+                if isinstance(conf, PySessionConfiguration.FireAndForget):
+                    return session_id, session
+            except Exception as e:
+                logger.warning(
+                    f"Error retrieving SLIM session config for {session_id}: {e}"
+                )
+                continue
 
         with self._lock:
             session = await self._slim.create_session(
@@ -58,9 +63,7 @@ class SessionManager:
                     mls_enabled=mls_enabled,
                 )
             )
-            session_key = "RequestReply"
-            self._sessions[session_key] = session
-            return session_key, session
+            return session.id, session
 
     async def group_broadcast_session(
         self,
@@ -77,7 +80,7 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         # check if we already have a group broadcast session for this channel and invitees
-        session_key = f"GroupChannel:{channel}:" + ",".join(
+        session_key = f"PySessionConfiguration.Streaming:{channel}:" + ",".join(
             [str(invitee) for invitee in invitees]
         )
         with self._lock:
@@ -99,6 +102,7 @@ class SessionManager:
             )
 
             for invitee in invitees:
+                logger.info(f"Inviting {invitee} to session {session_info.id}")
                 await self._slim.set_route(invitee)
                 await self._slim.invite(session_info, invitee)
 
@@ -106,13 +110,30 @@ class SessionManager:
             self._sessions[session_key] = session_info
             return session_key, session_info
 
-    def close_session(self, session_key: str):
+    async def close_session(self, session_id: int):
         """
         Close and remove a session by its key.
         """
-        session = self._sessions.pop(session_key, None)
-        if session:
-            logger.info(f"Closing session: {session_key}")
+        if not self._slim:
+            raise ValueError("SLIM client is not set")
+
+        try:
+            await self._slim.delete_session(session_id)
+            logger.debug(f"Closed session: {session_id}")
+
+            with self._lock:
+                # Remove session from the manager's dictionary
+                session_key = None
+                for key, sess in self._sessions.items():
+                    if sess.id == session_id:
+                        session_key = key
+                        break
+
+                if session_key:
+                    del self._sessions[session_key]
+        except Exception as e:
+            logger.warning(f"Error closing SLIM session {session_id}: {e}")
+            return
 
     def session_details(self, session_key: str):
         """

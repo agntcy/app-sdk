@@ -17,8 +17,6 @@ def split_id(id):
     except ValueError as e:
         raise e
 
-    print(f"split_id: {id} -> {organization}, {namespace}, {app}")
-
     return slim_bindings.PyName(organization, namespace, app)
 
 

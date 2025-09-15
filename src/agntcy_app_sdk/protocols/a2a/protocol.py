@@ -11,8 +11,13 @@ import os
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH
 from a2a.server.apps import A2AStarletteApplication
-from a2a.types import AgentCard, SendMessageRequest, SendMessageResponse
-
+from a2a.types import (
+    AgentCard,
+    SendMessageRequest,
+    SendMessageResponse,
+    JSONRPCSuccessResponse,
+    MessageSendParams,
+)
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.protocols.message import Message
@@ -241,7 +246,7 @@ class A2AProtocol(BaseAgentProtocol):
                     msg,
                     response_mode=resp_mode,
                     recipients=recipients,
-                    end_message=end_message if group_chat else None,
+                    end_message=end_message,
                     timeout=timeout,
                 )
             except Exception as e:
@@ -323,6 +328,19 @@ class A2AProtocol(BaseAgentProtocol):
             else f"/{message.route_path}"
         )
         method = message.method
+
+        # check if the body is a JSONRPCSuccessResponse, and if so, convert it to a SendMessageRequest
+        try:
+            inner = JSONRPCSuccessResponse.model_validate_json(body)
+            msg_params = {"message": inner.result}
+            request = SendMessageRequest(
+                id=str(uuid4()), params=MessageSendParams(**msg_params)
+            )
+            body = json.dumps(
+                request.model_dump(mode="json", exclude_none=True)
+            ).encode("utf-8")
+        except Exception:
+            pass
 
         headers = []
         for key, value in message.headers.items():
