@@ -16,8 +16,8 @@ class Message:
         type: str,
         payload: bytes,
         reply_to: Optional[str] = None,
-        route_path: Optional[str] = None,
-        method: Optional[str] = None,
+        route_path: Optional[str] = "/",
+        method: Optional[str] = "POST",
         headers: Optional[dict] = None,
         status_code: Optional[int] = None,
     ):

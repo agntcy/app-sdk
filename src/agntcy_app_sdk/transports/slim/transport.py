@@ -1,9 +1,10 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, Callable, List, Dict
+from typing import Optional, Callable, List
 import os
 import asyncio
+from uuid import uuid4
 import inspect
 import datetime
 import slim_bindings
@@ -76,16 +77,12 @@ class SLIMTransport(BaseTransport):
         self._bundle = bundle
         self._audience = audience
 
-        self.enable_opentelemetry = False
-
-        # keep track of topics we are "subscribed" to, will be used to filter incoming
-        # messages in the receive loop
-        self.active_subscription_topics: Dict[str, PyName] = {}
-
         self._session_manager = SessionManager()
+        self._tasks: set[asyncio.Task] = set()
+        self._listener_task: asyncio.Task | None = None
+        self._shutdown_event = asyncio.Event()
 
-        self.session_ids = {}
-
+        self.enable_opentelemetry = False
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
             from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
@@ -140,7 +137,7 @@ class SLIMTransport(BaseTransport):
             return
 
         # handle slim server disconnection
-        self._slim.disconnect(self._endpoint)
+        await self._slim.disconnect(self._endpoint)
 
     def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
@@ -154,7 +151,8 @@ class SLIMTransport(BaseTransport):
             return
 
         await self._slim_connect()
-        await self._receive()
+        # await self._receive()
+        self._listener_task = asyncio.create_task(self._listen_for_sessions())
 
     def build_pyname(
         self, topic: str, org: Optional[str] = None, namespace: Optional[str] = None
@@ -223,7 +221,11 @@ class SLIMTransport(BaseTransport):
                 raise ValueError(f"Unknown response mode: {response_mode}")
 
     async def _request_first(
-        self, remote_name: PyName, message: Message, timeout: float = 30.0
+        self,
+        remote_name: PyName,
+        message: Message,
+        timeout: float = 30.0,
+        **kwargs,
     ) -> None:
         if not self._slim:
             logger.warning("SLIM client is not initialized, calling setup() ...")
@@ -240,7 +242,7 @@ class SLIMTransport(BaseTransport):
             if not message.headers:
                 message.headers = {}
 
-            message.headers["respond-to-source"] = "true"
+            message.headers["x-respond-to-source"] = "true"
 
             try:
                 _, reply = await self._slim.request_reply(
@@ -254,6 +256,7 @@ class SLIMTransport(BaseTransport):
                 return None
 
             reply = Message.deserialize(reply)
+
             return reply
 
     async def _request_all(
@@ -262,6 +265,7 @@ class SLIMTransport(BaseTransport):
         message: Message,
         recipients: List[str] = None,
         timeout: Optional[float] = 30.0,
+        **kwargs,
     ) -> List[Message]:
         """
         Send a message to topic and wait for a response from all recipients
@@ -296,14 +300,44 @@ class SLIMTransport(BaseTransport):
             return []
 
     async def _request_group(
-        self, remote_name: PyName, message: Message, timeout: float = 30.0
+        self,
+        remote_name: PyName,
+        message: Message,
+        recipients: List[str] = None,
+        end_message: str = "done",
+        timeout: float = 60.0,
+        **kwargs,
     ) -> List[Message]:
         if not self._slim:
             logger.warning("SLIM client is not initialized, calling setup() ...")
             await self.setup()
 
+        if not recipients:
+            raise ValueError(
+                "recipients list must be provided for SLIM COLLECT_ALL mode."
+            )
+
         logger.debug(f"Requesting group response from topic: {remote_name}")
-        raise NotImplementedError("Group request is not yet implemented.")
+
+        # convert recipients to PyName objects
+        invitees = [self.build_pyname(recipient) for recipient in recipients]
+
+        try:
+            responses = await asyncio.wait_for(
+                self._collect_until_done(
+                    channel=remote_name,
+                    message=message,
+                    invitees=invitees,
+                    end_message=end_message,
+                ),
+                timeout=timeout,
+            )
+            return responses
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
+            )
+            return []
 
     async def _collect_all(
         self,
@@ -314,9 +348,7 @@ class SLIMTransport(BaseTransport):
         if not self._slim:
             raise ValueError("SLIM client is not set, please call setup() first.")
 
-        import uuid
-
-        logger.info(f"Publishing to topic: {channel} - {uuid.uuid4()}")
+        logger.debug(f"Publishing to topic: {channel} for all invitees")
 
         _, session_info = await self._session_manager.group_broadcast_session(
             channel, invitees
@@ -326,7 +358,7 @@ class SLIMTransport(BaseTransport):
             message.headers = {}
 
         # Signal to the receiver that we expect a direct response from each invitee
-        message.headers["respond-to-source"] = "true"
+        message.headers["x-respond-to-source"] = "true"
 
         async with self._slim:
             await self._slim.publish(session_info, message.serialize(), channel)
@@ -344,6 +376,64 @@ class SLIMTransport(BaseTransport):
                     )
                     continue
 
+            await self._session_manager.close_session(session_info)
+            return responses
+
+    async def _collect_until_done(
+        self,
+        channel: PyName,
+        message: Message,
+        invitees: List[PyName],
+        end_message: str = "done",
+    ) -> List[Message]:
+        if not self._slim:
+            raise ValueError("SLIM client is not set, please call setup() first.")
+
+        logger.debug(f"Publishing to topic: {channel} for group invitees")
+
+        if not message.headers:
+            message.headers = {}
+
+        # Signal to the receiver that they should respond to the group
+        message.headers["x-respond-to-group"] = "true"
+        # Optionally include an end message to signal to receivers they can close the session
+        end_signal = uuid4().hex
+        message.headers["x-session-end-message"] = end_signal
+
+        async with self._slim:
+            _, session_info = await self._session_manager.group_broadcast_session(
+                channel, invitees
+            )
+
+            # give the session a moment to be fully established on the slim dataplane
+            await asyncio.sleep(0.25)
+
+            # initiate the group broadcast
+            await self._slim.publish(session_info, message.serialize(), channel)
+
+            # wait for responses from invitees until we receive the end_message
+            responses = []
+            while True:
+                try:
+                    _, msg = await self._slim.receive(session=session_info.id)
+                    msg = Message.deserialize(msg)
+                    responses.append(msg)
+
+                    # check for end message to stop collection
+                    if end_message in str(msg.payload):
+                        logger.info("Received end message, stopping collection.")
+                        break
+                except Exception as e:
+                    logger.error(
+                        f"Error receiving message on session {session_info.id}: {e}"
+                    )
+                    continue
+
+            # end the group chat by sending the end message
+            await self._session_manager.close_session(
+                session_info, remote=channel, end_signal=end_signal
+            )
+
             return responses
 
     async def subscribe(self, topic: str, org=None, namespace=None) -> None:
@@ -351,73 +441,72 @@ class SLIMTransport(BaseTransport):
         Store the subscription information for a given topic, org, and namespace
         to be used for receive filtering.
         """
-        topic = self.sanitize_topic(topic)
-
-        sub_pyname = self.build_pyname(topic, org, namespace)
-        self.active_subscription_topics[sub_pyname.id] = sub_pyname
-
-    def can_receive(self, session_destination: PyName) -> bool:
-        """
-        Determine if the transport can receive messages for the given session destination.
-        """
-        for active_sub in self.active_subscription_topics:
-            logger.debug(
-                f"Checking if can receive: {active_sub} == {session_destination.id}"
-            )
-
-        return True
-
-    async def _receive(self) -> None:
-        """Main receive method that sets up the background session listener."""
-        if not self._slim:
-            logger.warning("SLIM client is not initialized, calling setup() ...")
-            await self.setup()
-
-        asyncio.create_task(self._listen_for_sessions())
+        logger.warning(
+            "SLIMTransport.subscribe is a no-op since SLIM does not require explicit subscriptions."
+        )
 
     async def _listen_for_sessions(self) -> None:
         """Background task that listens for new sessions and spawns handlers."""
-        async with self._slim:
-            while True:
-                try:
-                    session_info, _ = await self._slim.receive()
-                    # Spawn a new task to handle this session
-                    asyncio.create_task(self._handle_session_receive(session_info.id))
-                except Exception as e:
-                    logger.error(f"Error receiving session info: {e}")
-                    continue
+        try:
+            async with self._slim:
+                while not self._shutdown_event.is_set():
+                    try:
+                        session_info, _ = await self._slim.receive()
+                        logger.debug(
+                            f"Received new session: {session_info.id} - {session_info.destination_name}"
+                        )
+
+                        task = asyncio.create_task(
+                            self._handle_session_receive(session_info.id)
+                        )
+                        self._tasks.add(task)
+                        task.add_done_callback(self._tasks.discard)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error receiving session info: {e}")
+                        await asyncio.sleep(1)  # prevent busy loop
+        except asyncio.CancelledError:
+            logger.info("Listener cancelled")
+            raise
 
     async def _handle_session_receive(self, session_id: str) -> None:
         """Handle message receiving for a specific session."""
-        while True:
-            try:
-                session, msg = await self._slim.receive(session=session_id)
-            except Exception as e:
-                logger.error(f"Error receiving message on session {session_id}: {e}")
-                continue
+        try:
+            while not self._shutdown_event.is_set():
+                try:
+                    session, msg = await self._slim.receive(session=session_id)
+                    end_session = await self._process_received_message(session, msg)
+                    if end_session:
+                        logger.info(
+                            f"Ending session {session_id} as requested by client"
+                        )
+                        await self._session_manager.close_session(session)
+                        break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(
+                        f"Error receiving message on session {session_id}: {e}"
+                    )
+                    await asyncio.sleep(0.5)  # backoff to avoid spin
+        except asyncio.CancelledError:
+            logger.info(f"Session {session_id} handler cancelled")
+            raise
 
-            # Process the received message
-            await self._process_received_message(session, msg)
-
-    async def _process_received_message(self, session, msg) -> None:
+    async def _process_received_message(self, session, msg) -> bool:
         """Process a single received message and handle response logic."""
-        # Check if we should receive messages for this destination
-        if not self.can_receive(session.destination_name):
-            logger.debug(
-                f"Filtering out message for destination: {session.destination_name}"
-            )
-            return
-
-        if msg is None:
-            logger.debug("Received empty message, skipping.")
-            return
-
         # Deserialize the message
         try:
             deserialized_msg = Message.deserialize(msg)
         except Exception as e:
             logger.error(f"Failed to deserialize message: {e}")
-            return
+            return False
+
+        end_msg = deserialized_msg.headers.get("x-session-end-message", "")
+        if end_msg != "" and end_msg in str(deserialized_msg.payload):
+            logger.info(f"Received end message {end_msg}, closing session {session.id}")
+            return True  # Signal to end the session
 
         # Call the callback function
         try:
@@ -427,35 +516,57 @@ class SLIMTransport(BaseTransport):
                 output = self._callback(deserialized_msg)
         except Exception as e:
             logger.error(f"Error in callback function: {e}")
-            return
+            return False
 
         if output is None:
             logger.info("Received empty output from callback, skipping response.")
-            return
+            return False
 
         # Handle response logic
         await self._handle_response(session, deserialized_msg, output)
+        return False
 
-    async def _handle_response(self, session, original_msg, output) -> None:
+    async def _handle_response(self, session, original_msg, output: Message) -> None:
         """Handle response publishing based on message headers."""
         try:
-            payload = output.serialize()
-
             respond_to_source = (
-                original_msg.headers.get("respond-to-source", "false").lower() == "true"
+                original_msg.headers.get("x-respond-to-source", "false").lower()
+                == "true"
             )
             respond_to_group = (
-                original_msg.headers.get("respond_to_group", "false").lower() == "true"
+                original_msg.headers.get("x-respond-to-group", "false").lower()
+                == "true"
             )
 
+            if not output.headers:
+                output.headers = {}
+
+            # propagate relevant headers from the original message if not already set
+            if "x-respond-to-source" not in output.headers:
+                output.headers["x-respond-to-source"] = original_msg.headers.get(
+                    "x-respond-to-source", "false"
+                )
+            if "x-respond-to-group" not in output.headers:
+                output.headers["x-respond-to-group"] = original_msg.headers.get(
+                    "x-respond-to-group", "false"
+                )
+            if "x-session-end-message" not in output.headers:
+                output.headers["x-session-end-message"] = original_msg.headers.get(
+                    "x-session-end-message", ""
+                )
+
+            payload = output.serialize()
+
             if respond_to_source:
+                logger.debug(f"Responding to source on channel: {session.source_name}")
                 await self._slim.publish_to(session, payload)
-                logger.debug("Response sent to source")
             elif respond_to_group:
+                logger.debug(
+                    f"Responding to group on channel: {session.destination_name} with payload:\n {output}"
+                )
                 await self._slim.publish(session, payload, session.destination_name)
-                logger.debug(f"Response sent to group: {session.destination_name}")
             else:
-                logger.debug("No response required based on message headers")
+                logger.warning("No response required based on message headers")
 
         except Exception as e:
             logger.error(f"Error handling response: {e}")

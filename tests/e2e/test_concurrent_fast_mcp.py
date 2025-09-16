@@ -45,7 +45,9 @@ async def test_client(run_fast_mcp_server, transport):
     async def test_client_operations(user_id):
         print("[setup] Creating transport instance...")
         transport_instance = factory.create_transport(
-            transport=transport, endpoint=endpoint
+            transport=transport,
+            endpoint=endpoint,
+            name="default/default/fastmcp_client",
         )
 
         print(f"[test] Creating MCP client for user {user_id}...")

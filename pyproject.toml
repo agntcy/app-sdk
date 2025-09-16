@@ -1,6 +1,6 @@
 [project]
 name = "agntcy-app-sdk"
-version = "0.2.2"
+version = "0.2.3"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = ">=3.13,<4.0"

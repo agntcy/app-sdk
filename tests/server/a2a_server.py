@@ -56,7 +56,7 @@ async def main(
     )
 
     request_handler = DefaultRequestHandler(
-        agent_executor=HelloWorldAgentExecutor(),
+        agent_executor=HelloWorldAgentExecutor(name),
         task_store=InMemoryTaskStore(),
     )
 

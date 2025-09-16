@@ -1,6 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from typing import Dict
 import datetime
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
@@ -11,6 +12,7 @@ from slim_bindings import (
     PySessionConfiguration,
     PySessionDirection,
 )
+from agntcy_app_sdk.transports.transport import Message
 from threading import Lock
 
 configure_logging()
@@ -42,12 +44,17 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         # check if we already have a request-reply session
-        session_key = "RequestReply"
-
-        with self._lock:
-            if session_key in self._sessions:
-                logger.info(f"Reusing existing session: {session_key}")
-                return session_key, self._sessions[session_key]
+        for session_id, (session, q) in self._slim.sessions.items():
+            try:
+                conf = await self._slim.get_session_config(session_id)
+                # compare the type of conf to PySessionConfiguration.FireAndForget
+                if isinstance(conf, PySessionConfiguration.FireAndForget):
+                    return session_id, session
+            except Exception as e:
+                logger.warning(
+                    f"could not retrieve SLIM session config for {session_id}: {e}"
+                )
+                continue
 
         with self._lock:
             session = await self._slim.create_session(
@@ -58,9 +65,7 @@ class SessionManager:
                     mls_enabled=mls_enabled,
                 )
             )
-            session_key = "RequestReply"
-            self._sessions[session_key] = session
-            return session_key, session
+            return session.id, session
 
     async def group_broadcast_session(
         self,
@@ -77,7 +82,7 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         # check if we already have a group broadcast session for this channel and invitees
-        session_key = f"GroupChannel:{channel}:" + ",".join(
+        session_key = f"PySessionConfiguration.Streaming:{channel}:" + ",".join(
             [str(invitee) for invitee in invitees]
         )
         with self._lock:
@@ -85,7 +90,7 @@ class SessionManager:
                 logger.info(f"Reusing existing group broadcast session: {session_key}")
                 return session_key, self._sessions[session_key]
 
-        logger.info(f"Creating new group broadcast session: {session_key}")
+        logger.debug(f"Creating new group broadcast session: {session_key}")
         with self._lock:
             session_info = await self._slim.create_session(
                 PySessionConfiguration.Streaming(
@@ -99,6 +104,7 @@ class SessionManager:
             )
 
             for invitee in invitees:
+                logger.debug(f"Inviting {invitee} to session {session_info.id}")
                 await self._slim.set_route(invitee)
                 await self._slim.invite(session_info, invitee)
 
@@ -106,13 +112,53 @@ class SessionManager:
             self._sessions[session_key] = session_info
             return session_key, session_info
 
-    def close_session(self, session_key: str):
+    async def close_session(
+        self, session: PySessionInfo, remote: PyName = None, end_signal: str = None
+    ):
         """
         Close and remove a session by its key.
         """
-        session = self._sessions.pop(session_key, None)
-        if session:
-            logger.info(f"Closing session: {session_key}")
+        if not self._slim:
+            raise ValueError("SLIM client is not set")
+
+        try:
+            # send the end signal to the remote if provided
+            if remote is not None and end_signal is not None:
+                logger.info(f"Sending end signal '{end_signal}' to remote {remote}")
+
+                end_msg = Message(
+                    type="text/plain",
+                    headers={"x-session-end-message": end_signal},
+                    payload=end_signal,
+                )
+                await self._slim.publish(session, end_msg.serialize(), remote)
+                await asyncio.sleep(
+                    0.25
+                )  # give some time for the message to be sent before closing our side
+
+            await self._slim.delete_session(session.id)
+            logger.debug(f"Closed session: {session.id}")
+
+            # remove from local store
+            self._local_cache_cleanup(session.id)
+        except Exception as e:
+            logger.warning(f"Error closing SLIM session {session.id}: {e}")
+            return
+
+    def _local_cache_cleanup(self, session_id: int):
+        """
+        Perform local cleanup of a session without attempting to close it on the SLIM client.
+        """
+        with self._lock:
+            session_key = None
+            for key, sess in self._sessions.items():
+                if sess.id == session_id:
+                    session_key = key
+                    break
+
+            if session_key:
+                del self._sessions[session_key]
+                logger.debug(f"Locally cleaned up session: {session_id}")
 
     def session_details(self, session_key: str):
         """
