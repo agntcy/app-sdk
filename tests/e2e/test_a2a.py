@@ -202,6 +202,10 @@ async def test_groupchat(run_a2a_server, transport):
         pytest.skip(
             "Skipping A2A transport test as it is not applicable for group chat."
         )
+    if transport == "NATS":
+        pytest.skip(
+            "Skipping NATS transport test as it is not applicable for group chat."
+        )
 
     # Get the endpoint inside the test using the transport name as a key
     endpoint = TRANSPORT_CONFIGS[transport]
