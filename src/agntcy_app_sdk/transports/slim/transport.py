@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, Callable, List, Dict
+from typing import Optional, Callable, List
 import os
 import asyncio
 from uuid import uuid4
@@ -77,10 +77,6 @@ class SLIMTransport(BaseTransport):
         self._bundle = bundle
         self._audience = audience
 
-        # keep track of topics we are "subscribed" to, will be used to filter incoming
-        # messages in the receive loop
-        self.active_subscription_topics: Dict[str, PyName] = {}
-
         self._session_manager = SessionManager()
         self._tasks: set[asyncio.Task] = set()
         self._listener_task: asyncio.Task | None = None
@@ -141,7 +137,7 @@ class SLIMTransport(BaseTransport):
             return
 
         # handle slim server disconnection
-        self._slim.disconnect(self._endpoint)
+        await self._slim.disconnect(self._endpoint)
 
     def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
@@ -380,8 +376,7 @@ class SLIMTransport(BaseTransport):
                     )
                     continue
 
-            # TODO: consider keeping the session alive for future use since servers will not terminate regardless
-            # await self._session_manager.close_session(session_info.id)
+            await self._session_manager.close_session(session_info)
             return responses
 
     async def _collect_until_done(
@@ -435,13 +430,9 @@ class SLIMTransport(BaseTransport):
                     continue
 
             # end the group chat by sending the end message
-            end_msg = Message(
-                type="text/plain",
-                headers={"x-session-end-message": end_signal},
-                payload=end_signal,
+            await self._session_manager.close_session(
+                session_info, remote=channel, end_signal=end_signal
             )
-            await self._slim.publish(session_info, end_msg.serialize(), channel)
-            await self._session_manager.close_session(session_info.id)
 
             return responses
 
@@ -450,21 +441,9 @@ class SLIMTransport(BaseTransport):
         Store the subscription information for a given topic, org, and namespace
         to be used for receive filtering.
         """
-        topic = self.sanitize_topic(topic)
-
-        sub_pyname = self.build_pyname(topic, org, namespace)
-        self.active_subscription_topics[sub_pyname.id] = sub_pyname
-
-    def can_receive(self, session_destination: PyName) -> bool:
-        """
-        Determine if the transport can receive messages for the given session destination.
-        """
-        for active_sub in self.active_subscription_topics:
-            logger.debug(
-                f"Checking if can receive: {active_sub} == {session_destination.id}"
-            )
-
-        return True
+        logger.warning(
+            "SLIMTransport.subscribe is a no-op since SLIM does not require explicit subscriptions."
+        )
 
     async def _listen_for_sessions(self) -> None:
         """Background task that listens for new sessions and spawns handlers."""
@@ -499,8 +478,10 @@ class SLIMTransport(BaseTransport):
                     session, msg = await self._slim.receive(session=session_id)
                     end_session = await self._process_received_message(session, msg)
                     if end_session:
-                        logger.info(f"Ending session {session_id} as requested")
-                        await self._session_manager.close_session(session.id)
+                        logger.info(
+                            f"Ending session {session_id} as requested by client"
+                        )
+                        await self._session_manager.close_session(session)
                         break
                 except asyncio.CancelledError:
                     raise
@@ -560,7 +541,7 @@ class SLIMTransport(BaseTransport):
             if not output.headers:
                 output.headers = {}
 
-            # add the response type headers from the original message to the output message if not already present
+            # propagate relevant headers from the original message if not already set
             if "x-respond-to-source" not in output.headers:
                 output.headers["x-respond-to-source"] = original_msg.headers.get(
                     "x-respond-to-source", "false"
@@ -580,7 +561,7 @@ class SLIMTransport(BaseTransport):
                 logger.debug(f"Responding to source on channel: {session.source_name}")
                 await self._slim.publish_to(session, payload)
             elif respond_to_group:
-                logger.info(
+                logger.debug(
                     f"Responding to group on channel: {session.destination_name} with payload:\n {output}"
                 )
                 await self._slim.publish(session, payload, session.destination_name)

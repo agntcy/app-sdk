@@ -103,9 +103,12 @@ class NatsTransport(BaseTransport):
     async def close(self) -> None:
         """Close the NATS connection."""
         if self._nc:
-            await self._nc.drain()
-            await self._nc.close()
-            logger.info("NATS connection closed")
+            try:
+                await self._nc.drain()
+                await self._nc.close()
+                logger.info("NATS connection closed")
+            except Exception as e:
+                logger.error(f"Error closing NATS connection: {e}")
         else:
             logger.warning("No NATS connection to close")
 
@@ -191,6 +194,7 @@ class NatsTransport(BaseTransport):
         message: Message,
         recipients: List[str] = None,
         timeout: float = 30.0,
+        **kwargs,
     ) -> List[Message]:
         """
         Send a message to topic and wait for a response from all recipients

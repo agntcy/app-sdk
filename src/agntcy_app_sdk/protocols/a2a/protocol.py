@@ -222,7 +222,7 @@ class A2AProtocol(BaseAgentProtocol):
             broadcast_topic: str = None,
             timeout: float = 30.0,
             group_chat: bool = False,
-            end_message: str = "done",
+            end_message: str = "work-done",
         ) -> List[SendMessageResponse]:
             """
             Broadcast a request using the provided transport.
@@ -237,10 +237,10 @@ class A2AProtocol(BaseAgentProtocol):
             if not broadcast_topic:
                 broadcast_topic = topic
 
+            # determine response mode, either collect len(recipients) or group chat
+            resp_mode = ResponseMode.GROUP if group_chat else ResponseMode.COLLECT_ALL
+
             try:
-                resp_mode = (
-                    ResponseMode.GROUP if group_chat else ResponseMode.COLLECT_ALL
-                )
                 responses = await transport.request(
                     broadcast_topic,
                     msg,

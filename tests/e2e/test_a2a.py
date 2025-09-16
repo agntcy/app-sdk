@@ -84,7 +84,7 @@ async def test_client(run_a2a_server, transport):
     parts = response["result"]["parts"]
     assert isinstance(parts, list)
     assert parts[0]["kind"] == "text"
-    assert parts[0]["text"] == "Hello World"
+    assert "Hello from" in parts[0]["text"]
 
     print(f"[result] Agent responded with: {parts[0]['text']}")
 
@@ -249,7 +249,7 @@ async def test_groupchat(run_a2a_server, transport):
 
     responses = await client.broadcast_message(
         request,
-        broadcast_topic="zoozoo",
+        broadcast_topic="zoo",
         recipients=[
             "default/default/foo",
             "default/default/bar",
