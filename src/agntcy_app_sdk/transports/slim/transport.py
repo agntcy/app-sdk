@@ -572,6 +572,7 @@ class SLIMTransport(BaseTransport):
             msg = str(e)
             if "session not found" in msg:
                 # Silence benign "session not found" errors; they are transient SLIM-side errors.
+                # TODO: Revisit with SLIM team if this still exists in 0.5.0
                 logger.debug(f"Error handling response: {e}")
             else:
                 logger.error(f"Error handling response: {e}")

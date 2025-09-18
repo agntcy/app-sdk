@@ -51,7 +51,8 @@ class SessionManager:
                 if isinstance(conf, PySessionConfiguration.FireAndForget):
                     return session_id, session
             except Exception as e:
-                logger.warning(
+                # TODO: Revisit with SLIM team if this still exists in 0.5.0
+                logger.debug(
                     f"could not retrieve SLIM session config for {session_id}: {e}"
                 )
                 continue
