@@ -569,7 +569,13 @@ class SLIMTransport(BaseTransport):
                 logger.warning("No response required based on message headers")
 
         except Exception as e:
-            logger.error(f"Error handling response: {e}")
+            msg = str(e)
+            if "session not found" in msg:
+                # Silence benign "session not found" errors; they are transient SLIM-side errors.
+                # TODO: Revisit with SLIM team if this still exists in 0.5.0
+                logger.debug(f"Error handling response: {e}")
+            else:
+                logger.error(f"Error handling response: {e}")
 
     async def _slim_connect(
         self,
