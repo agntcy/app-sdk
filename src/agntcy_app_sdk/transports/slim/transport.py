@@ -137,7 +137,14 @@ class SLIMTransport(BaseTransport):
             return
 
         # handle slim server disconnection
-        await self._slim.disconnect(self._endpoint)
+        try:
+            await self._slim.disconnect(self._endpoint)
+        except Exception as e:
+            if "connection not found" in str(e).lower():
+                # Silence benign "connection not found" errors;
+                pass
+            else:
+                logger.error(f"Error disconnecting SLIM transport: {e}")
 
     def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""

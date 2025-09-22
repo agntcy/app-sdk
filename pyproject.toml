@@ -3,7 +3,7 @@ name = "agntcy-app-sdk"
 version = "0.2.5"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.12,<4.0"
 license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
