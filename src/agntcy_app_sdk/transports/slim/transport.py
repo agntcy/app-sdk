@@ -502,6 +502,8 @@ class SLIMTransport(BaseTransport):
                         logger.error(
                             f"Max retries exceeded for session {session_id}, closing: {e}"
                         )
+                        # also close the session
+                        await self._session_manager.close_session(session)
                         break
                     logger.warning(
                         f"Error receiving message on session {session_id} (attempt {consecutive_errors}/{max_retries}): {e}"
