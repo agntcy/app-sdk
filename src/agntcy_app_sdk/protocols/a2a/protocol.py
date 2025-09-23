@@ -394,18 +394,34 @@ class A2AProtocol(BaseAgentProtocol):
                     response_data["body"].extend(message["body"])
         print("self app data-",self._app)
         # Call the ASGI application with our scope, receive, and send
-        await self._app(scope, receive, send)
-
-        # Parse the body
-        body = bytes(response_data["body"])
         try:
-            body_obj = json.loads(body.decode("utf-8"))
-            payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            payload = body  # raw bytes
+            await self._app(scope, receive, send)
 
-        return Message(
-            type="A2AResponse",
-            payload=payload,
-            reply_to=message.reply_to,
-        )
+            # Parse the body
+            body = bytes(response_data["body"])
+            try:
+                body_obj = json.loads(body.decode("utf-8"))
+                payload = json.dumps(body_obj).encode("utf-8")  # re-encode as bytes
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                payload = body  # raw bytes
+
+            return Message(
+                type="A2AResponse",
+                payload=payload,
+                reply_to=message.reply_to,
+            )
+        except Exception as e:
+            # Create error response message when callback function throws an error
+            error_response = {
+                "error": "true",
+                "error_type": "callback_error",
+                "error_message": str(e),
+                "status": "error"
+            }
+            error_payload = json.dumps(error_response).encode("utf-8")
+            
+            return Message(
+                type="A2AResponse",
+                payload=error_payload,
+                reply_to=message.reply_to,
+            )
