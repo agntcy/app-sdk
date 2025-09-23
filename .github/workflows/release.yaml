@@ -1,13 +1,12 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
-
 ---
 name: sdk-release-python
 
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v*"          # Broad glob; strict semver enforced in validation step
   workflow_dispatch: # Allow manual triggering of the workflow
 
 concurrency:
@@ -15,8 +14,60 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  validate-release-tag:
+    name: Validate tag against main and pyproject version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch main
+        run: git fetch --quiet origin main
+
+      - name: Validate tag ancestry and version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "Not a tag push; exiting."
+            exit 1
+          fi
+
+          if [[ ! "${TAG_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag ${TAG_NAME} does not match vX.Y.Z pattern."
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "${COMMIT_SHA}" origin/main; then
+            echo "Tag commit ${COMMIT_SHA} is not reachable from origin/main."
+            exit 1
+          fi
+
+          FILE_VERSION=$(grep -E '^version *= *"' pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [[ -z "${FILE_VERSION}" ]]; then
+            echo "Failed to extract version from pyproject.toml."
+            exit 1
+          fi
+
+          TAG_VERSION="${TAG_NAME#v}"
+
+          echo "pyproject.toml version: ${FILE_VERSION}"
+          echo "Tag version: ${TAG_VERSION}"
+
+          if [[ "${FILE_VERSION}" != "${TAG_VERSION}" ]]; then
+            echo "Mismatch: tag v${TAG_VERSION} != pyproject.toml version ${FILE_VERSION}"
+            exit 1
+          fi
+
+          echo "Validation passed."
+
   build-sdk-wheel:
     name: SDK Python wheel
+    needs: validate-release-tag
+    if: needs.validate-release-tag.result == 'success'
     uses: ./.github/workflows/reusable-python-build-wheel.yaml
 
   pypi-publish:
@@ -29,7 +80,6 @@ jobs:
       (needs.build-sdk-wheel.result == 'skipped' || needs.build-sdk-wheel.result == 'success')
     environment: pypi
     permissions:
-      # IMPORTANT: this permission is mandatory for Trusted Publishing
       id-token: write
       contents: read
     steps:
