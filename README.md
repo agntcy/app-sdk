@@ -185,6 +185,27 @@ Run a single transport test for concurrent FastMCP:
 uv run pytest tests/e2e/test_concurrent_fast_mcp.py::test_client -s -k "SLIM"
 ```
 
+## PyPI Release Flow
+
+Publishing to PyPI is automated via GitHub Actions. To release a new version:
+
+1. Update the `version` field in `pyproject.toml` to the desired release version.
+2. Commit this change and merge it into the `main` branch via a pull request.
+3. Ensure your local `main` is up to date:
+   ```bash
+   git checkout main
+   git pull origin main
+   ```
+4. Create and push a tag from the latest `main` commit. The tag must be in the format `vX.Y.Z` and match the `pyproject.toml` version:
+   ```bash
+   git tag -a v0.2.6 -m "Release v0.2.6"
+   git push origin v0.2.6
+   ```
+5. The release workflow will validate the tag and version, then publish to PyPI if all checks pass.
+
+**Note:** Tags must always be created from the `main` branch and must match the version in `pyproject.toml`.
+
+
 # Contributing
 
 Contributions are welcome! Please see the [contribution guide](CONTRIBUTING.md) for details on how to contribute to the Agntcy Application SDK.
