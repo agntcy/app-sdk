@@ -37,7 +37,7 @@ class SLIMTransport(BaseTransport):
         routable_name: str = None,
         slim_instance=None,
         endpoint: Optional[str] = None,
-        message_timeout: datetime.timedelta = datetime.timedelta(seconds=10),
+        message_timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         message_retries: int = 2,
         shared_secret_identity: str = "slim-mls-secret",
         tls_insecure: bool = True,
@@ -479,10 +479,14 @@ class SLIMTransport(BaseTransport):
 
     async def _handle_session_receive(self, session_id: str) -> None:
         """Handle message receiving for a specific session."""
+        consecutive_errors = 0
+        max_retries = 3
+
         try:
             while not self._shutdown_event.is_set():
                 try:
                     session, msg = await self._slim.receive(session=session_id)
+                    consecutive_errors = 0  # Reset on success
                     end_session = await self._process_received_message(session, msg)
                     if end_session:
                         logger.info(
@@ -493,8 +497,14 @@ class SLIMTransport(BaseTransport):
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.error(
-                        f"Error receiving message on session {session_id}: {e}"
+                    consecutive_errors += 1
+                    if consecutive_errors > max_retries:
+                        logger.error(
+                            f"Max retries exceeded for session {session_id}, closing: {e}"
+                        )
+                        break
+                    logger.warning(
+                        f"Error receiving message on session {session_id} (attempt {consecutive_errors}/{max_retries}): {e}"
                     )
                     await asyncio.sleep(0.5)  # backoff to avoid spin
         except asyncio.CancelledError:

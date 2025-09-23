@@ -381,6 +381,7 @@ class A2AProtocol(BaseAgentProtocol):
             "body": bytearray(),
         }
 
+
         async def send(message: Dict[str, Any]) -> None:
             message_type = message["type"]
 
@@ -391,7 +392,7 @@ class A2AProtocol(BaseAgentProtocol):
             elif message_type == "http.response.body":
                 if "body" in message:
                     response_data["body"].extend(message["body"])
-
+        print("self app data-",self._app)
         # Call the ASGI application with our scope, receive, and send
         await self._app(scope, receive, send)
 
