@@ -363,11 +363,10 @@ class SLIMTransport(BaseTransport):
 
                             # Check for end message to stop collection
                             if end_message in str(deserialized_msg.payload):
-                                logger.info("Received end message, stopping collection.")
                                 break
                         except Exception as e:
-                            logger.error(
-                                f"Error receiving message on session {session_info.id}: {e}"
+                            logger.warning(
+                                f"Issue encountered while receiving message on session {session_info.id}: {e}"
                             )
                             continue
         except asyncio.TimeoutError:
