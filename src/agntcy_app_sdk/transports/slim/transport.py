@@ -305,15 +305,16 @@ class SLIMTransport(BaseTransport):
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
             return []
-
+    # TODO: update _request_group to create the session and set end-message header. Once the inner _collect_until_done finishes or is timed out,
+    # send out the end-chat message
     async def _request_group(
-        self,
-        remote_name: PyName,
-        message: Message,
-        recipients: List[str] = None,
-        end_message: str = "done",
-        timeout: float = 60.0,
-        **kwargs,
+            self,
+            remote_name: PyName,
+            message: Message,
+            recipients: List[str] = None,
+            end_message: str = "done",
+            timeout: float = 60.0,
+            **kwargs,
     ) -> List[Message]:
         if not self._slim:
             logger.warning("SLIM client is not initialized, calling setup() ...")
@@ -326,25 +327,63 @@ class SLIMTransport(BaseTransport):
 
         logger.debug(f"Requesting group response from topic: {remote_name}")
 
-        # convert recipients to PyName objects
+        # Convert recipients to PyName objects
         invitees = [self.build_pyname(recipient) for recipient in recipients]
 
+        if not message.headers:
+            message.headers = {}
+
+        # Signal to the receiver that they should respond to the group
+        message.headers["x-respond-to-group"] = "true"
+        # Optionally include an end message to signal to receivers they can close the session
+        end_signal = uuid4().hex
+        message.headers["x-session-end-message"] = end_signal
+
+        responses = []
+        session_info = None
         try:
-            responses = await asyncio.wait_for(
-                self._collect_until_done(
-                    channel=remote_name,
-                    message=message,
-                    invitees=invitees,
-                    end_message=end_message,
-                ),
-                timeout=timeout,
-            )
-            return responses
+            async with asyncio.timeout(timeout):
+                async with self._slim:
+                    _, session_info = await self._session_manager.group_broadcast_session(
+                        remote_name, invitees
+                    )
+
+                    # Give the session a moment to be fully established on the SLIM dataplane
+                    await asyncio.sleep(0.25)
+
+                    # Initiate the group broadcast
+                    await self._slim.publish(session_info, message.serialize(), remote_name)
+
+                    # Wait for responses from invitees until the end message is received
+                    while True:
+                        try:
+                            _, msg = await self._slim.receive(session=session_info.id)
+                            deserialized_msg = Message.deserialize(msg)
+                            responses.append(deserialized_msg)
+
+                            # Check for end message to stop collection
+                            if end_message in str(deserialized_msg.payload):
+                                logger.info("Received end message, stopping collection.")
+                                break
+                        except Exception as e:
+                            logger.error(
+                                f"Error receiving message on session {session_info.id}: {e}"
+                            )
+                            continue
         except asyncio.TimeoutError:
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
-            return []
+        finally:
+            if session_info:
+                try:
+                    await self._session_manager.close_session(
+                        session_info, remote=remote_name, end_signal=end_signal
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to close session {session_info.id}: {e}")
+
+        return responses
 
     async def _collect_all(
         self,
@@ -384,63 +423,6 @@ class SLIMTransport(BaseTransport):
                     continue
 
             await self._session_manager.close_session(session_info)
-            return responses
-
-    async def _collect_until_done(
-        self,
-        channel: PyName,
-        message: Message,
-        invitees: List[PyName],
-        end_message: str = "done",
-    ) -> List[Message]:
-        if not self._slim:
-            raise ValueError("SLIM client is not set, please call setup() first.")
-
-        logger.debug(f"Publishing to topic: {channel} for group invitees")
-
-        if not message.headers:
-            message.headers = {}
-
-        # Signal to the receiver that they should respond to the group
-        message.headers["x-respond-to-group"] = "true"
-        # Optionally include an end message to signal to receivers they can close the session
-        end_signal = uuid4().hex
-        message.headers["x-session-end-message"] = end_signal
-
-        async with self._slim:
-            _, session_info = await self._session_manager.group_broadcast_session(
-                channel, invitees
-            )
-
-            # give the session a moment to be fully established on the slim dataplane
-            await asyncio.sleep(0.25)
-
-            # initiate the group broadcast
-            await self._slim.publish(session_info, message.serialize(), channel)
-
-            # wait for responses from invitees until we receive the end_message
-            responses = []
-            while True:
-                try:
-                    _, msg = await self._slim.receive(session=session_info.id)
-                    msg = Message.deserialize(msg)
-                    responses.append(msg)
-
-                    # check for end message to stop collection
-                    if end_message in str(msg.payload):
-                        logger.info("Received end message, stopping collection.")
-                        break
-                except Exception as e:
-                    logger.error(
-                        f"Error receiving message on session {session_info.id}: {e}"
-                    )
-                    continue
-
-            # end the group chat by sending the end message
-            await self._session_manager.close_session(
-                session_info, remote=channel, end_signal=end_signal
-            )
-
             return responses
 
     async def subscribe(self, topic: str, org=None, namespace=None) -> None:
