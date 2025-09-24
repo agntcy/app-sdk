@@ -153,9 +153,9 @@ class A2AProtocol(BaseAgentProtocol):
         if topic and transport:
             client = await self.get_client_from_agent_card_topic(topic, transport)
         else:
+            httpx_client = httpx.AsyncClient()
             try:
-                async with httpx.AsyncClient() as httpx_client:
-                    client = await get_client_from_agent_card_url(httpx_client, url)
+                client = await get_client_from_agent_card_url(httpx_client, url)
             except Exception as e:
                 logger.error(f"Failed to retrieve A2A client: {e}")
                 raise e
@@ -416,7 +416,7 @@ class A2AProtocol(BaseAgentProtocol):
                 "error": "true",
                 "error_type": "callback_error",
                 "error_message": str(e),
-                "status": "error"
+                "status": "error",
             }
             error_payload = json.dumps(error_response).encode("utf-8")
             
