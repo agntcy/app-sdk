@@ -305,7 +305,6 @@ class SLIMTransport(BaseTransport):
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
             return []
-    # TODO: update _request_group to create the session and set end-message header. Once the inner _collect_until_done finishes or is timed out,
     # send out the end-chat message
     async def _request_group(
             self,
@@ -348,8 +347,8 @@ class SLIMTransport(BaseTransport):
                         remote_name, invitees
                     )
 
-                    # Give the session a moment to be fully established on the SLIM dataplane
-                    await asyncio.sleep(0.25)
+                    # Give the session a moment to be fully established on the SLIM dataplane- arbitrary delay
+                    await asyncio.sleep(0.5)
 
                     # Initiate the group broadcast
                     await self._slim.publish(session_info, message.serialize(), remote_name)

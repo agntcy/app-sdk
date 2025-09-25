@@ -86,13 +86,13 @@ class SessionManager:
         session_key = f"PySessionConfiguration.Streaming:{channel}:" + ",".join(
             [str(invitee) for invitee in invitees]
         )
+        # use the same lock for session creation and lookup
         with self._lock:
             if session_key in self._sessions:
                 logger.info(f"Reusing existing group broadcast session: {session_key}")
                 return session_key, self._sessions[session_key]
 
-        logger.debug(f"Creating new group broadcast session: {session_key}")
-        with self._lock:
+            logger.debug(f"Creating new group broadcast session: {session_key}")
             session_info = await self._slim.create_session(
                 PySessionConfiguration.Streaming(
                     PySessionDirection.BIDIRECTIONAL,
@@ -105,9 +105,12 @@ class SessionManager:
             )
 
             for invitee in invitees:
-                logger.debug(f"Inviting {invitee} to session {session_info.id}")
-                await self._slim.set_route(invitee)
-                await self._slim.invite(session_info, invitee)
+                try:
+                    logger.debug(f"Inviting {invitee} to session {session_info.id}")
+                    await self._slim.set_route(invitee)
+                    await self._slim.invite(session_info, invitee)
+                except Exception as e:
+                    logger.error(f"Failed to invite {invitee}: {e}")
 
             # store the session info
             self._sessions[session_key] = session_info
