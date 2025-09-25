@@ -32,9 +32,10 @@ class MessageBridge:
         # set the message handler to the protocol handler's handle_message method
         self.handler = self.protocol_handler.handle_message
 
-        # Set up the transport layer
-        await self.transport.setup()
+        # Set callback BEFORE transport setup
         self.transport.set_callback(self._process_message)
+        # Set up the transport layer (this starts the listener task)
+        await self.transport.setup()
 
         await self.transport.subscribe(self.topic)
 
@@ -65,18 +66,22 @@ class MessageBridge:
 
     async def _process_message(self, message: Message):
         """Process an incoming message through the handler and send response."""
-
-        if inspect.iscoroutinefunction(self.handler):
-            response = await self.handler(message)
-        else:
-            result = self.handler(message)
-            # If the result is a coroutine, await it
-            if inspect.iscoroutine(result):
-                response = await result
+        try:
+            if inspect.iscoroutinefunction(self.handler):
+                response = await self.handler(message)
             else:
-                response = result
+                result = self.handler(message)
+                # If the result is a coroutine, await it
+                if inspect.iscoroutine(result):
+                    response = await result
+                else:
+                    response = result
 
-        if not response:
-            logger.warning("Handler returned no response for message.")
+            if not response:
+                logger.warning("Handler returned no response for message.")
 
-        return response
+            return response
+
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            return None
