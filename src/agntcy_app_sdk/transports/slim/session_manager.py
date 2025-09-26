@@ -74,7 +74,7 @@ class SessionManager:
         channel: PyName,
         invitees: list[PyName],
         max_retries: int = 20,
-        timeout: datetime.timedelta = datetime.timedelta(seconds=30),
+        timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         mls_enabled: bool = True,
     ):
         """
@@ -137,11 +137,8 @@ class SessionManager:
                     payload=end_signal,
                 )
                 await self._slim.publish(session, end_msg.serialize(), remote)
-                await asyncio.sleep(
-                    0.25
-                )  # give some time for the message to be sent before closing our side
 
-            await asyncio.sleep(random.uniform(2, 5)) # add sleep before closing to allow for any in-flight messages to be processed
+            await asyncio.sleep(random.uniform(5, 10)) # add sleep before closing to allow for any in-flight messages to be processed
             await self._slim.delete_session(session.id)
             logger.debug(f"Closed session: {session.id}")
 
