@@ -4,6 +4,7 @@
 import asyncio
 from typing import Dict
 import datetime
+import random
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 import slim_bindings
 from slim_bindings import (
@@ -73,7 +74,7 @@ class SessionManager:
         channel: PyName,
         invitees: list[PyName],
         max_retries: int = 20,
-        timeout: datetime.timedelta = datetime.timedelta(seconds=30),
+        timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         mls_enabled: bool = True,
     ):
         """
@@ -136,10 +137,11 @@ class SessionManager:
                     payload=end_signal,
                 )
                 await self._slim.publish(session, end_msg.serialize(), remote)
-                await asyncio.sleep(
-                    0.25
-                )  # give some time for the message to be sent before closing our side
 
+            logger.info(f"waiting before closing session: {session.id}")
+            # todo: proper way to wait for all messages to be processed
+            await asyncio.sleep(random.uniform(5, 10)) # add sleep before closing to allow for any in-flight messages to be processed
+            logger.info(f"deleting session: {session.id}")
             await self._slim.delete_session(session.id)
             logger.debug(f"Closed session: {session.id}")
 
