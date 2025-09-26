@@ -4,6 +4,7 @@
 import asyncio
 from typing import Dict
 import datetime
+import random
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 import slim_bindings
 from slim_bindings import (
@@ -140,6 +141,7 @@ class SessionManager:
                     0.25
                 )  # give some time for the message to be sent before closing our side
 
+            await asyncio.sleep(random.uniform(2, 5)) # add sleep before closing to allow for any in-flight messages to be processed
             await self._slim.delete_session(session.id)
             logger.debug(f"Closed session: {session.id}")
 
