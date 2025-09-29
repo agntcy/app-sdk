@@ -33,7 +33,10 @@ class MessageBridge:
         self.handler = self.protocol_handler.handle_message
 
         # Set callback BEFORE transport setup
-        self.transport.set_callback(self._process_message)
+        if inspect.iscoroutinefunction(self.transport.set_callback):
+            await self.transport.set_callback(self._process_message)
+        else:
+            self.transport.set_callback(self._process_message)
         # Set up the transport layer (this starts the listener task)
         await self.transport.setup()
 

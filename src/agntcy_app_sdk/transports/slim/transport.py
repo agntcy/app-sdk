@@ -69,6 +69,8 @@ class SLIMTransport(BaseTransport):
         self._slim = slim_instance
 
         self._callback = None
+        self._callback_lock = asyncio.Lock()
+
         self.message_timeout = message_timeout
         self.message_retries = message_retries
         self._shared_secret_identity = shared_secret_identity
@@ -146,9 +148,16 @@ class SLIMTransport(BaseTransport):
             else:
                 logger.error(f"Error disconnecting SLIM transport: {e}")
 
-    def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
+    async def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
-        self._callback = handler
+        async with self._callback_lock:
+            self._callback = handler
+
+    async def get_callback(self) -> Optional[Callable[[Message], asyncio.Future]]:
+        """Get the message handler function."""
+        logger.info("Retrieving callback function")
+        async with self._callback_lock:
+            return self._callback
 
     async def setup(self):
         """
@@ -509,10 +518,12 @@ class SLIMTransport(BaseTransport):
 
         # Call the callback function
         try:
-            if inspect.iscoroutinefunction(self._callback):
-                output = await self._callback(deserialized_msg)
+            callback = await self.get_callback()
+            logger.info(f"Invoking callback for message on session {callback}")
+            if inspect.iscoroutinefunction(callback):
+                output = await callback(deserialized_msg)
             else:
-                output = self._callback(deserialized_msg)
+                output = callback(deserialized_msg)
         except Exception as e:
             logger.error(f"Error in callback function: {e}")
             return False
