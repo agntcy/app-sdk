@@ -140,7 +140,9 @@ class SessionManager:
 
             logger.info(f"waiting before closing session: {session.id}")
             # todo: proper way to wait for all messages to be processed
-            await asyncio.sleep(random.uniform(5, 10)) # add sleep before closing to allow for any in-flight messages to be processed
+            await asyncio.sleep(
+                random.uniform(5, 10)
+            )  # add sleep before closing to allow for any in-flight messages to be processed
             logger.info(f"deleting session: {session.id}")
             await self._slim.delete_session(session.id)
             logger.debug(f"Closed session: {session.id}")

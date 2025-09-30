@@ -150,6 +150,11 @@ class SLIMTransport(BaseTransport):
         """Set the message handler function."""
         self._callback = handler
 
+        # Start the listener task after setting the callback
+        if not self._slim:
+            raise ValueError("SLIM client is not set, please call setup() first.")
+        self._listener_task = asyncio.create_task(self._listen_for_sessions())
+
     async def setup(self):
         """
         Start the async receive loop for incoming messages.
@@ -158,8 +163,6 @@ class SLIMTransport(BaseTransport):
             return
 
         await self._slim_connect()
-        # await self._receive()
-        self._listener_task = asyncio.create_task(self._listen_for_sessions())
 
     def build_pyname(
         self, topic: str, org: Optional[str] = None, namespace: Optional[str] = None
@@ -305,15 +308,16 @@ class SLIMTransport(BaseTransport):
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
             return []
+
     # send out the end-chat message
     async def _request_group(
-            self,
-            remote_name: PyName,
-            message: Message,
-            recipients: List[str] = None,
-            end_message: str = "done",
-            timeout: float = 60.0,
-            **kwargs,
+        self,
+        remote_name: PyName,
+        message: Message,
+        recipients: List[str] = None,
+        end_message: str = "done",
+        timeout: float = 60.0,
+        **kwargs,
     ) -> List[Message]:
         if not self._slim:
             logger.warning("SLIM client is not initialized, calling setup() ...")
@@ -343,7 +347,10 @@ class SLIMTransport(BaseTransport):
         try:
             async with asyncio.timeout(timeout):
                 async with self._slim:
-                    _, session_info = await self._session_manager.group_broadcast_session(
+                    (
+                        _,
+                        session_info,
+                    ) = await self._session_manager.group_broadcast_session(
                         remote_name, invitees
                     )
 
@@ -351,7 +358,9 @@ class SLIMTransport(BaseTransport):
                     await asyncio.sleep(0.5)
 
                     # Initiate the group broadcast
-                    await self._slim.publish(session_info, message.serialize(), remote_name)
+                    await self._slim.publish(
+                        session_info, message.serialize(), remote_name
+                    )
 
                     # Wait for responses from invitees until the end message is received
                     while True:

@@ -381,7 +381,6 @@ class A2AProtocol(BaseAgentProtocol):
             "body": bytearray(),
         }
 
-
         async def send(message: Dict[str, Any]) -> None:
             message_type = message["type"]
 
@@ -419,7 +418,7 @@ class A2AProtocol(BaseAgentProtocol):
                 "status": "error",
             }
             error_payload = json.dumps(error_response).encode("utf-8")
-            
+
             return Message(
                 type="A2AResponse",
                 payload=error_payload,
