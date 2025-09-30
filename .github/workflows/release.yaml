@@ -6,7 +6,7 @@ name: sdk-release-python
 on:
   push:
     tags:
-      - "v*"          # Only trigger on tag push
+      - "v*" # Only trigger on tag push
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

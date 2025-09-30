@@ -205,7 +205,6 @@ Publishing to PyPI is automated via GitHub Actions. To release a new version:
 
 **Note:** Tags must always be created from the `main` branch and must match the version in `pyproject.toml`.
 
-
 # Contributing
 
 Contributions are welcome! Please see the [contribution guide](CONTRIBUTING.md) for details on how to contribute to the Agntcy Application SDK.

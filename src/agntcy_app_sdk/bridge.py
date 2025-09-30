@@ -32,10 +32,11 @@ class MessageBridge:
         # set the message handler to the protocol handler's handle_message method
         self.handler = self.protocol_handler.handle_message
 
-        # Set callback BEFORE transport setup
-        self.transport.set_callback(self._process_message)
         # Set up the transport layer (this starts the listener task)
         await self.transport.setup()
+
+        # Set callback AFTER transport setup
+        self.transport.set_callback(self._process_message)
 
         await self.transport.subscribe(self.topic)
 
