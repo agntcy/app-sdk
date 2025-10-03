@@ -144,8 +144,16 @@ class SessionManager:
                 random.uniform(5, 10)
             )  # add sleep before closing to allow for any in-flight messages to be processed
             logger.info(f"deleting session: {session.id}")
-            await self._slim.delete_session(session.id)
-            logger.debug(f"Closed session: {session.id}")
+
+            # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
+            try:
+                await asyncio.wait_for(self._slim.delete_session(session.id), timeout=5.0)
+                logger.info(f"Session {session.id} deleted successfully within timeout.")
+            except asyncio.TimeoutError:
+                logger.info(f"Timed out while trying to delete session {session.id}.")
+            except Exception as e:
+                logger.error(f"Error deleting session {session.id}: {e}")
+            logger.info(f"Closed session: {session.id}")
 
             # remove from local store
             self._local_cache_cleanup(session.id)
