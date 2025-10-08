@@ -8,7 +8,7 @@ import json
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
 from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
 
 from mcp import ClientSession
 import mcp.types as types
@@ -25,9 +25,9 @@ configure_logging()
 logger = get_logger(__name__)
 
 
-class MCPProtocol(BaseAgentProtocol):
+class MCPProtocol(BaseAgentProtocolHandler):
     """
-    MCPProtocol implements the BaseAgentProtocol to bridge MCP client and server sessions
+    MCPProtocol implements the BaseAgentProtocolHandler to bridge MCP client and server sessions
     with a generic transport layer.
 
     Key responsibilities:
@@ -38,6 +38,9 @@ class MCPProtocol(BaseAgentProtocol):
     def type(self):
         """Return the protocol type identifier."""
         return "MCP"
+
+    def agent_record(self):
+        raise NotImplementedError("agent_record not implemented for MCP")
 
     @asynccontextmanager
     async def create_client(

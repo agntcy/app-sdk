@@ -18,7 +18,7 @@ from a2a.types import (
     JSONRPCSuccessResponse,
     MessageSendParams,
 )
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
 from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.protocols.message import Message
 from opentelemetry.instrumentation.starlette import StarletteInstrumentor
@@ -64,9 +64,17 @@ async def get_client_from_agent_card_url(
     return A2AClient(httpx_client=httpx_client, agent_card=agent_card)
 
 
-class A2AProtocol(BaseAgentProtocol):
+class A2AProtocol(BaseAgentProtocolHandler):
+    client = None
+
     def type(self):
         return "A2A"
+
+    def agent_record(self):
+        if not self._server:
+            raise "Protocol handler has not been bound to an A2A server yet. No agent record available"
+
+        return self._server.agent_card
 
     @staticmethod
     def create_agent_topic(agent_card: AgentCard) -> str:
@@ -299,7 +307,6 @@ class A2AProtocol(BaseAgentProtocol):
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.
         """
-
         if not self._server:
             raise ValueError(
                 "A2A server is not bound to the protocol, please bind it first"

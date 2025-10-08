@@ -6,7 +6,8 @@ from enum import Enum
 import os
 
 from agntcy_app_sdk.transports.transport import BaseTransport
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
+from agntcy_app_sdk.discovery.directory import AgentDirectory, DirectoryBackend
 
 from agntcy_app_sdk.transports.slim.transport import SLIMTransport
 from agntcy_app_sdk.transports.nats.transport import NatsTransport
@@ -53,6 +54,13 @@ class IdentityProviders(Enum):
     AGNTCY = "agntcy_identity"
 
 
+# a utility enum class to define agent directory backends as constants
+class AgentDirectoryBackends(Enum):
+    IN_MEMORY = "in_memory"
+    MCP = "mcp"
+    AGNTCY_DIR = "agntcy_dir"
+
+
 class AgntcyFactory:
     """
     Factory class to create different types of agent gateway transports and protocols.
@@ -77,7 +85,7 @@ class AgntcyFactory:
             logger.setLevel(self.log_level)
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
-        self._protocol_registry: Dict[str, Type[BaseAgentProtocol]] = {}
+        self._protocol_registry: Dict[str, Type[BaseAgentProtocolHandler]] = {}
 
         self._clients = {}
         self._bridges = {}
@@ -114,6 +122,12 @@ class AgntcyFactory:
         """
         return [provider.value for provider in ObservabilityProviders]
 
+    def registered_agent_directory_backends(self):
+        """
+        Get the list of registered agent directory providers.
+        """
+        return [provider.value for provider in AgentDirectoryBackends]
+
     def create_client(
         self,
         protocol: str,
@@ -147,6 +161,7 @@ class AgntcyFactory:
         server,
         transport: BaseTransport,
         topic: str | None = None,
+        agent_directory: AgentDirectory | None = None,
     ) -> MessageBridge:
         """
         Create a bridge/receiver for the specified transport and protocol.
@@ -178,6 +193,7 @@ class AgntcyFactory:
             transport=transport,
             protocol_handler=handler,
             topic=topic,
+            agent_directory=agent_directory,
         )
 
         self._bridges[topic] = bridge
@@ -219,6 +235,11 @@ class AgntcyFactory:
         protocol_instance = protocol_class()
         return protocol_instance
 
+    def create_directory(
+        self, backend: DirectoryBackend, *args, **kwargs
+    ) -> AgentDirectory:
+        return AgentDirectory(backend=backend, *args, **kwargs)
+
     @classmethod
     def register_transport(cls, transport_type: str):
         """Decorator to register a new transport implementation."""
@@ -233,7 +254,7 @@ class AgntcyFactory:
     def register_protocol(cls, protocol_type: str):
         """Decorator to register a new protocol implementation."""
 
-        def decorator(protocol_class: Type[BaseAgentProtocol]):
+        def decorator(protocol_class: Type[BaseAgentProtocolHandler]):
             cls.self._protocol_registry[protocol_type] = protocol_class
             return protocol_class
 

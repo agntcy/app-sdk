@@ -278,29 +278,33 @@ class NatsTransport(BaseTransport):
         """Set the message handler function."""
         self._callback = callback
 
-    async def subscribe(self, topic: str) -> None:
+    async def subscribe(self, topic: str, callback=None) -> None:
         """Subscribe to a topic with a callback."""
         if self._nc is None or not self._nc.is_connected:
             raise RuntimeError(
                 "NATS client is not connected, please call setup() before subscribing"
             )
 
-        if not self._callback:
+        if not self._callback and not callback:
             raise ValueError("Message handler must be set before starting transport")
 
         try:
             topic = self.santize_topic(topic)
 
+            async def wrapped_handler(nats_msg):
+                # Wrap the user-provided callback (if any)
+                await self._message_handler(nats_msg, callback=callback)
+
             with tracer.start_as_current_span("nats.subscribe") as span:
                 span.set_attribute("topic", topic)
-                sub = await self._nc.subscribe(topic, cb=self._message_handler)
+                sub = await self._nc.subscribe(topic, cb=wrapped_handler)
 
             self.subscriptions.append(sub)
             logger.info(f"Subscribed to topic: {topic}")
         except Exception as e:
             logger.error(f"Error subscribe to topic '{topic}': {e}")
 
-    async def _message_handler(self, nats_msg):
+    async def _message_handler(self, nats_msg, callback=None):
         """Internal handler for NATS messages."""
         message = Message.deserialize(nats_msg.data)
 
@@ -308,10 +312,13 @@ class NatsTransport(BaseTransport):
         if nats_msg.reply and not message.reply_to:
             message.reply_to = nats_msg.reply
 
+        if callback is None:
+            callback = self._callback
+
         # Process the message with the registered handler
-        if self._callback:
-            resp = await self._callback(message)
-            if not resp and message.reply_to:
+        if callback:
+            resp = await callback(message)
+            if resp is None and message.reply_to:
                 logger.warning("Handler returned no response for message.")
                 err_msg = Message(
                     type="error",

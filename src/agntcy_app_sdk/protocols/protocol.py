@@ -7,7 +7,7 @@ from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.message import Message
 
 
-class BaseAgentProtocol(ABC):
+class BaseAgentProtocolHandler(ABC):
     """
     Base class for different agent protocols.
     """
@@ -15,6 +15,13 @@ class BaseAgentProtocol(ABC):
     @abstractmethod
     def type(self) -> str:
         """Return the protocol type."""
+        pass
+
+    @abstractmethod
+    def agent_record(self):
+        """
+        Return the identifying record for this agent handler.
+        """
         pass
 
     @abstractmethod

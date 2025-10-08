@@ -43,6 +43,9 @@ class FastMCPProtocol(MCPProtocol):
         """
         return "FastMCP"
 
+    def agent_record(self):
+        raise NotImplementedError("agent_record not implemented for FastMCP")
+
     def bind_server(self, server: FastMCP) -> None:
         """
         Bind a FastMCP server instance to the protocol.

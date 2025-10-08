@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from agntcy_app_sdk.transports.transport import BaseTransport
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
 from agntcy_app_sdk.protocols.message import Message
+from agntcy_app_sdk.discovery.directory import AgentDirectory
 from agntcy_app_sdk.common.logging_config import get_logger
 import asyncio
 import inspect
@@ -19,14 +20,16 @@ class MessageBridge:
     def __init__(
         self,
         transport: BaseTransport,
-        protocol_handler: BaseAgentProtocol,
+        protocol_handler: BaseAgentProtocolHandler,
         topic: str,
+        agent_directory: AgentDirectory,
     ):
         self.transport = transport
         self.protocol_handler = protocol_handler
         self.topic = topic
+        self.agent_directory = agent_directory
 
-    async def start(self, blocking: bool = False):
+    async def start(self, blocking: bool = False, publish_to_directory: bool = False):
         """Start all components of the bridge."""
 
         # set the message handler to the protocol handler's handle_message method
@@ -45,6 +48,12 @@ class MessageBridge:
             await self.protocol_handler.setup_ingress_handler()
         else:
             self.protocol_handler.setup_ingress_handler()
+
+        # signal if we should push this protocol's agent record to the directory
+        if publish_to_directory:
+            await self.agent_directory.publish_agent_record(
+                self.protocol_handler.agent_record()
+            )
 
         logger.info("Message bridge started.")
 
