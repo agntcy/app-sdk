@@ -58,9 +58,7 @@ async def test_publish_record(transport):
     mcp_directory_client = MCPAgentDirectoryClient(transport=transport_instance)
 
     # get a generic A2A server
-    server = A2AStarletteApplication(
-        agent_card=agent_card, http_handler=None
-    )
+    server = A2AStarletteApplication(agent_card=agent_card, http_handler=None)
 
     # simulate serving this agent with a transport bridge
     bridge = factory.create_bridge(

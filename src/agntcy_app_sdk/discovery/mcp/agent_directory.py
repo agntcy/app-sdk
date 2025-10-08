@@ -2,17 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-import os
 import asyncio
-from pathlib import Path
-from typing import List, Tuple, Any
+from typing import Any
 import pandas as pd
 from a2a.types import (
     AgentCard,
 )
 from uvicorn import Config, Server
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.discovery.directory import AgentDirectory
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.message import Message
 from mcp.server.fastmcp import FastMCP
@@ -33,10 +30,7 @@ class MCPAgentDirectoryClient(DirectoryBackend):
         return "MCPAgentDirectoryClient"
 
     async def publish_agent_record(self, record: AgentCard):
-        request = Message(
-            type="A2ACardRegistry",
-            payload=record.model_dump_json()
-        )
+        request = Message(type="A2ACardRegistry", payload=record.model_dump_json())
         ack = await self.transport.request(REGISTRY_TOPIC, message=request, timeout=10)
         return ack
 
@@ -49,9 +43,11 @@ class MCPAgentDirectoryClient(DirectoryBackend):
         raise NotImplementedError(
             "search is not supported by MCPAgentDirectoryClient, use MCP protocol instead"
         )
-    
+
     async def delete_agent_record(self, ref: Any):
-        raise NotImplementedError("delete is not supported by MCPAgentDirectoryClient, use MCP protocol instead")
+        raise NotImplementedError(
+            "delete is not supported by MCPAgentDirectoryClient, use MCP protocol instead"
+        )
 
 
 class MCPAgentDirectory(DirectoryBackend):
@@ -68,13 +64,15 @@ class MCPAgentDirectory(DirectoryBackend):
         def list_agent_cards() -> dict:
             return self.get_agent_cards()
 
-        @mcp.resource("resource://agent_cards/{card_name}", mime_type="application/json")
+        @mcp.resource(
+            "resource://agent_cards/{card_name}", mime_type="application/json"
+        )
         def get_card(card_name: str) -> dict:
             return self.get_agent_card(card_name)
-        
+
         @mcp.tool(
-            name='find_agent',
-            description='Finds the most relevant agent card based on a natural language query string.',
+            name="find_agent",
+            description="Finds the most relevant agent card based on a natural language query string.",
         )
         def find_agent(query: str) -> str:
             """Finds the most relevant agent card based on a query string."""
@@ -93,9 +91,11 @@ class MCPAgentDirectory(DirectoryBackend):
 
     async def search_agent_records(self, query: Any, *args, **kwargs) -> list:
         raise NotImplementedError()
-    
+
     async def delete_agent_record(self, ref: Any):
-        raise NotImplementedError("delete is not supported by MCPAgentDirectoryClient, use MCP protocol instead")
+        raise NotImplementedError(
+            "delete is not supported by MCPAgentDirectoryClient, use MCP protocol instead"
+        )
 
     def initialize_dataframe(self) -> None:
         self.df = pd.DataFrame({"card_uri": [], "agent_card": []})
@@ -112,7 +112,7 @@ class MCPAgentDirectory(DirectoryBackend):
         except Exception as e:
             logger.error(f"Failed to validate agent card: {e}")
             return
-        
+
         card_uri = f"resource://agent_cards/{card.name}"
         # Add card to the DataFrame or update existing entry
         if card_uri in self.df["card_uri"].values:
@@ -187,7 +187,7 @@ class MCPAgentDirectory(DirectoryBackend):
         self.initialize_dataframe()
 
         # Setup MCP resources
-        #self.setup_mcp_resources()
+        # self.setup_mcp_resources()
 
         logger.info(f"Agent cards MCP Server at @{transport.type()}->{topic}")
 
@@ -207,7 +207,7 @@ class MCPAgentDirectory(DirectoryBackend):
                 app = self.mcp.streamable_http_app()
                 for route in app.routes:
                     print(f"{route.path} ")
-                
+
                 config = Config(
                     app=app,
                     host=host,

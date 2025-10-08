@@ -6,6 +6,7 @@ from agntcy_app_sdk.factory import AgntcyFactory
 
 factory = AgntcyFactory(enable_tracing=False)
 
+
 async def main(
     transport_type: str,
     name: str,

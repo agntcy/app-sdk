@@ -1,1 +1,0 @@
-from agntcy.dir_sdk.client import Config, Client

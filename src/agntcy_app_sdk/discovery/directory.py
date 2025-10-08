@@ -4,6 +4,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
+
 class AgentDirectory(ABC):
     """
     High level interface for storing, retrieving, searching, and publishing agent records.
@@ -41,12 +42,16 @@ class AgentDirectory(ABC):
     ###########################################################################
     # Publishing API
     @abstractmethod
-    async def publish_agent_record(self, record_ref: Any, remote_dir: Optional[str] = None, *args, **kwargs):
+    async def publish_agent_record(
+        self, record_ref: Any, remote_dir: Optional[str] = None, *args, **kwargs
+    ):
         """Publish an agent record to the directory."""
         pass
 
     @abstractmethod
-    async def unpublish_agent_record(self, record_ref: Any, remote_dir: Optional[str] = None, *args, **kwargs):
+    async def unpublish_agent_record(
+        self, record_ref: Any, remote_dir: Optional[str] = None, *args, **kwargs
+    ):
         """Unpublish an agent record from the directory."""
         pass
 
@@ -61,19 +66,6 @@ class AgentDirectory(ABC):
     async def verify_agent_record(self, record_ref: Any):
         """Verify signature"""
         pass
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     async def publish_agent_record(self, record: Any, *args, **kwargs):
         """
