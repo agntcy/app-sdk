@@ -1,6 +1,5 @@
 import asyncio
 import argparse
-from agntcy_app_sdk.discovery.mcp.agent_directory import MCPAgentDirectory
 from agntcy_app_sdk.factory import TransportTypes
 from agntcy_app_sdk.factory import AgntcyFactory
 
@@ -20,10 +19,11 @@ async def main(
 ):
     transport = factory.create_transport(transport_type, endpoint=endpoint, name=name)
 
-    directory = MCPAgentDirectory()
-    await directory.serve(
-        transport=transport,
-        topic=topic,
+    directory = factory.create_directory(
+        "MCP", directory_name=name, transport=transport
+    )
+    await directory.run_directory_server(
+        discovery_topic=topic,
         blocking=block,
         serve_http=server_http,
         host=host,

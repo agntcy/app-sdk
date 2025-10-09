@@ -6,18 +6,20 @@ from enum import Enum
 import os
 
 from agntcy_app_sdk.transports.transport import BaseTransport
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
-from agntcy_app_sdk.discovery.directory import AgentDirectory, DirectoryBackend
-
 from agntcy_app_sdk.transports.slim.transport import SLIMTransport
 from agntcy_app_sdk.transports.nats.transport import NatsTransport
 from agntcy_app_sdk.transports.streamable_http.transport import StreamableHTTPTransport
 
+from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
 from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.protocols.fast_mcp.protocol import FastMCPProtocol
-from a2a.server.apps import A2AStarletteApplication
 
+from agntcy_app_sdk.discovery.directory import BaseAgentDirectory
+from agntcy_app_sdk.discovery.dir.agent_directory import AgntcyAgentDirectory
+from agntcy_app_sdk.discovery.mcp.agent_directory import MCPAgentDirectory
+
+from a2a.server.apps import A2AStarletteApplication
 from mcp.server.lowlevel import Server as MCPServer
 from mcp.server.fastmcp import FastMCP
 
@@ -55,10 +57,9 @@ class IdentityProviders(Enum):
 
 
 # a utility enum class to define agent directory backends as constants
-class AgentDirectoryBackends(Enum):
-    IN_MEMORY = "in_memory"
+class AgentDirectories(Enum):
     MCP = "mcp"
-    AGNTCY_DIR = "agntcy_dir"
+    AGNTCY_DIR = "dir"
 
 
 class AgntcyFactory:
@@ -86,12 +87,14 @@ class AgntcyFactory:
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
         self._protocol_registry: Dict[str, Type[BaseAgentProtocolHandler]] = {}
+        self._directory_registry: Dict[str, Type[BaseAgentDirectory]] = {}
 
         self._clients = {}
         self._bridges = {}
 
         self._register_wellknown_transports()
         self._register_wellknown_protocols()
+        self._register_wellknown_directories()
 
         if self.enable_tracing:
             os.environ["TRACING_ENABLED"] = "true"
@@ -121,12 +124,6 @@ class AgntcyFactory:
         Get the list of registered observability providers.
         """
         return [provider.value for provider in ObservabilityProviders]
-
-    def registered_agent_directory_backends(self):
-        """
-        Get the list of registered agent directory providers.
-        """
-        return [provider.value for provider in AgentDirectoryBackends]
 
     def create_client(
         self,
@@ -161,7 +158,7 @@ class AgntcyFactory:
         server,
         transport: BaseTransport,
         topic: str | None = None,
-        agent_directory: AgentDirectory | None = None,
+        agent_directory: BaseAgentDirectory | None = None,
     ) -> MessageBridge:
         """
         Create a bridge/receiver for the specified transport and protocol.
@@ -236,9 +233,18 @@ class AgntcyFactory:
         return protocol_instance
 
     def create_directory(
-        self, backend: DirectoryBackend, *args, **kwargs
-    ) -> AgentDirectory:
-        return AgentDirectory(backend=backend, *args, **kwargs)
+        self, directory_type: str, *args, **kwargs
+    ) -> BaseAgentDirectory:
+        """
+        Get a directory implementation given the directory_type.
+        """
+        directory_class = self._directory_registry.get(directory_type)
+        if directory_class is None:
+            logger.warning(
+                f"No directory registered for directory type: {directory_type}"
+            )
+            return None
+        return directory_class(*args, **kwargs)
 
     @classmethod
     def register_transport(cls, transport_type: str):
@@ -275,3 +281,10 @@ class AgntcyFactory:
         self._protocol_registry["A2A"] = A2AProtocol
         self._protocol_registry["MCP"] = MCPProtocol
         self._protocol_registry["FastMCP"] = FastMCPProtocol
+
+    def _register_wellknown_directories(self):
+        """
+        Register well-known agent directories. New directories can be registered using the register decorator.
+        """
+        self._directory_registry["MCP"] = MCPAgentDirectory
+        self._directory_registry["DIR"] = AgntcyAgentDirectory

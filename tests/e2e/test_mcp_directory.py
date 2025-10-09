@@ -3,7 +3,6 @@
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from tests.e2e.conftest import TRANSPORT_CONFIGS
-from agntcy_app_sdk.discovery.mcp.agent_directory import MCPAgentDirectoryClient
 from a2a.server.apps import A2AStarletteApplication
 from a2a.types import (
     AgentCapabilities,
@@ -13,6 +12,8 @@ from a2a.types import (
 import pytest
 
 pytest_plugins = "pytest_asyncio"
+
+factory = AgntcyFactory()
 
 skill = AgentSkill(
     id="hello_world",
@@ -47,7 +48,6 @@ async def test_publish_record(transport):
     # Get the endpoint inside the test using the transport name as a key
     endpoint = TRANSPORT_CONFIGS[transport]
 
-    factory = AgntcyFactory()
     transport_instance = factory.create_transport(
         transport=transport,
         endpoint=endpoint,
@@ -55,7 +55,10 @@ async def test_publish_record(transport):
     )
 
     # Create the MCP agent directory client
-    mcp_directory_client = MCPAgentDirectoryClient(transport=transport_instance)
+    mcp_directory = factory.create_directory(
+        "MCP", directory_name="mcp-client-dir", transport=transport_instance
+    )
+    await mcp_directory.create_remote_directory_sync(remote_dir="mcp_agent_directory")
 
     # get a generic A2A server
     server = A2AStarletteApplication(agent_card=agent_card, http_handler=None)
@@ -65,7 +68,7 @@ async def test_publish_record(transport):
         server,
         transport=transport_instance,
         topic="my-address",
-        agent_directory=mcp_directory_client,
+        agent_directory=mcp_directory,
     )
     await bridge.start(publish_to_directory=True, blocking=True)
 

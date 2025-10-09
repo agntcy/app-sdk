@@ -4,7 +4,7 @@
 from agntcy_app_sdk.transports.transport import BaseTransport
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
 from agntcy_app_sdk.protocols.message import Message
-from agntcy_app_sdk.discovery.directory import AgentDirectory
+from agntcy_app_sdk.discovery.directory import BaseAgentDirectory
 from agntcy_app_sdk.common.logging_config import get_logger
 import asyncio
 import inspect
@@ -22,7 +22,7 @@ class MessageBridge:
         transport: BaseTransport,
         protocol_handler: BaseAgentProtocolHandler,
         topic: str,
-        agent_directory: AgentDirectory,
+        agent_directory: BaseAgentDirectory,
     ):
         self.transport = transport
         self.protocol_handler = protocol_handler
