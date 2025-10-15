@@ -2,7 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Any
+
+
+class RecordVisibility(Enum):
+    PUBLIC = "public"
+    PRIVATE = "private"
+    PROTECTED = "protected"
 
 
 class BaseAgentDirectory(ABC):
@@ -13,7 +20,13 @@ class BaseAgentDirectory(ABC):
     ###########################################################################
     #  Store API
     @abstractmethod
-    async def push_agent_record(self, record: Any, *args, **kwargs):
+    async def push_agent_record(
+        self,
+        record: Any,
+        visibility: RecordVisibility = RecordVisibility.PUBLIC,
+        *args,
+        **kwargs,
+    ):
         """Push an agent record in the directory."""
         pass
 
@@ -25,21 +38,6 @@ class BaseAgentDirectory(ABC):
     @abstractmethod
     async def delete_agent_record(self, ref: Any, *args, **kwargs):
         """Delete an agent record from the directory."""
-        pass
-
-    @abstractmethod
-    async def create_remote_directory_sync(self, remote_dir: Any, *args, **kwargs):
-        """Synchronize with a remote remote directory instance"""
-        pass
-
-    @abstractmethod
-    async def list_remote_directory_syncs(self):
-        """List all remote directory syncs."""
-        pass
-
-    @abstractmethod
-    async def delete_remote_directory_sync(self, remote_dir: Any, *args, **kwargs):
-        """Delete a remote directory sync."""
         pass
 
     ###########################################################################
@@ -55,18 +53,6 @@ class BaseAgentDirectory(ABC):
         pass
 
     ###########################################################################
-    # Publishing API
-    @abstractmethod
-    async def publish_agent_record(self, record_ref: Any, *args, **kwargs):
-        """Publish an agent record to the directory."""
-        pass
-
-    @abstractmethod
-    async def unpublish_agent_record(self, record_ref: Any, *args, **kwargs):
-        """Unpublish an agent record from the directory."""
-        pass
-
-    ###########################################################################
     # Signing and Verification API
     @abstractmethod
     async def sign_agent_record(self, record_ref: Any, provider: Any, *args, **kwargs):
@@ -76,4 +62,18 @@ class BaseAgentDirectory(ABC):
     @abstractmethod
     async def verify_agent_record(self, record_ref: Any):
         """Verify signature"""
+        pass
+
+    ###########################################################################
+    # Publishing API
+    @abstractmethod
+    async def get_record_visibility(self, ref: Any, *args, **kwargs) -> bool:
+        """Check if an agent record is publicly visible."""
+        pass
+
+    @abstractmethod
+    async def set_record_visibility(
+        self, ref: Any, visibility: RecordVisibility, *args, **kwargs
+    ) -> bool:
+        """Check if an agent record is publicly visible."""
         pass

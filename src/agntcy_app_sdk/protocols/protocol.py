@@ -19,9 +19,7 @@ class BaseAgentProtocolHandler(ABC):
 
     @abstractmethod
     def agent_record(self):
-        """
-        Return the identifying record for this agent handler.
-        """
+        """Return the identifying record for this agent handler."""
         pass
 
     @abstractmethod
@@ -44,7 +42,7 @@ class BaseAgentProtocolHandler(ABC):
 
     @abstractmethod
     def create_agent_topic(*args, **kwargs) -> str:
-        """Create a unique topic identifier for the agent."""
+        """Standard way to create a unique topic identifier for the agent."""
         pass
 
     @abstractmethod
