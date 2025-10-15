@@ -8,7 +8,7 @@ import os
 import nats
 from nats.aio.client import Client as NATS
 from opentelemetry import trace
-from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
+from agntcy_app_sdk.transports.base import BaseTransport, ResponseMode
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
 from typing import Callable, List, Optional, Tuple, Any

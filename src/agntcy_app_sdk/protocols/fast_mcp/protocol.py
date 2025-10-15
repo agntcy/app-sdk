@@ -13,7 +13,7 @@ from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.fast_mcp.client import MCPClient
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.protocols.message import Message
-from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.transports.base import BaseTransport
 from mcp.server.fastmcp import FastMCP
 
 # Configure logging for the application

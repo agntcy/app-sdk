@@ -7,8 +7,8 @@ import json
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
-from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
+from agntcy_app_sdk.transports.base import BaseTransport, ResponseMode
+from agntcy_app_sdk.protocols.base import BaseAgentProtocolHandler
 
 from mcp import ClientSession
 import mcp.types as types
