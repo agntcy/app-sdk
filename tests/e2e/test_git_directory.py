@@ -23,7 +23,6 @@ from a2a.types import (
     AgentSkill,
 )
 import logging
-from agntcy_app_sdk.directory.git.agent_directory import GitAgentDirectory
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -107,7 +106,8 @@ async def test_dynamic_push_pull_client(transport, temp_dir):
     repo_url = os.environ.get("TEST_GIT_REPO_URL")
     foo_path = temp_dir / "github_foo"
 
-    foo_dir = GitAgentDirectory(
+    foo_dir = factory.create_directory(
+        "GIT",
         repo_path=str(foo_path),
         holder_id="foo",
         remote_url=repo_url,
@@ -124,10 +124,11 @@ async def test_dynamic_push_pull_client(transport, temp_dir):
     await asyncio.sleep(3)
 
     # bar agent, likely in another process or service, creates a directory
-    bar_dir = GitAgentDirectory(
+    bar_dir = factory.create_directory(
+        "GIT",
+        remote_url=repo_url,
         repo_path=str(foo_path),
         holder_id="bar",
-        remote_url=repo_url,
         auto_push=True,
     )
 
