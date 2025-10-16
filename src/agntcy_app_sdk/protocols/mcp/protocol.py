@@ -300,7 +300,7 @@ class MCPProtocol(BaseAgentProtocol):
 
             logger.info("[setup] MCP server started successfully.")
 
-    async def handle_message(self, message: Message, timeout: int = 45) -> Message:
+    async def handle_message(self, message: Message, timeout: int = 90) -> Message:
         """
         Handle an incoming MCP message and return the server's response.
 
