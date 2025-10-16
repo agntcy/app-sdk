@@ -18,9 +18,9 @@ from a2a.types import (
     JSONRPCSuccessResponse,
     MessageSendParams,
 )
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
-from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
-from agntcy_app_sdk.protocols.message import Message
+from agntcy_app_sdk.semantic.base import BaseAgentProtocol
+from agntcy_app_sdk.transport.base import BaseTransport, ResponseMode
+from agntcy_app_sdk.semantic.message import Message
 from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger

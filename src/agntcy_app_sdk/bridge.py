@@ -1,9 +1,8 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from agntcy_app_sdk.transports.transport import BaseTransport
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
-from agntcy_app_sdk.protocols.message import Message
+from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.semantic.base import BaseAgentProtocol, Message
 from agntcy_app_sdk.common.logging_config import get_logger
 import asyncio
 import inspect
