@@ -81,6 +81,10 @@ class A2AProtocol(BaseAgentProtocolHandler):
         """
         A standard way to create a topic for the agent card metadata.
         """
+        # if agent_card is json, convert to card
+        if isinstance(agent_card, dict):
+            agent_card = AgentCard.model_validate(agent_card)
+
         return f"{agent_card.name}_{agent_card.version}"
 
     async def get_client_from_agent_card_topic(
@@ -277,6 +281,7 @@ class A2AProtocol(BaseAgentProtocolHandler):
         # override the _send_request method to use the provided transport
         client._transport._send_request = _send_request
         client.broadcast_message = broadcast_message
+        client.transport = transport
 
     def message_translator(
         self, request: dict[str, Any], headers: dict[str, Any] | None = None

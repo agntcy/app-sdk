@@ -13,7 +13,7 @@ from slim_bindings import (
     PySessionConfiguration,
     PySessionDirection,
 )
-from agntcy_app_sdk.transports.transport import Message
+from agntcy_app_sdk.protocols.base import Message
 from threading import Lock
 
 configure_logging()

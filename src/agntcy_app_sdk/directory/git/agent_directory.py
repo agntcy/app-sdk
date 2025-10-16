@@ -289,7 +289,7 @@ class GitAgentDirectory(BaseAgentDirectory):
         return records
 
     async def search_agent_records(
-        self, query: Union[Dict, str], *args, **kwargs
+        self, query: Union[Dict, str], limit: int = 1, *args, **kwargs
     ) -> List[Dict]:
         """
         Search records by dict filter or substring in JSON content.
@@ -303,16 +303,18 @@ class GitAgentDirectory(BaseAgentDirectory):
         all_records = await self.list_agent_records(*args, **kwargs)
 
         if isinstance(query, dict):
-            return [
+            all_records = [
                 rec
                 for rec in all_records
                 if all(rec.get(k) == v for k, v in query.items())
             ]
         elif isinstance(query, str):
             q = query.lower()
-            return [rec for rec in all_records if q in json.dumps(rec).lower()]
-        else:
-            return all_records
+            all_records = [rec for rec in all_records if q in json.dumps(rec).lower()]
+
+        if len(all_records) > limit:
+            return all_records[:limit]
+        return all_records
 
     # -------------------------
     # Signing / Verification

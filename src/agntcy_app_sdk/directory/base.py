@@ -48,7 +48,9 @@ class BaseAgentDirectory(ABC):
         pass
 
     @abstractmethod
-    async def search_agent_records(self, query: Any, *args, **kwargs) -> list:
+    async def search_agent_records(
+        self, query: Any, limit: int = 1, *args, **kwargs
+    ) -> list:
         """Search for agent records matching the query."""
         pass
 

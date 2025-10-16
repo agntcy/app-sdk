@@ -1,4 +1,4 @@
-from agntcy_app_sdk.discovery.directory import BaseAgentDirectory
+from agntcy_app_sdk.directory.base import BaseAgentDirectory
 
 
 class AgntcyAgentDirectory(BaseAgentDirectory):

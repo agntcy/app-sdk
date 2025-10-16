@@ -5,19 +5,19 @@ from typing import Dict, Type
 from enum import Enum
 import os
 
-from agntcy_app_sdk.transports.transport import BaseTransport
+from agntcy_app_sdk.transports.base import BaseTransport
 from agntcy_app_sdk.transports.slim.transport import SLIMTransport
 from agntcy_app_sdk.transports.nats.transport import NatsTransport
 from agntcy_app_sdk.transports.streamable_http.transport import StreamableHTTPTransport
 
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocolHandler
+from agntcy_app_sdk.protocols.base import BaseAgentProtocolHandler
 from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.protocols.fast_mcp.protocol import FastMCPProtocol
 
-from agntcy_app_sdk.discovery.directory import BaseAgentDirectory
-from agntcy_app_sdk.discovery.dir.agent_directory import AgntcyAgentDirectory
-from agntcy_app_sdk.discovery.mcp.agent_directory import MCPAgentDirectory
+from agntcy_app_sdk.directory.base import BaseAgentDirectory
+from agntcy_app_sdk.directory.dir.agent_directory import AgntcyAgentDirectory
+from agntcy_app_sdk.directory.git.agent_directory import GitAgentDirectory
 
 from a2a.server.apps import A2AStarletteApplication
 from mcp.server.lowlevel import Server as MCPServer
@@ -58,7 +58,7 @@ class IdentityProviders(Enum):
 
 # a utility enum class to define agent directory backends as constants
 class AgentDirectories(Enum):
-    MCP = "mcp"
+    GIT = "git"
     AGNTCY_DIR = "dir"
 
 
@@ -286,5 +286,5 @@ class AgntcyFactory:
         """
         Register well-known agent directories. New directories can be registered using the register decorator.
         """
-        self._directory_registry["MCP"] = MCPAgentDirectory
+        self._directory_registry["GIT"] = GitAgentDirectory
         self._directory_registry["DIR"] = AgntcyAgentDirectory
