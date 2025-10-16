@@ -14,7 +14,7 @@ class RecordVisibility(Enum):
 
 class BaseAgentDirectory(ABC):
     """
-    High level interface for storing, retrieving, searching, and publishing agent records.
+    High level interface for storing, retrieving, searching, and signing agent records.
     """
 
     ###########################################################################
