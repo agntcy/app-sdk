@@ -21,6 +21,7 @@ from mcp.server.lowlevel import Server as MCPServer
 from mcp.server.fastmcp import FastMCP
 
 from agntcy_app_sdk.bridge import MessageBridge
+from agntcy_app_sdk.app_session import AppSession
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
@@ -141,6 +142,16 @@ class AgntcyFactory:
         self._clients[key] = client
 
         return client
+
+    def create_app_session(
+        self,
+        max_sessions: int = 10,
+    ) -> AppSession:
+        """
+        Create an app session to manage multiple app containers.
+        """
+        session = AppSession(max_sessions=max_sessions)
+        return session
 
     def create_bridge(
         self,

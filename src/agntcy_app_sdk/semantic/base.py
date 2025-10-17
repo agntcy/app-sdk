@@ -98,6 +98,11 @@ class BaseAgentSemanticServiceHandler(BaseAgentSemanticLayer):
         """Process an incoming message, will be called by an app handler/message bridge"""
         pass
 
+    @abstractmethod
+    def setup(self, *args, **kwargs) -> None:
+        """Setup any async handlers or state for the protocol."""
+        pass
+
 
 """
 Backwards compatibility layer
@@ -148,6 +153,6 @@ class BaseAgentProtocol(ABC):
         pass
 
     @abstractmethod
-    def handle_message(self, message: Message) -> Message:
+    async def handle_message(self, message: Message) -> Message:
         """Handle an incoming message and return a response."""
         pass
