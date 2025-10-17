@@ -1,4 +1,4 @@
-from agntcy_app_sdk.transports.nats.transport import NatsTransport
+from agntcy_app_sdk.transport.nats.transport import NatsTransport
 
 
 def test_extract_message_payload_ids_realistic():

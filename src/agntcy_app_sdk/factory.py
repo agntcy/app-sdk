@@ -5,16 +5,16 @@ from typing import Dict, Type
 from enum import Enum
 import os
 
-from agntcy_app_sdk.transports.transport import BaseTransport
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
+from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.semantic.base import BaseAgentProtocol
 
-from agntcy_app_sdk.transports.slim.transport import SLIMTransport
-from agntcy_app_sdk.transports.nats.transport import NatsTransport
-from agntcy_app_sdk.transports.streamable_http.transport import StreamableHTTPTransport
+from agntcy_app_sdk.transport.slim.transport import SLIMTransport
+from agntcy_app_sdk.transport.nats.transport import NatsTransport
+from agntcy_app_sdk.transport.streamable_http.transport import StreamableHTTPTransport
 
-from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
-from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
-from agntcy_app_sdk.protocols.fast_mcp.protocol import FastMCPProtocol
+from agntcy_app_sdk.semantic.a2a.protocol import A2AProtocol
+from agntcy_app_sdk.semantic.mcp.protocol import MCPProtocol
+from agntcy_app_sdk.semantic.fast_mcp.protocol import FastMCPProtocol
 from a2a.server.apps import A2AStarletteApplication
 
 from mcp.server.lowlevel import Server as MCPServer

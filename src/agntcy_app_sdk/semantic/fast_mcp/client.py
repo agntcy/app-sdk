@@ -3,8 +3,8 @@
 
 import json
 from typing import Any, Dict, Optional
-from agntcy_app_sdk.protocols.message import Message
-from agntcy_app_sdk.transports.transport import ResponseMode
+from agntcy_app_sdk.semantic.message import Message
+from agntcy_app_sdk.transport.base import ResponseMode
 
 
 class MCPClient:
