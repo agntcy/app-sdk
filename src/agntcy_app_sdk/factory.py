@@ -16,7 +16,6 @@ from agntcy_app_sdk.semantic.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.semantic.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.semantic.fast_mcp.protocol import FastMCPProtocol
 
-
 from agntcy_app_sdk.app_sessions import AppSession
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
