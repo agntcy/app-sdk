@@ -3,9 +3,8 @@
 
 from abc import ABC, abstractmethod
 from agntcy_app_sdk.semantic.message import Message
-from typing import Callable, Optional
+from typing import Callable, Optional, Awaitable
 from typing import Any, TypeVar, Type
-import asyncio
 
 from enum import Enum, auto
 
@@ -89,6 +88,6 @@ class BaseTransport(ABC):
         pass
 
     @abstractmethod
-    def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
+    def set_callback(self, callback: Callable[..., Awaitable[Any]]) -> None:
         """Set the message handler function."""
         pass

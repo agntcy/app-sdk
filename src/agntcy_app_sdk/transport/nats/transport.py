@@ -11,7 +11,7 @@ from opentelemetry import trace
 from agntcy_app_sdk.transport.base import BaseTransport, ResponseMode
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.semantic.message import Message
-from typing import Callable, List, Optional, Tuple, Any
+from typing import Callable, List, Optional, Tuple, Any, Awaitable
 from uuid import uuid4
 
 configure_logging()
@@ -274,7 +274,7 @@ class NatsTransport(BaseTransport):
 
         return responses
 
-    def set_callback(self, callback: Callable[[Message], asyncio.Future]) -> None:
+    def set_callback(self, callback: Callable[..., Awaitable[Any]]) -> None:
         """Set the message handler function."""
         self._callback = callback
 

@@ -55,7 +55,7 @@ class FastMCPProtocol(MCPProtocol):
             raise TypeError("Provided server is not an instance of FastMCP")
         self._server = server
 
-    async def setup_ingress_handler(self) -> None:
+    async def setup(self, *args, **kwargs) -> None:
         """
         Set up the ingress handler for the FastMCP server.
 
