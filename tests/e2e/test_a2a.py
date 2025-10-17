@@ -214,6 +214,12 @@ async def test_groupchat(run_a2a_server, transport):
         f"\n--- Starting test: test_groupchat | Transport: {transport} | Endpoint: {endpoint} ---"
     )
 
+    for name in [
+        "default/default/foo",
+        "default/default/bar",
+    ]:
+        run_a2a_server(transport, endpoint, name=name, topic="zoo")
+
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory(enable_tracing=True)

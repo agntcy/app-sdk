@@ -99,7 +99,7 @@ class BaseAgentSemanticServiceHandler(BaseAgentSemanticLayer):
         pass
 
     @abstractmethod
-    def setup(self, *args, **kwargs) -> None:
+    async def setup(self, *args, **kwargs) -> None:
         """Setup any async handlers or state for the protocol."""
         pass
 
@@ -117,6 +117,11 @@ class BaseAgentProtocol(ABC):
     @abstractmethod
     def type(self) -> str:
         """Return the protocol type."""
+        pass
+
+    @abstractmethod
+    async def setup(self, *args, **kwargs) -> None:
+        """Setup any async handlers or state for the protocol."""
         pass
 
     @abstractmethod
@@ -145,11 +150,6 @@ class BaseAgentProtocol(ABC):
     @abstractmethod
     def bind_server(self, server: Any) -> None:
         """Bind the protocol to a server."""
-        pass
-
-    @abstractmethod
-    def setup_ingress_handler(self, *args, **kwargs) -> None:
-        """Create an ingress handler for the protocol."""
         pass
 
     @abstractmethod
