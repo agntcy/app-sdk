@@ -9,9 +9,8 @@ from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 import slim_bindings
 from slim_bindings import (
     PyName,
-    PySessionInfo,
+    PySession,
     PySessionConfiguration,
-    PySessionDirection,
 )
 from agntcy_app_sdk.transports.transport import Message
 from threading import Lock
@@ -22,7 +21,7 @@ logger = get_logger(__name__)
 
 class SessionManager:
     def __init__(self):
-        self._sessions: Dict[str, PySessionInfo] = {}
+        self._sessions: Dict[str, PySession] = {}
         self._slim = None
         self._lock = Lock()
 
@@ -32,24 +31,25 @@ class SessionManager:
         """
         self._slim = slim
 
-    async def request_reply_session(
+    async def point_to_point_session(
         self,
+        remote_name: PyName,
         max_retries: int = 5,
         timeout: datetime.timedelta = datetime.timedelta(seconds=5),
         mls_enabled: bool = True,
     ):
         """
-        Create a new request-reply session with predefined configuration.
+        Create a new point-to-point session with predefined configuration.
         """
         if not self._slim:
             raise ValueError("SLIM client is not set")
 
-        # check if we already have a request-reply session
-        for session_id, (session, q) in self._slim.sessions.items():
+        # check if we already have a PointToPoint session
+        for session_id, (session, q) in self._sessions.items():
             try:
-                conf = await self._slim.get_session_config(session_id)
-                # compare the type of conf to PySessionConfiguration.FireAndForget
-                if isinstance(conf, PySessionConfiguration.FireAndForget):
+                conf = await session.session_config()
+                # compare the type of conf to PySessionConfiguration.PointToPoint
+                if isinstance(conf, PySessionConfiguration.PointToPoint):
                     return session_id, session
             except Exception as e:
                 # TODO: Revisit with SLIM team if this still exists in 0.5.0
@@ -60,10 +60,10 @@ class SessionManager:
 
         with self._lock:
             session = await self._slim.create_session(
-                PySessionConfiguration.FireAndForget(
+                PySessionConfiguration.PointToPoint(
+                    peer_name=remote_name,
                     max_retries=max_retries,
                     timeout=timeout,
-                    sticky=True,
                     mls_enabled=mls_enabled,
                 )
             )
@@ -94,11 +94,9 @@ class SessionManager:
                 return session_key, self._sessions[session_key]
 
             logger.debug(f"Creating new group broadcast session: {session_key}")
-            session_info = await self._slim.create_session(
-                PySessionConfiguration.Streaming(
-                    PySessionDirection.BIDIRECTIONAL,
-                    topic=channel,
-                    moderator=True,
+            created_session = await self._slim.create_session(
+                PySessionConfiguration.Group(
+                    channel_name=channel,
                     max_retries=max_retries,
                     timeout=timeout,
                     mls_enabled=mls_enabled,
@@ -107,19 +105,17 @@ class SessionManager:
 
             for invitee in invitees:
                 try:
-                    logger.debug(f"Inviting {invitee} to session {session_info.id}")
+                    logger.debug(f"Inviting {invitee} to session {created_session.id}")
                     await self._slim.set_route(invitee)
-                    await self._slim.invite(session_info, invitee)
+                    await created_session.invite(invitee)
                 except Exception as e:
                     logger.error(f"Failed to invite {invitee}: {e}")
 
-            # store the session info
-            self._sessions[session_key] = session_info
-            return session_key, session_info
+            # store the created session
+            self._sessions[session_key] = created_session
+            return session_key, created_session
 
-    async def close_session(
-        self, session: PySessionInfo, remote: PyName = None, end_signal: str = None
-    ):
+    async def close_session(self, session: PySession, end_signal: str = None):
         """
         Close and remove a session by its key.
         """
@@ -128,15 +124,15 @@ class SessionManager:
 
         try:
             # send the end signal to the remote if provided
-            if remote is not None and end_signal is not None:
-                logger.info(f"Sending end signal '{end_signal}' to remote {remote}")
+            if end_signal is not None:
+                logger.info(f"Sending end signal '{end_signal}' to remote {session.dst}")
 
                 end_msg = Message(
                     type="text/plain",
                     headers={"x-session-end-message": end_signal},
                     payload=end_signal,
                 )
-                await self._slim.publish(session, end_msg.serialize(), remote)
+                await session.publish(end_msg.serialize())
 
             logger.info(f"waiting before closing session: {session.id}")
             # todo: proper way to wait for all messages to be processed
@@ -144,7 +140,7 @@ class SessionManager:
                 random.uniform(5, 10)
             )  # add sleep before closing to allow for any in-flight messages to be processed
             logger.info(f"deleting session: {session.id}")
-            await self._slim.delete_session(session.id)
+            await self._slim.delete_session(session)
             logger.debug(f"Closed session: {session.id}")
 
             # remove from local store

@@ -87,7 +87,7 @@ class SLIMTransport(BaseTransport):
             # Initialize tracing if enabled
             from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
-            SLIMInstrumentor().instrument()
+            # SLIMInstrumentor().instrument()
             logger.info("SLIMTransport initialized with tracing enabled")
 
         logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
@@ -241,33 +241,35 @@ class SLIMTransport(BaseTransport):
             logger.warning("SLIM client is not initialized, calling setup() ...")
             await self.setup()
 
+        if not (message and remote_name):
+            logger.error(f"message and topic are not provided")
+            return None
+
         logger.debug(f"Requesting response from topic: {remote_name}")
 
-        async with self._slim:
-            await self._slim.set_route(remote_name)
+        await self._slim.set_route(remote_name)
 
-            # create or get a request-reply (sticky fire-and-forget) session
-            _, session = await self._session_manager.request_reply_session()
+        # create or get a point-to-point session
+        _, session = await self._session_manager.point_to_point_session(
+            remote_name, timeout=datetime.timedelta(seconds=timeout)
+        )
 
-            if not message.headers:
-                message.headers = {}
+        if not message.headers:
+            message.headers = {}
 
-            message.headers["x-respond-to-source"] = "true"
+        message.headers["x-respond-to-source"] = "true"
 
-            try:
-                _, reply = await self._slim.request_reply(
-                    session,
-                    message.serialize(),
-                    remote_name,
-                    timeout=datetime.timedelta(seconds=timeout),
-                )
-            except asyncio.TimeoutError:
-                logger.warning(f"Request timed out after {timeout} seconds")
-                return None
+        try:
+            await session.publish(message.serialize())
+            # Wait for reply from remote peer
+            _, reply = await session.get_message()
+        except Exception as e:
+            logger.warning(f"Failed to publish message: {e}")
+            return None
 
-            reply = Message.deserialize(reply)
+        reply = Message.deserialize(reply)
 
-            return reply
+        return reply
 
     async def _request_all(
         self,
@@ -349,7 +351,7 @@ class SLIMTransport(BaseTransport):
                 async with self._slim:
                     (
                         _,
-                        session_info,
+                        group_session,
                     ) = await self._session_manager.group_broadcast_session(
                         remote_name, invitees
                     )
@@ -358,14 +360,12 @@ class SLIMTransport(BaseTransport):
                     await asyncio.sleep(0.5)
 
                     # Initiate the group broadcast
-                    await self._slim.publish(
-                        session_info, message.serialize(), remote_name
-                    )
+                    await group_session.publish(message.serialize())
 
                     # Wait for responses from invitees until the end message is received
                     while True:
                         try:
-                            _, msg = await self._slim.receive(session=session_info.id)
+                            _, msg = await group_session.receive()
                             deserialized_msg = Message.deserialize(msg)
                             responses.append(deserialized_msg)
 
@@ -374,7 +374,7 @@ class SLIMTransport(BaseTransport):
                                 break
                         except Exception as e:
                             logger.warning(
-                                f"Issue encountered while receiving message on session {session_info.id}: {e}"
+                                f"Issue encountered while receiving message on session {group_session.id}: {e}"
                             )
                             continue
         except asyncio.TimeoutError:
@@ -382,13 +382,12 @@ class SLIMTransport(BaseTransport):
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
         finally:
-            if session_info:
+            if group_session:
                 try:
-                    await self._session_manager.close_session(
-                        session_info, remote=remote_name, end_signal=end_signal
-                    )
+                    await self._session_manager.close_session(group_session,
+                                                              end_signal=end_signal)
                 except Exception as e:
-                    logger.error(f"Failed to close session {session_info.id}: {e}")
+                    logger.error(f"Failed to close session {group_session.id}: {e}")
 
         return responses
 
@@ -403,7 +402,7 @@ class SLIMTransport(BaseTransport):
 
         logger.debug(f"Publishing to topic: {channel} for all invitees")
 
-        _, session_info = await self._session_manager.group_broadcast_session(
+        _, group_session = await self._session_manager.group_broadcast_session(
             channel, invitees
         )
 
@@ -413,23 +412,23 @@ class SLIMTransport(BaseTransport):
         # Signal to the receiver that we expect a direct response from each invitee
         message.headers["x-respond-to-source"] = "true"
 
-        async with self._slim:
-            await self._slim.publish(session_info, message.serialize(), channel)
+        async with group_session:
+            await group_session.publish(message.serialize())
 
             # wait for responses from all invitees or be interrupted by caller
             responses = []
             while len(responses) < len(invitees):
                 try:
-                    _, msg = await self._slim.receive(session=session_info.id)
+                    _, msg = await group_session.receive(session=group_session.id)
                     msg = Message.deserialize(msg)
                     responses.append(msg)
                 except Exception as e:
                     logger.error(
-                        f"Error receiving message on session {session_info.id}: {e}"
+                        f"Error receiving message on session {group_session.id}: {e}"
                     )
                     continue
 
-            await self._session_manager.close_session(session_info)
+            await self._session_manager.close_session(group_session)
             return responses
 
     async def subscribe(self, topic: str, org=None, namespace=None) -> None:
@@ -447,13 +446,13 @@ class SLIMTransport(BaseTransport):
             async with self._slim:
                 while not self._shutdown_event.is_set():
                     try:
-                        session_info, _ = await self._slim.receive()
-                        logger.debug(
-                            f"Received new session: {session_info.id} - {session_info.destination_name}"
+                        session, _ = await self._slim.listen_for_session(timeout=datetime.timedelta(seconds=1))
+                        logger.info(
+                            f"Received new session: {session.id} - {session.destination_name}"
                         )
 
                         task = asyncio.create_task(
-                            self._handle_session_receive(session_info.id)
+                            self._handle_session_receive(session.id)
                         )
                         self._tasks.add(task)
                         task.add_done_callback(self._tasks.discard)
@@ -474,7 +473,9 @@ class SLIMTransport(BaseTransport):
         try:
             while not self._shutdown_event.is_set():
                 try:
-                    session, msg = await self._slim.receive(session=session_id)
+                    session = self._session_manager._sessions[session_id]
+                    logger.info(f"Received new session: {session}")
+                    _, msg = await session.get_message()
                     consecutive_errors = 0  # Reset on success
                     end_session = await self._process_received_message(session, msg)
                     if end_session:
