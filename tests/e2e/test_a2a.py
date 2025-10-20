@@ -251,20 +251,105 @@ async def test_groupchat(run_a2a_server, transport):
         id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
     )
 
-    responses = await client.broadcast_message(
-        request,
-        broadcast_topic="zoo",
-        recipients=[
+    responses = await client.start_groupchat(
+        init_message=request,
+        group_channel="zoo",
+        participants=[
             "default/default/foo",
             "default/default/bar",
         ],
-        group_chat=True,
         end_message="DELIVERED",
         timeout=30,
     )
 
     print(f"[debug] Received {len(responses)} responses from group chat")
     print(f"[debug] Group chat responses: {responses}")
+
+    if transport_instance:
+        print("[teardown] Closing transport...")
+        await transport_instance.close()
+
+    print(f"=== ✅ Test passed for transport: {transport} ===\n")
+
+
+@pytest.mark.parametrize(
+    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
+)
+@pytest.mark.asyncio
+async def test_streaming_groupchat(run_a2a_server, transport):
+    """
+    End-to-end test for the A2A factory client group chat over different transports.
+    """
+    if transport == "A2A":
+        pytest.skip(
+            "Skipping A2A transport test as it is not applicable for group chat."
+        )
+    if transport == "NATS":
+        pytest.skip(
+            "Skipping NATS transport test as it is not applicable for group chat."
+        )
+
+    # Get the endpoint inside the test using the transport name as a key
+    endpoint = TRANSPORT_CONFIGS[transport]
+
+    print(
+        f"\n--- Starting test: test_groupchat | Transport: {transport} | Endpoint: {endpoint} ---"
+    )
+
+    for name in [
+        "default/default/foo",
+        "default/default/bar",
+    ]:
+        run_a2a_server(transport, endpoint, name=name, topic="zoo")
+
+    # Create factory and transport
+    print("[setup] Initializing client factory and transport...")
+    factory = AgntcyFactory(enable_tracing=True)
+    transport_instance = factory.create_transport(
+        transport, endpoint=endpoint, name="default/default/default"
+    )
+
+    # Start the mock/test server
+    print("[setup] Launching test server...")
+
+    if transport_instance.type() == "SLIM":
+        client_handshake_topic = "default/default/foo"
+    else:
+        client_handshake_topic = "broadcast"
+
+    # Create A2A client
+    print("[test] Creating A2A client...")
+    client = await factory.create_client(
+        "A2A",
+        agent_topic=client_handshake_topic,
+        transport=transport_instance,
+    )
+    assert client is not None, "Client was not created"
+
+    # Build message request
+    print("[test] Sending test message...")
+    send_message_payload: dict[str, Any] = {
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": "This is a groupchat message"}],
+            "messageId": "1234",
+        },
+    }
+    request = SendMessageRequest(
+        id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
+    )
+
+    async for message in client.start_streaming_groupchat(
+        init_message=request,
+        group_channel="zoo",
+        participants=[
+            "default/default/foo",
+            "default/default/bar",
+        ],
+        end_message="DELIVERED",
+        timeout=30,
+    ):
+        print("streaming a message:", message)
 
     if transport_instance:
         print("[teardown] Closing transport...")

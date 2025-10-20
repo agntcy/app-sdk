@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from starlette.types import Scope
-from typing import Dict, Any, List
+from typing import Dict, Any, List, AsyncIterator
 import json
 from uuid import uuid4
 import httpx
@@ -14,12 +14,13 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.types import (
     AgentCard,
     SendMessageRequest,
+    SendStreamingMessageRequest,
     SendMessageResponse,
     JSONRPCSuccessResponse,
     MessageSendParams,
 )
 from agntcy_app_sdk.semantic.base import BaseAgentProtocol
-from agntcy_app_sdk.transport.base import BaseTransport, ResponseMode
+from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
@@ -95,7 +96,7 @@ class A2AProtocol(BaseAgentProtocol):
                 route_path=AGENT_CARD_WELL_KNOWN_PATH,
                 method=method,
             )
-            response = await transport.request(topic, request, ResponseMode.FIRST)
+            response = await transport.request(topic, request)
 
             response.payload = json.loads(response.payload.decode("utf-8"))
             card = AgentCard.model_validate(response.payload)
@@ -112,7 +113,7 @@ class A2AProtocol(BaseAgentProtocol):
                 route_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
                 method=method,
             )
-            response = await transport.request(topic, request, ResponseMode.FIRST)
+            response = await transport.request(topic, request)
 
             response.payload = json.loads(response.payload.decode("utf-8"))
             card = AgentCard.model_validate(response.payload)
@@ -205,7 +206,6 @@ class A2AProtocol(BaseAgentProtocol):
                     self.message_translator(
                         request=rpc_request_payload, headers=headers
                     ),
-                    response_mode=ResponseMode.FIRST,
                 )
 
                 response.payload = json.loads(response.payload.decode("utf-8"))
@@ -216,13 +216,72 @@ class A2AProtocol(BaseAgentProtocol):
                 )
                 raise e  # TODO: handle errors more gracefully
 
+        async def start_streaming_groupchat(
+            init_message: SendMessageRequest,
+            group_channel: str,
+            participants: List[str],
+            timeout: float = 60,
+            end_message: str = "work-done",
+        ) -> AsyncIterator[SendMessageResponse]:
+            if not init_message.id:
+                init_message.id = str(uuid4())
+
+            msg = self.message_translator(
+                request=init_message.model_dump(mode="json", exclude_none=True)
+            )
+
+            async for raw_member_message in transport.start_streaming_conversation(
+                group_channel=group_channel,
+                participants=participants,
+                init_message=msg,
+                end_message=end_message,
+                timeout=timeout,
+            ):
+                message = json.loads(raw_member_message.payload.decode("utf-8"))
+                yield SendMessageResponse(message)
+
+        async def start_groupchat(
+            init_message: SendMessageRequest,
+            group_channel: str,
+            participants: List[str],
+            timeout: float = 60,
+            end_message: str = "work-done",
+        ) -> List[SendMessageResponse]:
+            if not init_message.id:
+                init_message.id = str(uuid4())
+
+            msg = self.message_translator(
+                request=init_message.model_dump(mode="json", exclude_none=True)
+            )
+            try:
+                member_messages = await transport.start_conversation(
+                    group_channel=group_channel,
+                    participants=participants,
+                    init_message=msg,
+                    end_message=end_message,
+                    timeout=timeout,
+                )
+                groupchat_messages = []
+                for raw_msg in member_messages:
+                    try:
+                        resp = json.loads(raw_msg.payload.decode("utf-8"))
+                        groupchat_messages.append(SendMessageResponse(resp))
+                    except Exception as e:
+                        logger.error(f"Error decoding JSON response: {e}")
+                        continue
+
+                return groupchat_messages
+            except Exception as e:
+                logger.error(
+                    f"Error starting group chat A2A request with transport {transport.type()}: {e}"
+                )
+                return []
+
         async def broadcast_message(
-            request: SendMessageRequest,
+            request: SendMessageRequest | SendStreamingMessageRequest,
             recipients: List[str] | None = None,
             broadcast_topic: str = None,
             timeout: float = 30.0,
-            group_chat: bool = False,
-            end_message: str = "work-done",
         ) -> List[SendMessageResponse]:
             """
             Broadcast a request using the provided transport.
@@ -237,21 +296,16 @@ class A2AProtocol(BaseAgentProtocol):
             if not broadcast_topic:
                 broadcast_topic = topic
 
-            # determine response mode, either collect len(recipients) or group chat
-            resp_mode = ResponseMode.GROUP if group_chat else ResponseMode.COLLECT_ALL
-
             try:
-                responses = await transport.request(
+                responses = await transport.gather(
                     broadcast_topic,
                     msg,
-                    response_mode=resp_mode,
                     recipients=recipients,
-                    end_message=end_message,
                     timeout=timeout,
                 )
             except Exception as e:
                 logger.error(
-                    f"Error broadcasting A2A request with transport {transport.type()}: {e}"
+                    f"Error gathering A2A request with transport {transport.type()}: {e}"
                 )
                 return []
 
@@ -268,7 +322,11 @@ class A2AProtocol(BaseAgentProtocol):
 
         # override the _send_request method to use the provided transport
         client._transport._send_request = _send_request
+
+        # monkey patch experimental patterns
         client.broadcast_message = broadcast_message
+        client.start_groupchat = start_groupchat
+        client.start_streaming_groupchat = start_streaming_groupchat
 
     def message_translator(
         self, request: dict[str, Any], headers: dict[str, Any] | None = None
