@@ -197,7 +197,7 @@ class MCPProtocol(BaseAgentProtocol):
 
         # Send message through transport and wait for response
         resp = await transport.request(
-            topic=topic,
+            recipient=topic,
             message=Message(
                 type=str(types.JSONRPCMessage),
                 payload=json.dumps(msg_dict),
