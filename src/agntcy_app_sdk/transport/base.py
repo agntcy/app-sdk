@@ -102,7 +102,7 @@ class FanOutMixin(ABC):
 
     @abstractmethod
     async def gather_stream(
-        self, topic: str, message: Message, **kwargs
+        self, topic: str, message: Message, message_limit: int = None, **kwargs
     ) -> AsyncIterator[Message]:
         """
         Publish a message and yield responses from multiple subscribers.

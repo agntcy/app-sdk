@@ -3,7 +3,15 @@
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.utils import new_agent_text_message
+from a2a.server.tasks import TaskUpdater
+from a2a.utils import (
+    new_agent_text_message,
+    new_task,
+)
+from a2a.types import (
+    TaskState,
+)
+from typing import AsyncIterator
 import asyncio
 import random
 import logging
@@ -36,6 +44,11 @@ class HelloWorldAgent:
 
         return "Hello from " + self.name
 
+    async def stream(self, context: RequestContext) -> AsyncIterator:
+        response = "Hello from " + self.name
+        for chunk in response.split():
+            yield chunk
+
 
 class HelloWorldAgentExecutor(AgentExecutor):
     """Test AgentProxy Implementation."""
@@ -50,6 +63,37 @@ class HelloWorldAgentExecutor(AgentExecutor):
     ) -> None:
         result = await self.agent.invoke(context)
         await event_queue.enqueue_event(new_agent_text_message(result))
+
+    async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
+        raise Exception("cancel not supported")
+
+
+class HelloWorldStreamingAgentExecutor(AgentExecutor):
+    def __init__(self, name: str):
+        self.agent = HelloWorldAgent(name)
+
+    async def execute(
+        self,
+        context: RequestContext,
+        event_queue: EventQueue,
+    ) -> None:
+        print("request--", context.message)
+
+        task = new_task(context.message)
+        await event_queue.enqueue_event(task)
+
+        updater = TaskUpdater(event_queue, task.id, task.context_id)
+        async for token in self.agent.stream(context):
+            await updater.update_status(
+                TaskState.working,
+                new_agent_text_message(
+                    token,
+                    task.context_id,
+                    task.id,
+                ),
+            )
+
+        await updater.complete()
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("cancel not supported")

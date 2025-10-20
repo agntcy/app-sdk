@@ -168,16 +168,24 @@ class SLIMTransport(BaseTransport):
         topic: str,
         message: Message,
         recipients: List[str],
+        message_limit: int = None,
         timeout: int = 60,
         **kwargs,
     ) -> List[Message]:
         """
         Publish a message and collect responses from multiple subscribers.
         """
-        print("SLIMTransport.gather called")
+        if message_limit is None:
+            message_limit = len(recipients)
+
         responses = []
         async for msg in self.gather_stream(
-            topic, message, recipients, timeout, **kwargs
+            topic,
+            message,
+            recipients,
+            message_limit=message_limit,
+            timeout=timeout,
+            **kwargs,
         ):
             responses.append(msg)
         return responses
@@ -187,12 +195,16 @@ class SLIMTransport(BaseTransport):
         topic: str,
         message: Message,
         recipients: List[str],
+        message_limit: int = None,
         timeout: int = 60,
         **kwargs,
     ) -> AsyncIterator[Message]:
         """
         Publish a message and yield responses from multiple subscribers as they arrive.
         """
+        if not self._slim:
+            raise ValueError("SLIM client is not set, please call setup() first.")
+
         topic = self.sanitize_topic(topic)
         remote_name = self.build_pyname(topic)
 
@@ -201,21 +213,46 @@ class SLIMTransport(BaseTransport):
                 "recipients list must be provided for SLIM COLLECT_ALL mode."
             )
 
-        logger.info(
-            f"Sending message to topic: {remote_name} and waiting for {len(recipients)} responses"
-        )
-
         # convert recipients to PyName objects
         invitees = [self.build_pyname(recipient) for recipient in recipients]
 
+        if message_limit is None:
+            message_limit = float("inf")
+
+        logger.debug(
+            f"Broadcasting to topic: {remote_name} and waiting for {message_limit} responses"
+        )
+
         try:
             async with asyncio.timeout(timeout):
-                async for response in self._yield_all(
-                    channel=remote_name,
-                    message=message,
-                    invitees=invitees,
-                ):
-                    yield response
+                _, session_info = await self._session_manager.group_broadcast_session(
+                    remote_name, invitees
+                )
+
+                # Signal to the receiver that we expect a direct response from each invitee
+                if not message.headers:
+                    message.headers = {}
+                message.headers["x-respond-to-source"] = "true"
+
+                async with self._slim:
+                    await self._slim.publish(
+                        session_info, message.serialize(), remote_name
+                    )
+
+                    # wait for responses from all invitees or be interrupted by caller
+                    messages_received = 0
+                    while messages_received < message_limit:
+                        try:
+                            _, msg = await self._slim.receive(session=session_info.id)
+                            msg = Message.deserialize(msg)
+                            messages_received += 1
+                            yield msg
+                        except Exception as e:
+                            logger.error(
+                                f"Error receiving message on session {session_info.id}: {e}"
+                            )
+                            continue
+                    await self._session_manager.close_session(session_info)
         except asyncio.TimeoutError:
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
@@ -420,46 +457,6 @@ class SLIMTransport(BaseTransport):
         except Exception as e:
             logger.error(f"Error building PyName from topic '{topic}': {e}")
             raise
-
-    async def _yield_all(
-        self,
-        channel: PyName,
-        message: Message,
-        invitees: List[PyName],
-    ) -> AsyncIterator[Message]:
-        if not self._slim:
-            raise ValueError("SLIM client is not set, please call setup() first.")
-
-        logger.debug(f"Publishing to topic: {channel} for all invitees")
-
-        _, session_info = await self._session_manager.group_broadcast_session(
-            channel, invitees
-        )
-
-        if not message.headers:
-            message.headers = {}
-
-        # Signal to the receiver that we expect a direct response from each invitee
-        message.headers["x-respond-to-source"] = "true"
-
-        async with self._slim:
-            await self._slim.publish(session_info, message.serialize(), channel)
-
-            # wait for responses from all invitees or be interrupted by caller
-            messages_received = 0
-            while messages_received < len(invitees):
-                try:
-                    _, msg = await self._slim.receive(session=session_info.id)
-                    msg = Message.deserialize(msg)
-                    messages_received += 1
-                    yield msg
-                except Exception as e:
-                    logger.error(
-                        f"Error receiving message on session {session_info.id}: {e}"
-                    )
-                    continue
-
-            await self._session_manager.close_session(session_info)
 
     async def subscribe(self, topic: str, org=None, namespace=None) -> None:
         """

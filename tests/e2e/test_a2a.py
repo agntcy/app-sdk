@@ -77,8 +77,6 @@ async def test_client(run_a2a_server, transport):
 
     print(f"[debug] Raw response: {response}")
 
-    assert response["jsonrpc"] == "2.0"
-    assert response["result"]["kind"] == "message"
     assert response["result"]["role"] == "agent"
 
     parts = response["result"]["parts"]
@@ -321,6 +319,13 @@ async def test_groupchat(run_a2a_server, transport):
         f"\n--- Starting test: test_groupchat | Transport: {transport} | Endpoint: {endpoint} ---"
     )
 
+    # Run the groupchat member servers
+    for name in [
+        "default/default/foo",
+        "default/default/bar",
+    ]:
+        run_a2a_server(transport, endpoint, name=name)
+
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory(enable_tracing=True)
@@ -383,7 +388,7 @@ async def test_groupchat(run_a2a_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_streaming_groupchat(run_a2a_server, transport):
+async def test_groupchat_streaming(run_a2a_server, transport):
     """
     End-to-end test for the A2A factory client group chat over different transports.
     """

@@ -96,7 +96,11 @@ class NatsTransport(BaseTransport):
         """
         Send a request and receive a continuous stream of responses.
         """
-        raise NotImplementedError("Streaming not supported for NATS point-to-point.")
+        # reuse gather_stream implementation
+        async for message in self.gather_stream(
+            recipient, message, [recipient], timeout=timeout, **kwargs
+        ):
+            yield message
 
     # -----------------------------------------------------------------------------
     # Fan-Out / Publish-Subscribe
@@ -114,6 +118,7 @@ class NatsTransport(BaseTransport):
         topic: str,
         message: Message,
         recipients: List[str],
+        message_limit: int = None,
         timeout: int = 60,
         **kwargs,
     ) -> List[Message]:
@@ -121,9 +126,17 @@ class NatsTransport(BaseTransport):
         Publish a message and collect responses from multiple subscribers.
         """
 
+        if message_limit is None:
+            message_limit = len(recipients)
+
         responses = []
         async for resp in self.gather_stream(
-            topic, message, recipients, timeout=timeout, **kwargs
+            topic,
+            message,
+            recipients,
+            message_limit=message_limit,
+            timeout=timeout,
+            **kwargs,
         ):
             responses.append(resp)
         return responses
@@ -134,6 +147,7 @@ class NatsTransport(BaseTransport):
         message: Message,
         recipients: List[str],
         timeout: int = 60,
+        message_limit: int = None,
         **kwargs,
     ) -> AsyncIterator[Message]:
         """
@@ -157,7 +171,8 @@ class NatsTransport(BaseTransport):
         logger.info(f"Publishing to: {publish_topic} and receiving from: {reply_topic}")
 
         response_queue: asyncio.Queue = asyncio.Queue()
-        expected_responses = len(recipients)
+        if message_limit is None:
+            message_limit = float("inf")
 
         async def _response_handler(nats_msg) -> None:
             msg = Message.deserialize(nats_msg.data)
@@ -172,18 +187,17 @@ class NatsTransport(BaseTransport):
             await self.publish(topic, message)
 
             received = 0
-            while received < expected_responses:
+            while received < message_limit:
                 try:
                     msg = await asyncio.wait_for(response_queue.get(), timeout=timeout)
                     received += 1
-                    logger.info(f"Received {received}/{expected_responses} response(s)")
+                    logger.debug(f"Received {received} response")
                     yield msg
                 except asyncio.TimeoutError:
                     logger.warning(
                         f"Timeout reached after {timeout}s; collected {received} response(s)"
                     )
                     break
-
         finally:
             if sub is not None:
                 await sub.unsubscribe()
