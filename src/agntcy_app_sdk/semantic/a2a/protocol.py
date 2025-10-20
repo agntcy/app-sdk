@@ -392,7 +392,7 @@ class A2AProtocol(BaseAgentProtocol):
         """Bind the protocol to a server."""
         self._server = server
 
-    def setup_ingress_handler(self) -> None:
+    async def setup(self, *args, **kwargs) -> None:
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.
         """

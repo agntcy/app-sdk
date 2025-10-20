@@ -232,72 +232,38 @@ class MCPProtocol(BaseAgentProtocol):
         else:
             self._low_level_server = server
 
-    async def setup_ingress_handler(self) -> None:
-        """
-        Set up the ingress handler to process incoming MCP requests.
-
-        This method establishes the server-side message processing pipeline:
-        1. Creates a response tracking system for request-response correlation
-        2. Sets up bidirectional streams for server communication
-        3. Starts the MCP server with proper initialization
-        4. Enables stateless operation for scalability
-
-        The ingress handler processes incoming requests and routes responses
-        back to the appropriate clients based on request IDs.
-
-        Raises:
-            ValueError: If no MCP server is bound to the protocol
-
-        Architecture:
-            Incoming Request -> Stream -> MCP Server -> Response -> Reply Method -> Client
-        """
-        # Ensure a server is bound before setting up ingress
+    async def setup(self, *args, **kwargs) -> None:
         if not self._low_level_server:
             raise ValueError(
                 "MCP server is not bound to the protocol, please bind it first"
             )
 
-        # Initialize response tracking for request-response correlation
-        # Maps request IDs to futures waiting for responses
         self._response_futures: dict[str, asyncio.Future] = {}
 
         async def reply_method(session_message: SessionMessage):
-            """
-            Handle outgoing responses from the MCP server.
-
-            This method correlates server responses with pending client requests
-            using request IDs, and fulfills the corresponding futures.
-
-            Args:
-                session_message: The response message from the MCP server
-            """
             request_id = session_message.message.root.id
             fut = self._response_futures.get(request_id)
-
-            if fut:
-                if not fut.done():
-                    # Fulfill the waiting future with the response
-                    fut.set_result(session_message)
-                else:
-                    # Already fulfilled/cancelled, likely duplicate or late response
-                    logger.debug(
-                        f"Ignoring response for id={request_id} "
-                        f"(future already done: cancelled={fut.cancelled()})"
-                    )
+            if fut and not fut.done():
+                fut.set_result(session_message)
+            elif fut:
+                logger.debug(f"Ignoring response for id={request_id} (already done)")
             else:
-                # Log unexpected responses (possible timing issues)
                 logger.warning(f"Unexpected response for id={request_id}")
 
-        # Set up server streams and start the MCP server
-        async with self.new_streams(reply_method) as (read_stream, write_stream):
-            await self._low_level_server.run(
-                read_stream,
-                write_stream,
-                self._low_level_server.create_initialization_options(),
-                stateless=True,
-            )
+        async def _run_server():
+            async with self.new_streams(reply_method) as (read_stream, write_stream):
+                await self._low_level_server.run(
+                    read_stream,
+                    write_stream,
+                    self._low_level_server.create_initialization_options(),
+                    stateless=True,
+                )
+                logger.info("[setup] MCP server stopped.")
 
-            logger.info("[setup] MCP server started successfully.")
+        # 🔹 Run the server in the background, non-blocking
+        self._server_task = asyncio.create_task(_run_server())
+
+        logger.info("[setup] MCP server started.")
 
     async def handle_message(self, message: Message, timeout: int = 90) -> Message:
         """

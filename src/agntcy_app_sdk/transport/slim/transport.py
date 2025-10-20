@@ -5,7 +5,6 @@ from typing import Optional, Callable, List, AsyncIterator
 import os
 import asyncio
 from uuid import uuid4
-import inspect
 import datetime
 import slim_bindings
 from slim_bindings import (
@@ -544,10 +543,7 @@ class SLIMTransport(BaseTransport):
 
         # Call the callback function
         try:
-            if inspect.iscoroutinefunction(self._callback):
-                output = await self._callback(deserialized_msg)
-            else:
-                output = self._callback(deserialized_msg)
+            output = await self._callback(deserialized_msg)
         except Exception as e:
             logger.error(f"Error in callback function: {e}")
             return False
