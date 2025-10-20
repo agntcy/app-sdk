@@ -4,7 +4,6 @@
 import json
 from typing import Any, Dict, Optional
 from agntcy_app_sdk.semantic.message import Message
-from agntcy_app_sdk.transport.base import ResponseMode
 
 
 class MCPClient:
@@ -57,9 +56,7 @@ class MCPClient:
     ) -> Dict[str, Any]:
         try:
             message = self._build_message(method, params, headers, request_id)
-            response = await self.transport.request(
-                self.topic, message, response_mode=ResponseMode.FIRST
-            )
+            response = await self.transport.request(self.topic, message)
             data = json.loads(response.payload.decode("utf-8"))
             if "error" in data:
                 raise RuntimeError(f"[MCP Error] {method} failed: {data['error']}")

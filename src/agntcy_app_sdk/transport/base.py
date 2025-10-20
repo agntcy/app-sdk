@@ -3,36 +3,179 @@
 
 from abc import ABC, abstractmethod
 from agntcy_app_sdk.semantic.message import Message
-from typing import Callable, Optional, Awaitable
-from typing import Any, TypeVar, Type
+from typing import Callable, Awaitable, AsyncIterator, List, Any, TypeVar, Type
 
-from enum import Enum, auto
+"""
+# Transport Mixins: Messaging Patterns & Unified Interface
+
+             +--------------------+
+             |     Transport      |
+             |  (Unified API /    |
+             |   shared state)    |
+             +--------------------+
+               ^       ^       ^
+               |       |       |
+        +------+   +---+-----+   +---------+
+        | PointToPoint | FanOut | GroupChat|
+        |   Mixin      | Mixin  |  Mixin   |
+        +--------------+--------+----------+
+         Direct 1→1    Broadcast    Multi-party
+         messaging       1→N           chat
+
+# - PointToPointMixin → Direct messaging 1→1
+# - FanOutMixin       → Broadcast 1→N
+# - GroupChatMixin    → Multi-party conversation
+"""
 
 
-class ResponseMode(Enum):
-    """Defines how responses to a topic request should be handled."""
+# -----------------------------------------------------------------------------
+# Point-to-Point Mixin
+# -----------------------------------------------------------------------------
+class PointToPointMixin(ABC):
+    """
+    Adds direct, one-to-one messaging capabilities to a transport.
 
-    FIRST = auto()
-    """First-response-wins. Return as soon as the first reply arrives."""
+    Expected use cases:
+        - RPC-style request/response
+        - Targeted messaging between two nodes
+    Requires the concrete class to provide:
+        - self._connection: the shared underlying transport/connection object
+    """
 
-    COLLECT_N = auto()
-    """Collect N responses from a topic, then return (or until timeout)."""
+    @abstractmethod
+    async def send(self, recipient: str, message: Message, **kwargs) -> None:
+        """
+        Send a message to a single recipient without expecting a response.
+        """
+        raise NotImplementedError
 
-    COLLECT_ALL = auto()
-    """Collect all available responses (requires known member list)."""
+    @abstractmethod
+    async def request(self, recipient: str, message: Message, **kwargs) -> Message:
+        """
+        Send a message to a recipient and await a single response.
+        """
+        raise NotImplementedError
 
-    GROUP = auto()
-    """Respond to a group of subscribers."""
+    @abstractmethod
+    async def request_stream(
+        self, recipient: str, message: Message, **kwargs
+    ) -> AsyncIterator[Message]:
+        """
+        Send a request and receive a continuous stream of responses.
 
+        Default implementation raises NotImplementedError. Concrete transports
+        can override to provide streaming semantics.
+        """
+        raise NotImplementedError("Streaming not supported for point-to-point.")
+
+
+# -----------------------------------------------------------------------------
+# Fan-Out / Publish-Subscribe Mixin
+# -----------------------------------------------------------------------------
+class FanOutMixin(ABC):
+    """
+    Adds one-to-many messaging capabilities (publish/subscribe) to a transport.
+
+    Expected use cases:
+        - Broadcasting updates or notifications
+        - Scatter/gather operations to multiple recipients
+    Requires the concrete class to provide:
+        - self._connection: the shared underlying transport/connection object
+    """
+
+    @abstractmethod
+    async def publish(self, topic: str, message: Message, **kwargs) -> None:
+        """
+        Publish a message to all subscribers of the topic.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def gather(self, topic: str, message: Message, **kwargs) -> List[Message]:
+        """
+        Publish a message and collect responses from multiple subscribers.
+
+        Default implementation raises NotImplementedError. Concrete transports
+        can override to provide scatter/gather semantics.
+        """
+        raise NotImplementedError("Gather not supported for this transport.")
+
+    @abstractmethod
+    async def gather_stream(
+        self, topic: str, message: Message, message_limit: int = None, **kwargs
+    ) -> AsyncIterator[Message]:
+        """
+        Publish a message and yield responses from multiple subscribers.
+
+        Default implementation raises NotImplementedError. Concrete transports
+        can override to provide scatter/gather semantics.
+        """
+        raise NotImplementedError("Gather streaming not supported for this transport.")
+
+
+# -----------------------------------------------------------------------------
+# Group Chat / Multi-Party Conversation Mixin
+# -----------------------------------------------------------------------------
+
+
+class GroupChatMixin(ABC):
+    """
+    Adds multi-party group conversation capabilities to a transport.
+
+    Expected use cases:
+        - Group chat / collaborative channels
+        - Streaming multi-party interactions
+    Requires the concrete class to provide:
+        - self._connection: the shared underlying transport/connection object
+    """
+
+    @abstractmethod
+    async def start_conversation(
+        self,
+        group_channel: str,
+        participants: List[str],
+        init_message: Message,
+        end_message: str,
+        **kwargs,
+    ) -> List[Message]:
+        """
+        Create a new conversation including the given participants.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def start_streaming_conversation(
+        self,
+        group_channel: str,
+        participants: List[str],
+        init_message: Message,
+        end_message: str,
+        **kwargs,
+    ) -> AsyncIterator[Message]:
+        """
+        Create a new streaming conversation including the given participants.
+        """
+        raise NotImplementedError
+
+
+# -----------------------------------------------------------------------------
+# Unified Transport Base Class
+# -----------------------------------------------------------------------------
 
 T = TypeVar("T", bound="BaseTransport")
 
 
-class BaseTransport(ABC):
+class BaseTransport(PointToPointMixin, FanOutMixin, GroupChatMixin, ABC):
     """
-    Abstract base class for transport protocols.
-    This class defines the interface for different transport protocols
-    such as SLIM, NATS, MQTT, KAFKA, etc.
+    Unified messaging transport interface.
+
+    This class combines multiple messaging patterns and optional streaming
+    capabilities.
+
+    Patterns included:
+        - Point-to-Point (send/request/request_stream)
+        - Fan-Out / Publish-Subscribe (publish/gather)
+        - Group Chat / Conversations (create_conversation/get_conversation)
     """
 
     @classmethod
@@ -62,25 +205,9 @@ class BaseTransport(ABC):
         """Close the transport connection."""
         pass
 
-    @abstractmethod
-    async def publish(
-        self,
-        topic: str,
-        message: Message,
-    ) -> None:
-        """Publish a message to a topic, fire and forget."""
-        pass
-
-    @abstractmethod
-    async def request(
-        self,
-        topic: str,
-        message: Message,
-        response_mode: ResponseMode = ResponseMode.FIRST,
-        timeout: Optional[float] = 60.0,
-        **kwargs,
-    ) -> Optional[Message]:
-        """Publish with expectation of replies, governed by ResponseMode."""
+    # -----------------------------------------------------------------------------
+    # Sserver-Side definitions
+    # -----------------------------------------------------------------------------
 
     @abstractmethod
     async def subscribe(self, topic: str, callback: callable = None) -> None:

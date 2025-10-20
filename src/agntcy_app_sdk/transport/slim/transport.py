@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, Callable, List
+from typing import Optional, Callable, List, AsyncIterator
 import os
 import asyncio
 from uuid import uuid4
@@ -15,7 +15,8 @@ from .common import (
     split_id,
 )
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
-from agntcy_app_sdk.transport.base import BaseTransport, ResponseMode, Message
+from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 
 configure_logging()
@@ -91,9 +92,280 @@ class SLIMTransport(BaseTransport):
 
         logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
 
-    # ###################################################
-    # BaseTransport interface methods
-    # ###################################################
+    # -----------------------------------------------------------------------------
+    # BaseTransport method implementations
+    # -----------------------------------------------------------------------------
+
+    # -----------------------------------------------------------------------------
+    # Point-to-Point
+    # -----------------------------------------------------------------------------
+    async def send(self, recipient: str, message: Message, **kwargs) -> None:
+        """
+        Send a message to a single recipient without expecting a response.
+        """
+        raise NotImplementedError
+
+    async def request(
+        self, recipient: str, message: Message, timeout: int = 6, **kwargs
+    ) -> Message:
+        """
+        Send a message to a recipient and await a single response.
+        """
+        topic = self.sanitize_topic(recipient)
+        remote_name = self.build_pyname(topic)
+
+        if not self._slim:
+            logger.warning("SLIM client is not initialized, calling setup() ...")
+            await self.setup()
+
+        logger.debug(f"Requesting response from topic: {remote_name}")
+
+        async with self._slim:
+            await self._slim.set_route(remote_name)
+
+            # create or get a request-reply (sticky fire-and-forget) session
+            _, session = await self._session_manager.request_reply_session()
+
+            if not message.headers:
+                message.headers = {}
+            message.headers["x-respond-to-source"] = "true"
+
+            try:
+                _, reply = await self._slim.request_reply(
+                    session,
+                    message.serialize(),
+                    remote_name,
+                    timeout=datetime.timedelta(seconds=timeout),
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Request timed out after {timeout} seconds")
+                return None
+
+            reply = Message.deserialize(reply)
+            return reply
+
+    async def request_stream(
+        self, recipient: str, message: Message, timeout: int = 90, **kwargs
+    ) -> AsyncIterator[Message]:
+        """
+        Send a request and receive a continuous stream of responses.
+        """
+        raise NotImplementedError("Streaming not supported for SLIM point-to-point.")
+
+    # -----------------------------------------------------------------------------
+    # Fan-Out / Publish-Subscribe
+    # -----------------------------------------------------------------------------
+
+    async def publish(self, topic: str, message: Message, **kwargs) -> None:
+        """
+        Publish a message to all subscribers of the topic.
+        """
+        raise NotImplementedError
+
+    async def gather(
+        self,
+        topic: str,
+        message: Message,
+        recipients: List[str],
+        message_limit: int = None,
+        timeout: int = 60,
+        **kwargs,
+    ) -> List[Message]:
+        """
+        Publish a message and collect responses from multiple subscribers.
+        """
+        if message_limit is None:
+            message_limit = len(recipients)
+
+        responses = []
+        async for msg in self.gather_stream(
+            topic,
+            message,
+            recipients,
+            message_limit=message_limit,
+            timeout=timeout,
+            **kwargs,
+        ):
+            responses.append(msg)
+        return responses
+
+    async def gather_stream(
+        self,
+        topic: str,
+        message: Message,
+        recipients: List[str],
+        message_limit: int = None,
+        timeout: int = 60,
+        **kwargs,
+    ) -> AsyncIterator[Message]:
+        """
+        Publish a message and yield responses from multiple subscribers as they arrive.
+        """
+        if not self._slim:
+            raise ValueError("SLIM client is not set, please call setup() first.")
+
+        topic = self.sanitize_topic(topic)
+        remote_name = self.build_pyname(topic)
+
+        if not recipients:
+            raise ValueError(
+                "recipients list must be provided for SLIM COLLECT_ALL mode."
+            )
+
+        # convert recipients to PyName objects
+        invitees = [self.build_pyname(recipient) for recipient in recipients]
+
+        if message_limit is None:
+            message_limit = float("inf")
+
+        logger.debug(
+            f"Broadcasting to topic: {remote_name} and waiting for {message_limit} responses"
+        )
+
+        try:
+            async with asyncio.timeout(timeout):
+                _, session_info = await self._session_manager.group_broadcast_session(
+                    remote_name, invitees
+                )
+
+                # Signal to the receiver that we expect a direct response from each invitee
+                if not message.headers:
+                    message.headers = {}
+                message.headers["x-respond-to-source"] = "true"
+
+                async with self._slim:
+                    await self._slim.publish(
+                        session_info, message.serialize(), remote_name
+                    )
+
+                    # wait for responses from all invitees or be interrupted by caller
+                    messages_received = 0
+                    while messages_received < message_limit:
+                        try:
+                            _, msg = await self._slim.receive(session=session_info.id)
+                            msg = Message.deserialize(msg)
+                            messages_received += 1
+                            yield msg
+                        except Exception as e:
+                            logger.error(
+                                f"Error receiving message on session {session_info.id}: {e}"
+                            )
+                            continue
+                    await self._session_manager.close_session(session_info)
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
+            )
+
+    # -----------------------------------------------------------------------------
+    # Group Chat / Multi-Party Conversation
+    # -----------------------------------------------------------------------------
+
+    async def start_conversation(
+        self,
+        group_channel: str,
+        participants: List[str],
+        init_message: Message,
+        end_message: str = "done",
+        timeout: float = 60.0,
+        **kwargs,
+    ) -> List[Message]:
+        """
+        Create a new conversation including the given participants.
+        """
+        responses = []
+        async for msg in self.start_streaming_conversation(
+            group_channel, participants, init_message, end_message, timeout, **kwargs
+        ):
+            responses.append(msg)
+        return responses
+
+    async def start_streaming_conversation(
+        self,
+        group_channel: str,
+        participants: List[str],
+        init_message: Message,
+        end_message: str = "done",
+        timeout: float = 60.0,
+        **kwargs,
+    ) -> AsyncIterator[Message]:
+        """
+        Create a new conversation including the given participants.
+        """
+        if not self._slim:
+            logger.warning("SLIM client is not initialized, calling setup() ...")
+            await self.setup()
+
+        remote_name = self.build_pyname(group_channel)
+
+        if not participants:
+            raise ValueError(
+                "participants list must be provided for SLIM COLLECT_ALL mode."
+            )
+
+        logger.debug(f"Requesting group response from topic: {remote_name}")
+
+        # Convert recipients to PyName objects
+        invitees = [self.build_pyname(recipient) for recipient in participants]
+
+        if not init_message.headers:
+            init_message.headers = {}
+
+        # Signal to the receiver that they should respond to the group
+        init_message.headers["x-respond-to-group"] = "true"
+        # Optionally include an end message to signal to receivers they can close the session
+        end_signal = uuid4().hex
+        init_message.headers["x-session-end-message"] = end_signal
+        session_info = None
+        try:
+            async with asyncio.timeout(timeout):
+                async with self._slim:
+                    (
+                        _,
+                        session_info,
+                    ) = await self._session_manager.group_broadcast_session(
+                        remote_name, invitees
+                    )
+
+                    # Give the session a moment to be fully established on the SLIM dataplane- arbitrary delay
+                    await asyncio.sleep(0.5)
+
+                    # Initiate the group broadcast
+                    await self._slim.publish(
+                        session_info, init_message.serialize(), remote_name
+                    )
+
+                    # Wait for responses from invitees until the end message is received
+                    while True:
+                        try:
+                            _, msg = await self._slim.receive(session=session_info.id)
+                            deserialized_msg = Message.deserialize(msg)
+                            yield deserialized_msg
+
+                            # Check for end message to stop collection
+                            if end_message in str(deserialized_msg.payload):
+                                break
+                        except Exception as e:
+                            logger.warning(
+                                f"Issue encountered while receiving message on session {session_info.id}: {e}"
+                            )
+                            continue
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
+            )
+        finally:
+            if session_info:
+                try:
+                    await self._session_manager.close_session(
+                        session_info, remote=remote_name, end_signal=end_signal
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to close session {session_info.id}: {e}")
+
+    # -----------------------------------------------------------------------------
+    # Utilities and setup methods
+    # -----------------------------------------------------------------------------
 
     @classmethod
     def from_client(cls, client, name: str = None) -> "SLIMTransport":
@@ -184,252 +456,6 @@ class SLIMTransport(BaseTransport):
         except Exception as e:
             logger.error(f"Error building PyName from topic '{topic}': {e}")
             raise
-
-    async def publish(
-        self,
-        topic,
-        message: Message,
-    ) -> None:
-        if not self._slim:
-            raise ValueError("SLIM client is not set, please call setup() first.")
-
-        raise NotImplementedError(
-            "publish method is not yet implemented, not consumed by any protocols"
-        )
-
-    async def request(
-        self,
-        topic: str,
-        message: Message,
-        response_mode: ResponseMode = ResponseMode.FIRST,
-        timeout: Optional[float] = 60.0,
-        **kwargs,
-    ) -> Optional[Message]:
-        """Publish a message to a topic."""
-        topic = self.sanitize_topic(topic)
-        remote_name = self.build_pyname(topic)
-
-        match response_mode:
-            case ResponseMode.FIRST:
-                return await self._request_first(
-                    remote_name=remote_name, message=message, timeout=timeout, **kwargs
-                )
-            case ResponseMode.COLLECT_N:
-                raise NotImplementedError(
-                    "COLLECT_N response mode is not yet implemented."
-                )
-            case ResponseMode.COLLECT_ALL:
-                return await self._request_all(
-                    remote_name=remote_name, message=message, timeout=timeout, **kwargs
-                )
-            case ResponseMode.GROUP:
-                return await self._request_group(
-                    remote_name=remote_name, message=message, timeout=timeout, **kwargs
-                )
-            case _:
-                raise ValueError(f"Unknown response mode: {response_mode}")
-
-    async def _request_first(
-        self,
-        remote_name: PyName,
-        message: Message,
-        timeout: float = 30.0,
-        **kwargs,
-    ) -> None:
-        if not self._slim:
-            logger.warning("SLIM client is not initialized, calling setup() ...")
-            await self.setup()
-
-        logger.debug(f"Requesting response from topic: {remote_name}")
-
-        async with self._slim:
-            await self._slim.set_route(remote_name)
-
-            # create or get a request-reply (sticky fire-and-forget) session
-            _, session = await self._session_manager.request_reply_session()
-
-            if not message.headers:
-                message.headers = {}
-
-            message.headers["x-respond-to-source"] = "true"
-
-            try:
-                _, reply = await self._slim.request_reply(
-                    session,
-                    message.serialize(),
-                    remote_name,
-                    timeout=datetime.timedelta(seconds=timeout),
-                )
-            except asyncio.TimeoutError:
-                logger.warning(f"Request timed out after {timeout} seconds")
-                return None
-
-            reply = Message.deserialize(reply)
-
-            return reply
-
-    async def _request_all(
-        self,
-        remote_name: PyName,
-        message: Message,
-        recipients: List[str] = None,
-        timeout: Optional[float] = 30.0,
-        **kwargs,
-    ) -> List[Message]:
-        """
-        Send a message to topic and wait for a response from all recipients
-        or until the timeout is reached.
-        """
-        if not recipients:
-            raise ValueError(
-                "recipients list must be provided for SLIM COLLECT_ALL mode."
-            )
-
-        logger.info(
-            f"Sending message to topic: {remote_name} and waiting for {len(recipients)} responses"
-        )
-
-        # convert recipients to PyName objects
-        invitees = [self.build_pyname(recipient) for recipient in recipients]
-
-        try:
-            responses = await asyncio.wait_for(
-                self._collect_all(
-                    channel=remote_name,
-                    message=message,
-                    invitees=invitees,
-                ),
-                timeout=timeout,
-            )
-            return responses
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
-            )
-            return []
-
-    # send out the end-chat message
-    async def _request_group(
-        self,
-        remote_name: PyName,
-        message: Message,
-        recipients: List[str] = None,
-        end_message: str = "done",
-        timeout: float = 60.0,
-        **kwargs,
-    ) -> List[Message]:
-        if not self._slim:
-            logger.warning("SLIM client is not initialized, calling setup() ...")
-            await self.setup()
-
-        if not recipients:
-            raise ValueError(
-                "recipients list must be provided for SLIM COLLECT_ALL mode."
-            )
-
-        logger.debug(f"Requesting group response from topic: {remote_name}")
-
-        # Convert recipients to PyName objects
-        invitees = [self.build_pyname(recipient) for recipient in recipients]
-
-        if not message.headers:
-            message.headers = {}
-
-        # Signal to the receiver that they should respond to the group
-        message.headers["x-respond-to-group"] = "true"
-        # Optionally include an end message to signal to receivers they can close the session
-        end_signal = uuid4().hex
-        message.headers["x-session-end-message"] = end_signal
-
-        responses = []
-        session_info = None
-        try:
-            async with asyncio.timeout(timeout):
-                async with self._slim:
-                    (
-                        _,
-                        session_info,
-                    ) = await self._session_manager.group_broadcast_session(
-                        remote_name, invitees
-                    )
-
-                    # Give the session a moment to be fully established on the SLIM dataplane- arbitrary delay
-                    await asyncio.sleep(0.5)
-
-                    # Initiate the group broadcast
-                    await self._slim.publish(
-                        session_info, message.serialize(), remote_name
-                    )
-
-                    # Wait for responses from invitees until the end message is received
-                    while True:
-                        try:
-                            _, msg = await self._slim.receive(session=session_info.id)
-                            deserialized_msg = Message.deserialize(msg)
-                            responses.append(deserialized_msg)
-
-                            # Check for end message to stop collection
-                            if end_message in str(deserialized_msg.payload):
-                                break
-                        except Exception as e:
-                            logger.warning(
-                                f"Issue encountered while receiving message on session {session_info.id}: {e}"
-                            )
-                            continue
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
-            )
-        finally:
-            if session_info:
-                try:
-                    await self._session_manager.close_session(
-                        session_info, remote=remote_name, end_signal=end_signal
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to close session {session_info.id}: {e}")
-
-        return responses
-
-    async def _collect_all(
-        self,
-        channel: PyName,
-        message: Message,
-        invitees: List[PyName],
-    ) -> List[Message]:
-        if not self._slim:
-            raise ValueError("SLIM client is not set, please call setup() first.")
-
-        logger.debug(f"Publishing to topic: {channel} for all invitees")
-
-        _, session_info = await self._session_manager.group_broadcast_session(
-            channel, invitees
-        )
-
-        if not message.headers:
-            message.headers = {}
-
-        # Signal to the receiver that we expect a direct response from each invitee
-        message.headers["x-respond-to-source"] = "true"
-
-        async with self._slim:
-            await self._slim.publish(session_info, message.serialize(), channel)
-
-            # wait for responses from all invitees or be interrupted by caller
-            responses = []
-            while len(responses) < len(invitees):
-                try:
-                    _, msg = await self._slim.receive(session=session_info.id)
-                    msg = Message.deserialize(msg)
-                    responses.append(msg)
-                except Exception as e:
-                    logger.error(
-                        f"Error receiving message on session {session_info.id}: {e}"
-                    )
-                    continue
-
-            await self._session_manager.close_session(session_info)
-            return responses
 
     async def subscribe(self, topic: str, org=None, namespace=None) -> None:
         """
