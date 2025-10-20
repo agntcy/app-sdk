@@ -216,30 +216,6 @@ class A2AProtocol(BaseAgentProtocol):
                 )
                 raise e  # TODO: handle errors more gracefully
 
-        async def start_streaming_groupchat(
-            init_message: SendMessageRequest,
-            group_channel: str,
-            participants: List[str],
-            timeout: float = 60,
-            end_message: str = "work-done",
-        ) -> AsyncIterator[SendMessageResponse]:
-            if not init_message.id:
-                init_message.id = str(uuid4())
-
-            msg = self.message_translator(
-                request=init_message.model_dump(mode="json", exclude_none=True)
-            )
-
-            async for raw_member_message in transport.start_streaming_conversation(
-                group_channel=group_channel,
-                participants=participants,
-                init_message=msg,
-                end_message=end_message,
-                timeout=timeout,
-            ):
-                message = json.loads(raw_member_message.payload.decode("utf-8"))
-                yield SendMessageResponse(message)
-
         async def start_groupchat(
             init_message: SendMessageRequest,
             group_channel: str,
@@ -277,11 +253,73 @@ class A2AProtocol(BaseAgentProtocol):
                 )
                 return []
 
+        async def start_streaming_groupchat(
+            init_message: SendMessageRequest,
+            group_channel: str,
+            participants: List[str],
+            timeout: float = 60,
+            end_message: str = "work-done",
+        ) -> AsyncIterator[SendMessageResponse]:
+            if not init_message.id:
+                init_message.id = str(uuid4())
+
+            msg = self.message_translator(
+                request=init_message.model_dump(mode="json", exclude_none=True)
+            )
+
+            async for raw_member_message in transport.start_streaming_conversation(
+                group_channel=group_channel,
+                participants=participants,
+                init_message=msg,
+                end_message=end_message,
+                timeout=timeout,
+            ):
+                message = json.loads(raw_member_message.payload.decode("utf-8"))
+                yield SendMessageResponse(message)
+
+        async def broadcast_message_streaming(
+            request: SendStreamingMessageRequest,
+            recipients: List[str] | None = None,
+            broadcast_topic: str = None,
+            timeout: float = 60.0,
+        ) -> AsyncIterator[SendMessageResponse]:
+            """
+            Broadcast a streaming request using the provided transport.
+            """
+            if not request.id:
+                request.id = str(uuid4())
+
+            msg = self.message_translator(
+                request=request.model_dump(mode="json", exclude_none=True)
+            )
+
+            if not broadcast_topic:
+                broadcast_topic = topic
+
+            try:
+                async for raw_resp in transport.gather_stream(
+                    broadcast_topic,
+                    msg,
+                    recipients=recipients,
+                    timeout=timeout,
+                ):
+                    try:
+                        resp = json.loads(raw_resp.payload.decode("utf-8"))
+                        yield SendMessageResponse(resp)
+                    except Exception as e:
+                        logger.error(f"Error decoding JSON response: {e}")
+                        continue
+            except Exception as e:
+                logger.error(
+                    f"Error gathering streaming A2A request with transport {transport.type()}: {e}"
+                )
+                return
+
         async def broadcast_message(
             request: SendMessageRequest | SendStreamingMessageRequest,
             recipients: List[str] | None = None,
             broadcast_topic: str = None,
-            timeout: float = 30.0,
+            timeout: float = 60.0,
         ) -> List[SendMessageResponse]:
             """
             Broadcast a request using the provided transport.
@@ -325,6 +363,7 @@ class A2AProtocol(BaseAgentProtocol):
 
         # monkey patch experimental patterns
         client.broadcast_message = broadcast_message
+        client.broadcast_message_streaming = broadcast_message_streaming
         client.start_groupchat = start_groupchat
         client.start_streaming_groupchat = start_streaming_groupchat
 

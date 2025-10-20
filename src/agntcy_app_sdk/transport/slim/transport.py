@@ -174,6 +174,25 @@ class SLIMTransport(BaseTransport):
         """
         Publish a message and collect responses from multiple subscribers.
         """
+        print("SLIMTransport.gather called")
+        responses = []
+        async for msg in self.gather_stream(
+            topic, message, recipients, timeout, **kwargs
+        ):
+            responses.append(msg)
+        return responses
+
+    async def gather_stream(
+        self,
+        topic: str,
+        message: Message,
+        recipients: List[str],
+        timeout: int = 60,
+        **kwargs,
+    ) -> AsyncIterator[Message]:
+        """
+        Publish a message and yield responses from multiple subscribers as they arrive.
+        """
         topic = self.sanitize_topic(topic)
         remote_name = self.build_pyname(topic)
 
@@ -190,20 +209,17 @@ class SLIMTransport(BaseTransport):
         invitees = [self.build_pyname(recipient) for recipient in recipients]
 
         try:
-            responses = await asyncio.wait_for(
-                self._collect_all(
+            async with asyncio.timeout(timeout):
+                async for response in self._yield_all(
                     channel=remote_name,
                     message=message,
                     invitees=invitees,
-                ),
-                timeout=timeout,
-            )
-            return responses
+                ):
+                    yield response
         except asyncio.TimeoutError:
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
-            return []
 
     # -----------------------------------------------------------------------------
     # Group Chat / Multi-Party Conversation
@@ -405,12 +421,12 @@ class SLIMTransport(BaseTransport):
             logger.error(f"Error building PyName from topic '{topic}': {e}")
             raise
 
-    async def _collect_all(
+    async def _yield_all(
         self,
         channel: PyName,
         message: Message,
         invitees: List[PyName],
-    ) -> List[Message]:
+    ) -> AsyncIterator[Message]:
         if not self._slim:
             raise ValueError("SLIM client is not set, please call setup() first.")
 
@@ -430,12 +446,13 @@ class SLIMTransport(BaseTransport):
             await self._slim.publish(session_info, message.serialize(), channel)
 
             # wait for responses from all invitees or be interrupted by caller
-            responses = []
-            while len(responses) < len(invitees):
+            messages_received = 0
+            while messages_received < len(invitees):
                 try:
                     _, msg = await self._slim.receive(session=session_info.id)
                     msg = Message.deserialize(msg)
-                    responses.append(msg)
+                    messages_received += 1
+                    yield msg
                 except Exception as e:
                     logger.error(
                         f"Error receiving message on session {session_info.id}: {e}"
@@ -443,7 +460,6 @@ class SLIMTransport(BaseTransport):
                     continue
 
             await self._session_manager.close_session(session_info)
-            return responses
 
     async def subscribe(self, topic: str, org=None, namespace=None) -> None:
         """
