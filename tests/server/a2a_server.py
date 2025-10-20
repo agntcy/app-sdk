@@ -1,9 +1,14 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from agent_executor import (
-    HelloWorldAgentExecutor,  # type: ignore[import-untyped]
-)
+try:
+    from tests.server.agent_executor import (
+        HelloWorldAgentExecutor,  # type: ignore[import-untyped]
+    )
+except ImportError:
+    from agent_executor import (
+        HelloWorldAgentExecutor,  # type: ignore[import-untyped]
+    )
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
@@ -16,11 +21,40 @@ import asyncio
 import argparse
 from uvicorn import Config, Server
 
-from agntcy_app_sdk.semantic.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.factory import TransportTypes
+from agntcy_app_sdk.app_sessions import AppContainer
 from agntcy_app_sdk.factory import AgntcyFactory
 
 factory = AgntcyFactory(enable_tracing=True)
+
+skill = AgentSkill(
+    id="hello_world",
+    name="Returns hello world",
+    description="just returns hello world",
+    tags=["hello world"],
+    examples=["hi", "hello world"],
+)
+
+agent_card = AgentCard(
+    name="Hello World Agent",
+    description="Just a hello world agent",
+    url="http://localhost:9999/",
+    version="1.0.0",
+    defaultInputModes=["text"],
+    defaultOutputModes=["text"],
+    capabilities=AgentCapabilities(streaming=True),
+    skills=[skill],  # Only the basic skill for the public card
+    supportsAuthenticatedExtendedCard=False,
+)
+
+request_handler = DefaultRequestHandler(
+    agent_executor=HelloWorldAgentExecutor("Default_Hello_World_Agent"),
+    task_store=InMemoryTaskStore(),
+)
+
+default_a2a_server = A2AStarletteApplication(
+    agent_card=agent_card, http_handler=request_handler
+)
 
 
 async def main(
@@ -65,6 +99,7 @@ async def main(
     )
 
     if transport_type == "A2A":
+        # Run the A2A server directly without a transport
         config = Config(app=server.build(), host="0.0.0.0", port=9999, loop="asyncio")
         userver = Server(config)
         await userver.serve()
@@ -74,10 +109,19 @@ async def main(
             transport_type, endpoint=endpoint, name=name
         )
 
-        if not topic or topic == "":
+        app_session = factory.create_app_session(max_sessions=1)
+        app_container = AppContainer(
+            server,
+            transport=transport,
+            topic=topic,
+        )
+        app_session.add_app_container("default_session", app_container)
+        await app_session.start_all_sessions(blocking=block)
+
+        """if not topic or topic == "":
             topic = A2AProtocol.create_agent_topic(server.agent_card)
         bridge = factory.create_bridge(server, transport=transport, topic=topic)
-        await bridge.start(blocking=block)
+        await bridge.start(blocking=block)"""
 
 
 if __name__ == "__main__":
