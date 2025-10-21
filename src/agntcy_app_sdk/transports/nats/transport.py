@@ -7,7 +7,6 @@ import os
 
 import nats
 from nats.aio.client import Client as NATS
-from opentelemetry import trace
 from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.protocols.message import Message
@@ -20,8 +19,6 @@ logger = get_logger(__name__)
 """
 Nats implementation of BaseTransport.
 """
-
-tracer = trace.get_tracer(__name__)
 
 
 class NatsTransport(BaseTransport):
@@ -52,6 +49,9 @@ class NatsTransport(BaseTransport):
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             logger.info("NatsTransport initialized with tracing enabled")
+            from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
+
+            NATSInstrumentor().instrument()
             self.tracing_enabled = True
 
     @classmethod
@@ -129,19 +129,10 @@ class NatsTransport(BaseTransport):
         if message.headers is None:
             message.headers = {}
 
-        with tracer.start_as_current_span("nats.publish") as span:
-            span.set_attribute("topic", topic)
-            id_, message_id = self._extract_message_payload_ids(message.payload)
-
-            if id_:
-                span.set_attribute("message.id", id_)
-            if message_id:
-                span.set_attribute("message.payload.messageId", message_id)
-
-            await self._nc.publish(
-                topic,
-                message.serialize(),
-            )
+        await self._nc.publish(
+            topic,
+            message.serialize(),
+        )
 
     async def request(
         self,
@@ -174,19 +165,10 @@ class NatsTransport(BaseTransport):
     async def _request_first(
         self, topic: str, message: Message, timeout: float, **kwargs
     ) -> Optional[Message]:
-        with tracer.start_as_current_span("nats.request") as span:
-            span.set_attribute("topic", topic)
-            id_, message_id = self._extract_message_payload_ids(message.payload)
-
-            if id_:
-                span.set_attribute("message.id", id_)
-            if message_id:
-                span.set_attribute("message.payload.messageId", message_id)
-
-            response = await self._nc.request(
-                topic, message.serialize(), timeout=timeout, **kwargs
-            )
-            return Message.deserialize(response.data) if response else None
+        response = await self._nc.request(
+            topic, message.serialize(), timeout=timeout, **kwargs
+        )
+        return Message.deserialize(response.data) if response else None
 
     async def _request_all(
         self,
@@ -231,32 +213,22 @@ class NatsTransport(BaseTransport):
                 logger.info(f"Received {len(responses)} response(s)")
 
         sub = None
-        parent_cm = None
-        # Start the parent span so all NATS operations (including unsubscribe) are children
-        parent_cm = tracer.start_as_current_span("nats.broadcast")
-        parent_span = parent_cm.__enter__()
-        parent_span.set_attribute("topic", topic)
 
         try:
-            with tracer.start_as_current_span("nats.subscribe") as sub_span:
-                sub_span.set_attribute("topic", reply_topic)
-                sub = await self._nc.subscribe(reply_topic, cb=_response_handler)
+            sub = await self._nc.subscribe(reply_topic, cb=_response_handler)
 
-                # Publish the message
-                # Note: the publish() already creates a child span
-                await self.publish(
-                    topic,
-                    message,
-                )
+            # Publish the message
+            await self.publish(
+                topic,
+                message,
+            )
 
-                logger.info(
-                    f"Collecting up to {expected_responses} response(s) with timeout={timeout}s..."
-                )
+            logger.info(
+                f"Collecting up to {expected_responses} response(s) with timeout={timeout}s..."
+            )
 
-                # Collect responses
-                with tracer.start_as_current_span("nats.collect_responses") as col_span:
-                    col_span.set_attribute("expected_responses", expected_responses)
-                    await collect_responses()
+            # Collect responses
+            await collect_responses()
 
         except asyncio.TimeoutError:
             logger.warning(
@@ -264,13 +236,7 @@ class NatsTransport(BaseTransport):
             )
         finally:
             if sub is not None:
-                with tracer.start_as_current_span("nats.unsubscribe") as unsub_span:
-                    unsub_span.set_attribute("topic", reply_topic)
-                    await sub.unsubscribe()
-
-            # Exit parent span context after all child spans are finished
-            if parent_cm is not None:
-                parent_cm.__exit__(None, None, None)  # Clean up span context
+                await sub.unsubscribe()
 
         return responses
 
@@ -290,10 +256,7 @@ class NatsTransport(BaseTransport):
 
         try:
             topic = self.santize_topic(topic)
-
-            with tracer.start_as_current_span("nats.subscribe") as span:
-                span.set_attribute("topic", topic)
-                sub = await self._nc.subscribe(topic, cb=self._message_handler)
+            sub = await self._nc.subscribe(topic, cb=self._message_handler)
 
             self.subscriptions.append(sub)
             logger.info(f"Subscribed to topic: {topic}")
