@@ -67,6 +67,8 @@ class SessionManager:
                     mls_enabled=mls_enabled,
                 )
             )
+            # store session to local cache so it can be reused
+            self._sessions[session.id] = session
             return session.id, session
 
     async def group_broadcast_session(
