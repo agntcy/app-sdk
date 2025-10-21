@@ -16,7 +16,7 @@ dependencies = [
     "httpx>=0.28.1",
     "ioa-observe-sdk==1.0.23",
     "asgi-lifespan>=2.1.0",
-    "slim-bindings==0.4.1",
+    "slim-bindings==0.6.0",
 ]
 
 [project.urls]
