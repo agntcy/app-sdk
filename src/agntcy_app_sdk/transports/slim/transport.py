@@ -135,11 +135,13 @@ class SLIMTransport(BaseTransport):
 
     async def close(self) -> None:
         if not self._slim:
+            logger.warning("SLIM transport cannot be closed without a SLIM instance.")
             return
 
         # handle slim server disconnection
         try:
             await self._slim.disconnect(self._endpoint)
+            logger.info("SLIM transport disconnected")
         except Exception as e:
             if "connection not found" in str(e).lower():
                 # Silence benign "connection not found" errors;
@@ -383,6 +385,7 @@ class SLIMTransport(BaseTransport):
         finally:
             if group_session:
                 try:
+                    logger.debug(f"Closing group session from _request_group(): {group_session.id}")
                     await self._session_manager.close_session(group_session,
                                                               end_signal=end_signal)
                 except Exception as e:
@@ -427,6 +430,7 @@ class SLIMTransport(BaseTransport):
                 continue
 
         try:
+            logger.debug(f"Closing group session from _collect_all(): {group_session.id}")
             await self._session_manager.close_session(group_session)
         except Exception as e:
             logger.error(f"Failed to close group session {group_session.id}: {e}")
@@ -570,7 +574,7 @@ class SLIMTransport(BaseTransport):
                 await session.publish(payload)
             elif respond_to_group:
                 logger.debug(
-                    f"Responding to group on channel: {session.destination_name} with payload:\n {output}"
+                    f"Responding to group on channel: {session.dst} with payload:\n {output}"
                 )
                 await session.publish(payload)
             else:

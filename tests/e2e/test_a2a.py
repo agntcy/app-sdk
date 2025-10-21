@@ -1,5 +1,6 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
+import time
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from a2a.types import (
@@ -213,6 +214,13 @@ async def test_groupchat(run_a2a_server, transport):
     print(
         f"\n--- Starting test: test_groupchat | Transport: {transport} | Endpoint: {endpoint} ---"
     )
+
+    # Run the groupchat member servers
+    for name in [
+        "default/default/foo",
+        "default/default/bar",
+    ]:
+        run_a2a_server(transport, endpoint, name=name)
 
     # Create factory and transport
     print("[setup] Initializing client factory and transport...")
