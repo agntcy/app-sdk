@@ -131,7 +131,7 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
 
 SLIM (Secure Low-Latency Interactive Messaging) may be used to facilitate communication between AI agents with various communication patterns such as request-reply, and moderated group-chat. The AgntcyFactory implements a high-level SLIM transport wrapper which is used to standardize integration with agntcy-app-sdk protocol implementations including A2A and MCP. For more details and usage guides for SLIM, see the [docs](https://docs.agntcy.org/messaging/slim-core/) and [repository](https://github.com/agntcy/slim).
 
-### Observe (1.0.15)
+### Observe (1.0.22)
 
 The AgntcyFactory may be configured to use the Observe-SDK for multi-agentic application observability by setting the `enable_tracing` parameter to `True` when creating the factory instance. This will initialize an observe tracer and enable SLIM and A2A auto-instrumentation if necessary.
 
