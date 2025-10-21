@@ -1,5 +1,6 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
+import time
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from a2a.types import (
