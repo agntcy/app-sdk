@@ -165,7 +165,7 @@ class SessionManager:
                 logger.error(f"Error deleting session {session_id} on SLIM server: {e}")
 
         except Exception as e:
-            logger.warning(f"Error closing SLIM session {session_id}: {e}")
+            logger.warning(f"An error occurred during session closure or cleanup: {e}")
             return
 
     async def _local_cache_cleanup(self, session_id: int):
