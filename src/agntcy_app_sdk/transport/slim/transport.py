@@ -253,7 +253,8 @@ class SLIMTransport(BaseTransport):
                             f"Error receiving message on session {group_session.id}: {e}"
                         )
                         continue
-                await self._session_manager.close_session(group_session)
+                # TODO: close session properly with SLIM v0.7.0: https://github.com/agntcy/slim/issues/780
+                # await self._session_manager.close_session(group_session)
         except asyncio.TimeoutError:
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
