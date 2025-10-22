@@ -29,7 +29,7 @@ wheels = [
 
 [[package]]
 name = "agntcy-app-sdk"
-version = "0.3.1"
+version = "0.3.2"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
@@ -40,8 +40,6 @@ dependencies = [
     { name = "langchain-community" },
     { name = "mcp", extra = ["cli"] },
     { name = "nats-py" },
-    { name = "opentelemetry-instrumentation-requests" },
-    { name = "opentelemetry-instrumentation-starlette" },
     { name = "slim-bindings" },
     { name = "uvicorn" },
 ]
@@ -75,12 +73,10 @@ requires-dist = [
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "coloredlogs", specifier = ">=15.0.1,<16" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "ioa-observe-sdk", specifier = "==1.0.22" },
+    { name = "ioa-observe-sdk", specifier = "==1.0.23" },
     { name = "langchain-community", specifier = ">=0.3.24" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.10.1" },
     { name = "nats-py", specifier = ">=2.10.0,<3" },
-    { name = "opentelemetry-instrumentation-requests", specifier = ">=0.54b1" },
-    { name = "opentelemetry-instrumentation-starlette", specifier = ">=0.54b0" },
     { name = "slim-bindings", specifier = "==0.4.1" },
     { name = "uvicorn", specifier = ">=0.34.3" },
 ]
@@ -263,15 +259,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6a/da/e7908b54e0f8043725a990bf625f2041ecf6bfe8eb7b19407f1c00b630f7/asgi-lifespan-2.1.0.tar.gz", hash = "sha256:5e2effaf0bfe39829cf2d64e7ecc47c7d86d676a6599f7afba378c31f5e3a308", size = 15627, upload-time = "2023-03-28T17:35:49.126Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2f/f5/c36551e93acba41a59939ae6a0fb77ddb3f2e8e8caa716410c65f7341f72/asgi_lifespan-2.1.0-py3-none-any.whl", hash = "sha256:ed840706680e28428c01e14afb3875d7d76d3206f3d5b2f2294e059b5c23804f", size = 10895, upload-time = "2023-03-28T17:35:47.772Z" },
-]
-
-[[package]]
-name = "asgiref"
-version = "3.9.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/7f/bf/0f3ecda32f1cb3bf1dca480aca08a7a8a3bdc4bed2343a103f30731565c9/asgiref-3.9.2.tar.gz", hash = "sha256:a0249afacb66688ef258ffe503528360443e2b9a8d8c4581b6ebefa58c841ef1", size = 36894, upload-time = "2025-09-23T15:00:55.136Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/d1/69d02ce34caddb0a7ae088b84c356a625a93cd4ff57b2f97644c03fad905/asgiref-3.9.2-py3-none-any.whl", hash = "sha256:0b61526596219d70396548fc003635056856dba5d0d086f86476f10b33c75960", size = 23788, upload-time = "2025-09-23T15:00:53.627Z" },
 ]
 
 [[package]]
@@ -990,7 +977,7 @@ wheels = [
 
 [[package]]
 name = "ioa-observe-sdk"
-version = "1.0.22"
+version = "1.0.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -1033,9 +1020,9 @@ dependencies = [
     { name = "pytest-vcr" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e6/dd/abd3e15e6ef2d6ccd575c8f54e79349c11401321e25c6c23a8ee5cad6076/ioa_observe_sdk-1.0.22.tar.gz", hash = "sha256:b5279749cfbd1e27ef8770395721f725022148ed84d744d3a658f20f8e2450fe", size = 68604, upload-time = "2025-10-21T12:29:11.713Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/1e/c18501f39b1d78f69fd2ae60a47ad01a4a17ce597c404600d2c0d04d2382/ioa_observe_sdk-1.0.23.tar.gz", hash = "sha256:4b082f60fc09386ccf5d4620ff525f7c72104c4c365f9fefad5fcb64b69e481c", size = 68686, upload-time = "2025-10-22T07:38:30.379Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/63/247a2c7b010485e8c0aaf6b769fe054ddc1d2fa15b864def468f5ad1d3ba/ioa_observe_sdk-1.0.22-py3-none-any.whl", hash = "sha256:0c21c798e3e5e98d0ba0a082d48194fcb0727a76b3326baf8a4bd753c34ab560", size = 77274, upload-time = "2025-10-21T12:29:10.758Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/cf/1ed26da10a10adb97be06e5eccb115b41f0d83b0c8358519a92630e79b2f/ioa_observe_sdk-1.0.23-py3-none-any.whl", hash = "sha256:5da368b14283d03a4b33cb56318948e9aeba13fdb69b048ee172e48fc9c8933a", size = 77317, upload-time = "2025-10-22T07:38:29.032Z" },
 ]
 
 [[package]]
@@ -2084,22 +2071,6 @@ wheels = [
 ]
 
 [[package]]
-name = "opentelemetry-instrumentation-asgi"
-version = "0.58b0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "asgiref" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation" },
-    { name = "opentelemetry-semantic-conventions" },
-    { name = "opentelemetry-util-http" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/e2/03ff707d881d590c7adaed5e9d1979aed7e5e53fc1ed89035e5ed9f304af/opentelemetry_instrumentation_asgi-0.58b0.tar.gz", hash = "sha256:3ccc0c9c1c8c71e8d9da5945c6dcd9c0c8d147839f208536b7042c6dd98e65c9", size = 25116, upload-time = "2025-09-11T11:42:18.437Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8c/71/a00884c6655387c70070138acbf79a6616ad5d4489680f40708d75b598a7/opentelemetry_instrumentation_asgi-0.58b0-py3-none-any.whl", hash = "sha256:508a6d79e333d648d2afee0e140b6e80eb5d443be183be58e81d9ff88373168a", size = 16798, upload-time = "2025-09-11T11:41:08.105Z" },
-]
-
-[[package]]
 name = "opentelemetry-instrumentation-bedrock"
 version = "0.43.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2294,22 +2265,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/84/a4/860867ddb9524d6484c2391d2a70ba52b78b0fdf6484cd3f07dc85c87353/opentelemetry_instrumentation_sagemaker-0.43.1.tar.gz", hash = "sha256:b302d992b8c2bebd05d4e5b2581ebfc7e2b1fbcd340e2ce61e286a339f6f4fc2", size = 6885, upload-time = "2025-07-23T14:39:50.805Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/81/c0ac365b089800893225a92c412612b0931decb10e8d15fa907dd131d681/opentelemetry_instrumentation_sagemaker-0.43.1-py3-none-any.whl", hash = "sha256:63f9095aa04467759788ab9c22e96043db18a1e5dd03395d9c1b7bebac811497", size = 9802, upload-time = "2025-07-23T14:39:23.649Z" },
-]
-
-[[package]]
-name = "opentelemetry-instrumentation-starlette"
-version = "0.58b0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation" },
-    { name = "opentelemetry-instrumentation-asgi" },
-    { name = "opentelemetry-semantic-conventions" },
-    { name = "opentelemetry-util-http" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/10/23/cdd66add389c6fef71accf9eed47be4a36fed7910285db3618e8c9030876/opentelemetry_instrumentation_starlette-0.58b0.tar.gz", hash = "sha256:e6a5d8a7433e3f99cb1da58c9431c840a823afda82deb5a97976445e1fa32bda", size = 14656, upload-time = "2025-09-11T11:42:53.493Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/cc/c534bb93a316e703903139c4fd22b17dad7e8e267fce78664e23829da500/opentelemetry_instrumentation_starlette-0.58b0-py3-none-any.whl", hash = "sha256:7cb1c58a4f3efd78c19eac2f98def6ea5cea725c0ffafab960a708fa17c25b2a", size = 11779, upload-time = "2025-09-11T11:41:56.371Z" },
 ]
 
 [[package]]
