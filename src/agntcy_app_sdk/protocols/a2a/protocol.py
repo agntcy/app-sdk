@@ -21,7 +21,6 @@ from a2a.types import (
 from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
 from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode
 from agntcy_app_sdk.protocols.message import Message
-from opentelemetry.instrumentation.starlette import StarletteInstrumentor
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
@@ -312,8 +311,6 @@ class A2AProtocol(BaseAgentProtocol):
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
             A2AInstrumentor().instrument()
-            StarletteInstrumentor().instrument_app(self._app)
-            logger.info("A2A ASGI app instrumented for tracing")
 
     async def handle_message(self, message: Message) -> Message:
         """
