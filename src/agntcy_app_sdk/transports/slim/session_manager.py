@@ -127,6 +127,7 @@ class SessionManager:
             raise ValueError("SLIM client is not set. Cannot close session.")
 
         session_deleted_server_side = False
+        session_id = session.id
         try:
             # send the end signal to the remote if provided
             if end_signal is not None:
@@ -156,20 +157,19 @@ class SessionManager:
                                f"It might still have been deleted on SLIM server, but no confirmation was received.")
                 session_deleted_server_side = True # Assume deletion might have happened, so clean up locally
             except Exception as e:
-                logger.error(f"Error deleting session {session.id} on SLIM server: {e}")
+                logger.warning(f"Error deleting session {session.id} on SLIM server: {e}")
                 session_deleted_server_side = False # Explicit error, assume not deleted on server
 
+            # Clean up local cache only if SLIM server-side deletion was attempted and potentially successful/timed out
+            if session_deleted_server_side:
+                logger.debug(f"Removing session {session_id} from local cache.")
+                self._local_cache_cleanup(session_id)
+            else:
+                logger.debug(f"Session {session_id} not removed from local cache due to confirmed server-side deletion failure.")
+
         except Exception as e:
-            logger.warning(f"Error closing SLIM session {session.id}: {e}")
+            logger.warning(f"An error occurred during session closure or cleanup: {e}")
             return
-
-        # Clean up local cache only if SLIM server-side deletion was attempted and potentially successful/timed out
-        if session_deleted_server_side:
-            logger.info(f"Removing session {session.id} from local cache.")
-            self._local_cache_cleanup(session.id)
-        else:
-            logger.info(f"Session {session.id} not removed from local cache due to confirmed server-side deletion failure.")
-
 
     def _local_cache_cleanup(self, session_id: int):
         """

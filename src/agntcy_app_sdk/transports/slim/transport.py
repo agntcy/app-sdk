@@ -1,6 +1,6 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
-
+import traceback
 from typing import Optional, Callable, List
 import os
 import asyncio
@@ -8,10 +8,7 @@ from uuid import uuid4
 import inspect
 import datetime
 import slim_bindings
-from slim_bindings import (
-    PyName,
-    PySession,
-)
+from slim_bindings import (PyName, PySession, PyMessageContext, )
 from .common import (
     create_local_app,
     split_id,
@@ -313,6 +310,9 @@ class SLIMTransport(BaseTransport):
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
             return []
+        except Exception as e:
+            logger.warning(f"Unhandled exception: {e}.")
+            return []
 
     # send out the end-chat message
     async def _request_group(
@@ -429,11 +429,8 @@ class SLIMTransport(BaseTransport):
                 )
                 continue
 
-        try:
-            logger.debug(f"Closing group session from _collect_all(): {group_session.id}")
-            await self._session_manager.close_session(group_session)
-        except Exception as e:
-            logger.error(f"Failed to close group session {group_session.id}: {e}")
+        logger.debug(f"Closing group session from _collect_all(): {group_session.id}")
+        await self._session_manager.close_session(group_session)
 
         return responses
 
@@ -478,9 +475,9 @@ class SLIMTransport(BaseTransport):
         try:
             while not self._shutdown_event.is_set():
                 try:
-                    _, msg = await session.get_message()
+                    msg_ctx, msg = await session.get_message()
                     consecutive_errors = 0  # Reset on success
-                    end_session = await self._process_received_message(session, msg)
+                    end_session = await self._process_received_message(session, msg_ctx, msg)
                     if end_session:
                         logger.info(
                             f"Ending session {session.id} as requested by client"
@@ -506,7 +503,8 @@ class SLIMTransport(BaseTransport):
             logger.info(f"Session {session.id} handler cancelled")
             raise
 
-    async def _process_received_message(self, session, msg) -> bool:
+    async def _process_received_message(self, session: PySession, msg_ctx: PyMessageContext,
+                                        msg: bytes) -> bool:
         """Process a single received message and handle response logic."""
         # Deserialize the message
         try:
@@ -535,10 +533,11 @@ class SLIMTransport(BaseTransport):
             return False
 
         # Handle response logic
-        await self._handle_response(session, deserialized_msg, output)
+        await self._handle_response(session, msg_ctx, deserialized_msg, output)
         return False
 
-    async def _handle_response(self, session, original_msg, output: Message) -> None:
+    async def _handle_response(self, session: PySession, msg_ctx: PyMessageContext,
+                               original_msg: Message, output: Message) -> None:
         """Handle response publishing based on message headers."""
         try:
             respond_to_source = (
@@ -571,7 +570,7 @@ class SLIMTransport(BaseTransport):
 
             if respond_to_source:
                 logger.debug(f"Responding to source on channel: {session.src}")
-                await session.publish(payload)
+                await session.publish_to(msg_ctx, payload)
             elif respond_to_group:
                 logger.debug(
                     f"Responding to group on channel: {session.dst} with payload:\n {output}"
