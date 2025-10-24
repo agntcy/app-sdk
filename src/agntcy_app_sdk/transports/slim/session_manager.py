@@ -45,11 +45,12 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         # check if we already have a PointToPoint session
-        for session_id, (session, q) in self._sessions.items():
+        for session_id, session in self._sessions.items():
             try:
                 conf = await session.session_config()
                 # compare the type of conf to PySessionConfiguration.PointToPoint
                 if isinstance(conf, PySessionConfiguration.PointToPoint):
+                    logger.debug(f"Re-using exising Point-to-point session created for {session_id}")
                     return session_id, session
             except Exception as e:
                 # TODO: Revisit with SLIM team if this still exists in 0.5.0
@@ -67,6 +68,7 @@ class SessionManager:
                     mls_enabled=mls_enabled,
                 )
             )
+            self._sessions[session.id] = session
             return session.id, session
 
     async def group_broadcast_session(
@@ -153,12 +155,15 @@ class SessionManager:
                 logger.info(f"Session {session.id} deleted successfully within timeout.")
                 session_deleted_server_side = True
             except asyncio.TimeoutError:
-                logger.warning(f"Timed out while trying to delete session {session.id}. "
+                logger.warning(f"Timed out while trying to delete session {session_id}. "
                                f"It might still have been deleted on SLIM server, but no confirmation was received.")
                 session_deleted_server_side = True # Assume deletion might have happened, so clean up locally
             except Exception as e:
-                logger.warning(f"Error deleting session {session.id} on SLIM server: {e}")
-                session_deleted_server_side = False # Explicit error, assume not deleted on server
+                if "already closed" in str(e).lower():
+                    logger.warning(f"Session {session_id} already closed.")
+                    session_deleted_server_side = True
+                else:
+                    logger.warning(f"Error deleting session {session_id} on SLIM server: {e}")
 
             # Clean up local cache only if SLIM server-side deletion was attempted and potentially successful/timed out
             if session_deleted_server_side:

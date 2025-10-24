@@ -137,6 +137,7 @@ class SLIMTransport(BaseTransport):
 
         # handle slim server disconnection
         try:
+            print(f"slim id: {self._slim.id}, slim id_str: {self._slim.id_str}", f"disconnecting from {self._endpoint}")
             await self._slim.disconnect(self._endpoint)
             logger.info("SLIM transport disconnected")
         except Exception as e:
@@ -162,6 +163,7 @@ class SLIMTransport(BaseTransport):
         if self._slim:
             return
 
+        logger.info(f"Setting up SLIM transport to {self.type()}")
         await self._slim_connect()
 
     def build_pyname(
@@ -266,6 +268,9 @@ class SLIMTransport(BaseTransport):
         except Exception as e:
             logger.warning(f"Failed to publish message: {e}")
             return None
+        # finally:
+        #     logger.debug(f"Closing session {session.id} from _request_first()")
+        #     await self._session_manager.close_session(session)
 
         reply = Message.deserialize(reply)
 
