@@ -148,13 +148,15 @@ class SessionManager:
             )  # add sleep before closing to allow for any in-flight messages to be processed
             logger.info(f"Attempting to delete session: {session_id}")
 
-            # remove session from local cache before attempting to delete from SLIM server,
-            # since accessing on a closed session is not permitted
+            # remove session from cache before attempting to delete it from SLIM server
+            # this cannot be performed after deleting session, otherwise it
+            # results in "session already closed" exception when trying to access the session stored in cache
             self._local_cache_cleanup(session_id)
+
             # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
                 await asyncio.wait_for(self._slim.delete_session(session), timeout=5.0)
-                logger.info(f"Session {session_id} deleted successfully within timeout.")
+                logger.info(f"Session {session.id} deleted successfully within timeout.")
             except asyncio.TimeoutError:
                 logger.warning(f"Timed out while trying to delete session {session_id}. "
                                f"It might still have been deleted on SLIM server, but no confirmation was received.")
@@ -163,8 +165,6 @@ class SessionManager:
                     logger.warning(f"Session {session_id} already closed.")
                 else:
                     logger.warning(f"Error deleting session {session_id} on SLIM server: {e}")
-
-
         except Exception as e:
             logger.warning(f"An error occurred during session closure or cleanup: {e}")
             return
@@ -174,17 +174,21 @@ class SessionManager:
         Perform local cleanup of a session without attempting to close it on the SLIM client.
         """
         async with self._lock:
-            session_key = None
+            logger.info(f"Removing session {session_id} from local cache. There are {len(self._sessions)} sessions in local cache")
             for key, sess in self._sessions.items():
-                if sess.id == session_id:
-                    session_key = key
-                    break
+                logger.info(f"[DEBUG] session id {sess.id}, key {key}.")
+                session_key = None
+                for key, sess in self._sessions.items():
+                    logger.info(f"session id {sess.id}, key {key}.")
+                    if sess.id == session_id:
+                        session_key = key
+                        break
 
-            if session_key:
-                del self._sessions[session_key]
-                logger.debug(f"Locally cleaned up session: {session_id}")
-            else:
-                logger.warning(f"Session {session_id} cannot be removed from local cache since this session was not found.")
+                if session_key:
+                    del self._sessions[session_key]
+                    logger.debug(f"Locally cleaned up session: {session_id}")
+                else:
+                    logger.warning(f"Session {session_id} cannot be removed from local cache since this session was not found.")
 
     def session_details(self, session_key: str):
         """
