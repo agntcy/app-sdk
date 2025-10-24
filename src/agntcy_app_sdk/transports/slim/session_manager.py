@@ -44,11 +44,12 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         # check if we already have a PointToPoint session
-        for session_id, (session, q) in self._sessions.items():
+        for session_id, session in self._sessions.items():
             try:
                 conf = await session.session_config()
                 # compare the type of conf to PySessionConfiguration.PointToPoint
                 if isinstance(conf, PySessionConfiguration.PointToPoint):
+                    logger.debug(f"Re-using exising Point-to-point session created for {session_id}")
                     return session_id, session
             except Exception as e:
                 # TODO: Revisit with SLIM team if this still exists in 0.5.0
@@ -66,6 +67,7 @@ class SessionManager:
                     mls_enabled=mls_enabled,
                 )
             )
+            self._sessions[session.id] = session
             return session.id, session
 
     async def group_broadcast_session(
@@ -139,30 +141,29 @@ class SessionManager:
                 )
                 await session.publish(end_msg.serialize())
 
-            logger.info(f"Waiting before attempting to delete session: {session.id}")
+            logger.info(f"Waiting before attempting to delete session: {session_id}")
             # todo: proper way to wait for all messages to be processed
             await asyncio.sleep(
                 random.uniform(5, 10)
             )  # add sleep before closing to allow for any in-flight messages to be processed
-            logger.info(f"Attempting to delete session: {session.id}")
+            logger.info(f"Attempting to delete session: {session_id}")
 
             # remove session from local cache before attempting to delete from SLIM server,
             # since accessing on a closed session is not permitted
-            self._local_cache_cleanup(session.id)
-
+            self._local_cache_cleanup(session_id)
             # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
-                await asyncio.wait_for(
-                    self._slim.delete_session(session), timeout=5.0
-                )
-                logger.info(
-                    f"Session {session_id} deleted successfully within timeout."
-                )
+                await asyncio.wait_for(self._slim.delete_session(session), timeout=5.0)
+                logger.info(f"Session {session_id} deleted successfully within timeout.")
             except asyncio.TimeoutError:
                 logger.warning(f"Timed out while trying to delete session {session_id}. "
                                f"It might still have been deleted on SLIM server, but no confirmation was received.")
             except Exception as e:
-                logger.error(f"Error deleting session {session_id} on SLIM server: {e}")
+                if "already closed" in str(e).lower():
+                    logger.warning(f"Session {session_id} already closed.")
+                else:
+                    logger.warning(f"Error deleting session {session_id} on SLIM server: {e}")
+
 
         except Exception as e:
             logger.warning(f"An error occurred during session closure or cleanup: {e}")

@@ -142,9 +142,10 @@ async def create_local_app(
             identity=str(local),
             secret=shared_secret,
         )
-
-    local_app = await slim_bindings.Slim.new(local, provider, verifier)
-
+    # TODO: leverage global slim object after this bug is fixed: https://github.com/agntcy/slim/issues/876
+    # local_app = await slim_bindings.Slim.new(local, provider, verifier)
+    
+    local_app = await slim_bindings.Slim.new(local, provider, verifier, local_service=True)
     # Connect to slim server
     _ = await local_app.connect(slim)
 
