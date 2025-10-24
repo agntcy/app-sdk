@@ -67,7 +67,7 @@ class SessionManager:
                     mls_enabled=mls_enabled,
                 )
             )
-            self._sessions[session.id] = session
+
             return session.id, session
 
     async def group_broadcast_session(
