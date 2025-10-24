@@ -113,7 +113,6 @@ class SessionManager:
         if not self._slim:
             raise ValueError("SLIM client is not set. Cannot close session.")
 
-        session_deleted_server_side = False
         session_id = session.id
         try:
             # send the end signal to the remote if provided
@@ -134,28 +133,23 @@ class SessionManager:
             )  # add sleep before closing to allow for any in-flight messages to be processed
             logger.info(f"Attempting to delete session: {session.id}")
 
+            # remove session from cache before attempting to delete it from SLIM server
+            # this cannot be performed after deleting session, otherwise it
+            # results in "session already closed" exception when trying to access the session stored in cache
+            self._local_cache_cleanup(session_id)
+
             # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
                 await asyncio.wait_for(self._slim.delete_session(session), timeout=5.0)
                 logger.info(f"Session {session.id} deleted successfully within timeout.")
-                session_deleted_server_side = True
             except asyncio.TimeoutError:
                 logger.warning(f"Timed out while trying to delete session {session_id}. "
                                f"It might still have been deleted on SLIM server, but no confirmation was received.")
-                session_deleted_server_side = True # Assume deletion might have happened, so clean up locally
             except Exception as e:
                 if "already closed" in str(e).lower():
                     logger.warning(f"Session {session_id} already closed.")
-                    session_deleted_server_side = True
                 else:
                     logger.warning(f"Error deleting session {session_id} on SLIM server: {e}")
-
-            # Clean up local cache only if SLIM server-side deletion was attempted and potentially successful/timed out
-            if session_deleted_server_side:
-                logger.debug(f"Removing session {session_id} from local cache.")
-                self._local_cache_cleanup(session_id)
-            else:
-                logger.debug(f"Session {session_id} not removed from local cache due to confirmed server-side deletion failure.")
 
         except Exception as e:
             logger.warning(f"An error occurred during session closure or cleanup: {e}")
@@ -165,9 +159,14 @@ class SessionManager:
         """
         Perform local cleanup of a session without attempting to close it on the SLIM client.
         """
+        logger.info(f"Removing session {session_id} from local cache. There are {len(self._sessions)} sessions in local cache")
+        for key, sess in self._sessions.items():
+            logger.info(f"[DEBUG] session id {sess.id}, key {key}.")
+
         with self._lock:
             session_key = None
             for key, sess in self._sessions.items():
+                logger.info(f"session id {sess.id}, key {key}.")
                 if sess.id == session_id:
                     session_key = key
                     break

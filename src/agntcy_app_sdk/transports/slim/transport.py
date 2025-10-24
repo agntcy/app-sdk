@@ -472,6 +472,7 @@ class SLIMTransport(BaseTransport):
             logger.info("Listener cancelled")
             raise
 
+    # TODO: resolve this
     async def _handle_session_receive(self, session: PySession) -> None:
         """Handle message receiving for a specific session."""
         consecutive_errors = 0
