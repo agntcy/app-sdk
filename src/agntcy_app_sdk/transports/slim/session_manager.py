@@ -156,7 +156,7 @@ class SessionManager:
             # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
                 await asyncio.wait_for(self._slim.delete_session(session), timeout=5.0)
-                logger.info(f"Session {session.id} deleted successfully within timeout.")
+                logger.info(f"Session {session_id} deleted successfully within timeout.")
             except asyncio.TimeoutError:
                 logger.warning(f"Timed out while trying to delete session {session_id}. "
                                f"It might still have been deleted on SLIM server, but no confirmation was received.")
