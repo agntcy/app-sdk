@@ -7,6 +7,7 @@ import json
 from uuid import uuid4
 import httpx
 import os
+import random
 
 from a2a.client import A2AClient, A2ACardResolver
 from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH

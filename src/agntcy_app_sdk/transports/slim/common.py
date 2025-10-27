@@ -5,6 +5,7 @@ import base64
 import json
 import click
 import slim_bindings
+import random
 
 
 # Split an ID into its components

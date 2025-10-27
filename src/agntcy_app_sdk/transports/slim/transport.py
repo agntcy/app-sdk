@@ -13,6 +13,7 @@ from .common import (
     create_local_app,
     split_id,
 )
+import time
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode, Message
 from agntcy_app_sdk.transports.slim.session_manager import SessionManager
@@ -338,7 +339,7 @@ class SLIMTransport(BaseTransport):
                 "recipients list must be provided for SLIM COLLECT_ALL mode."
             )
 
-        logger.debug(f"Requesting group response from topic: {remote_name}")
+        logger.info(f"Requesting group response from topic: {remote_name}")
 
         # Convert recipients to PyName objects
         invitees = [self.build_pyname(recipient) for recipient in recipients]
@@ -477,34 +478,56 @@ class SLIMTransport(BaseTransport):
         """Handle message receiving for a specific session."""
         consecutive_errors = 0
         max_retries = 3
+        process_timeout = 5
 
         try:
             while not self._shutdown_event.is_set():
                 try:
-                    msg_ctx, msg = await session.get_message()
-                    consecutive_errors = 0  # Reset on success
-                    end_session = await self._process_received_message(session, msg_ctx, msg)
-                    if end_session:
-                        logger.info(
-                            f"Ending session {session.id} as requested by client"
+                    msg_ctx, msg = await asyncio.wait_for(
+                        session.get_message(),
+                        timeout=1.0  # small poll interval so we can check timeout
+                    )
+                    consecutive_errors = 0
+
+                    try:
+                        # 🔸 Timeout protection around message processing
+                        logger.info(f"Session {session.id}: processing received message")
+                        end_session = await asyncio.wait_for(
+                            self._process_received_message(session, msg_ctx, msg),
+                            timeout=process_timeout,
+                        )
+                        logger.info(f"Session {session.id}: message processed successfully")
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            f"Session {session.id}: processing message exceeded {process_timeout}s, closing for recovery"
                         )
                         await self._session_manager.close_session(session)
                         break
+
+                    if end_session:
+                        logger.info(f"Ending session {session.id} as requested by client")
+                        await self._session_manager.close_session(session)
+                        break
+
+                except asyncio.TimeoutError:
+                    # just a short poll timeout — continue loop and recheck elapsed time
+                    continue
+
                 except asyncio.CancelledError:
+                    logger.info(f"Session {session.id} handler cancelled")
                     raise
+
                 except Exception as e:
                     consecutive_errors += 1
+                    logger.warning(
+                        f"Error receiving message on session {session.id} "
+                        f"(attempt {consecutive_errors}/{max_retries}): {e}"
+                    )
                     if consecutive_errors > max_retries:
-                        logger.error(
-                            f"Max retries exceeded for session {session.id}, closing: {e}"
-                        )
-                        # also close the session
+                        logger.error(f"Max retries exceeded for session {session.id}, closing")
                         await self._session_manager.close_session(session)
                         break
-                    logger.warning(
-                        f"Error receiving message on session {session.id} (attempt {consecutive_errors}/{max_retries}): {e}"
-                    )
-                    await asyncio.sleep(0.5)  # backoff to avoid spin
+                    await asyncio.sleep(0.5)
         except asyncio.CancelledError:
             logger.info(f"Session {session.id} handler cancelled")
             raise
