@@ -241,6 +241,7 @@ class SLIMTransport(BaseTransport):
                     # wait for responses from all invitees or be interrupted by caller
                     messages_received = 0
                     while messages_received < message_limit:
+                        print("received: ", messages_received, message_limit)
                         try:
                             _, msg = await self._slim.receive(session=session_info.id)
                             msg = Message.deserialize(msg)
