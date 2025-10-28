@@ -22,12 +22,9 @@ class SessionManager:
     def __init__(self):
         self._sessions: Dict[str, PySession] = {}
         self._slim = None
-<<<<<<< HEAD
-=======
         # Note: we have to use lock from asyncio here. Using threading.Lock()
         # across await calls is dangerous and can cause possible deadlocks
         # and concurrency issues.
->>>>>>> c72e5f4 (Use lock from asyncio; move sleep right after end signal publish)
         self._lock = asyncio.Lock()
 
     def set_slim(self, slim: slim_bindings.Slim):
@@ -49,32 +46,16 @@ class SessionManager:
         if not self._slim:
             raise ValueError("SLIM client is not set")
 
-        # check if we already have a PointToPoint session
-        for session_id, session in self._sessions.items():
-            try:
-                conf = await session.session_config()
-                # compare the type of conf to PySessionConfiguration.PointToPoint
-                if isinstance(conf, PySessionConfiguration.PointToPoint):
-                    logger.debug(f"Re-using exising Point-to-point session created for {session_id}")
-                    return session_id, session
-            except Exception as e:
-                # TODO: Revisit with SLIM team if this still exists in 0.5.0
-                logger.debug(
-                    f"could not retrieve SLIM session config for {session_id}: {e}"
-                )
-                continue
-
-        async with self._lock:
-            session = await self._slim.create_session(
-                PySessionConfiguration.PointToPoint(
-                    peer_name=remote_name,
-                    max_retries=max_retries,
-                    timeout=timeout,
-                    mls_enabled=mls_enabled,
-                )
+        session = await self._slim.create_session(
+            PySessionConfiguration.PointToPoint(
+                peer_name=remote_name,
+                max_retries=max_retries,
+                timeout=timeout,
+                mls_enabled=mls_enabled,
             )
+        )
 
-            return session.id, session
+        return session.id, session
 
     async def group_broadcast_session(
         self,
