@@ -147,7 +147,13 @@ class SessionManager:
                 )
                 await session.publish(end_msg.serialize())
 
-            logger.info(f"Waiting before attempting to delete session: {session_id}")
+                # resends the end message a few times to increase the likelihood
+                # of all group members receive this end signal
+                for _ in range(3):
+                    await session.publish(end_msg.serialize())
+                    await asyncio.sleep(0.5)
+
+            logger.info(f"Waiting before attempting to delete session: {session.id}")
             # todo: proper way to wait for all messages to be processed
             await asyncio.sleep(
                 random.uniform(5, 10)

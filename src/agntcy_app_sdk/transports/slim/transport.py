@@ -455,7 +455,9 @@ class SLIMTransport(BaseTransport):
                 try:
                     session = await self._slim.listen_for_session()
                     logger.info(
-                        f"Received new session: {session.id} - {session.dst}"
+                        f"Received new session with id: {session.id}, "
+                        f"type: {session.session_type}, "
+                        f"destination: {session.dst}"
                     )
 
                     task = asyncio.create_task(
@@ -480,6 +482,7 @@ class SLIMTransport(BaseTransport):
 
         try:
             while not self._shutdown_event.is_set():
+                logger.info(f"Handling session receive with id: {session.id}")
                 try:
                     msg_ctx, msg = await session.get_message()
                     consecutive_errors = 0  # Reset on success
@@ -508,6 +511,10 @@ class SLIMTransport(BaseTransport):
         except asyncio.CancelledError:
             logger.info(f"Session {session.id} handler cancelled")
             raise
+        except Exception as e:
+            logger.error(f"Agent {self.local_name}: Unhandled exception in _handle_session_receive for session {session.id}: {e}")
+            # Ensure session is closed even on unhandled exceptions
+            await self._session_manager.close_session(session)
 
     async def _process_received_message(self, session: PySession, msg_ctx: PyMessageContext,
                                         msg: bytes) -> bool:
