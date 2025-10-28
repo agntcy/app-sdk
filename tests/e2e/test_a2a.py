@@ -266,6 +266,7 @@ async def test_broadcast_streaming(run_a2a_server, transport):
     responses = []
     async for resp in client.broadcast_message_streaming(
         request,
+        message_limit=3,
         broadcast_topic="broadcast",
         recipients=[
             "default/default/agent1",
@@ -278,15 +279,6 @@ async def test_broadcast_streaming(run_a2a_server, transport):
 
     print(f"[debug] Received {len(responses)} responses from broadcast")
     assert len(responses) == 3, "Did not receive expected number of broadcast responses"
-
-    # test a broadcast timeout
-    '''responses = await client.broadcast_message(
-        request,
-        recipients=["agent1", "agent2", "agent3"],
-        timeout=0.001,  # Set a short timeout to test timeout handling
-    )
-
-    assert len(responses) == 0, "Broadcast should have timed out"'''
 
     if transport_instance:
         print("[teardown] Closing transport...")

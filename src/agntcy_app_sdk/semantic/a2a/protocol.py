@@ -281,6 +281,7 @@ class A2AProtocol(BaseAgentProtocol):
             request: SendStreamingMessageRequest,
             recipients: List[str] | None = None,
             broadcast_topic: str = None,
+            message_limit: int = None,
             timeout: float = 60.0,
         ) -> AsyncIterator[SendMessageResponse]:
             """
@@ -296,11 +297,17 @@ class A2AProtocol(BaseAgentProtocol):
             if not broadcast_topic:
                 broadcast_topic = topic
 
+            # determine how many messages to stream until we break out
+            # if none, set strict number of recipients messages
+            if message_limit is None:
+                message_limit = len(recipients)
+
             try:
                 async for raw_resp in transport.gather_stream(
                     broadcast_topic,
                     msg,
                     recipients=recipients,
+                    message_limit=message_limit,
                     timeout=timeout,
                 ):
                     try:
