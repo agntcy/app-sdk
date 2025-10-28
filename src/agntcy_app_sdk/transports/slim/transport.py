@@ -137,7 +137,6 @@ class SLIMTransport(BaseTransport):
 
         # handle slim server disconnection
         try:
-            print(f"slim id: {self._slim.id}, slim id_str: {self._slim.id_str}", f"disconnecting from {self._endpoint}")
             await self._slim.disconnect(self._endpoint)
             logger.info("SLIM transport disconnected")
         except Exception as e:
