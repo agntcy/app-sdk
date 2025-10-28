@@ -22,6 +22,12 @@ class SessionManager:
     def __init__(self):
         self._sessions: Dict[str, PySession] = {}
         self._slim = None
+<<<<<<< HEAD
+=======
+        # Note: we have to use lock from asyncio here. Using threading.Lock()
+        # across await calls is dangerous and can cause possible deadlocks
+        # and concurrency issues.
+>>>>>>> c72e5f4 (Use lock from asyncio; move sleep right after end signal publish)
         self._lock = asyncio.Lock()
 
     def set_slim(self, slim: slim_bindings.Slim):
@@ -151,7 +157,7 @@ class SessionManager:
             # remove session from cache before attempting to delete it from SLIM server
             # this cannot be performed after deleting session, otherwise it
             # results in "session already closed" exception when trying to access the session stored in cache
-            self._local_cache_cleanup(session_id)
+            await self._local_cache_cleanup(session_id)
 
             # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
