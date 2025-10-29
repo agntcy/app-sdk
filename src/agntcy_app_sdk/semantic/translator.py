@@ -1,7 +1,9 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Optional
 import grpc
+import json
 from google.protobuf.struct_pb2 import Struct
 
 from agntcy.oasfsdk.validation.v1.validation_service_pb2 import ValidateRecordRequest
@@ -9,6 +11,7 @@ from agntcy.oasfsdk.validation.v1.validation_service_pb2_grpc import (
     ValidationServiceStub,
 )
 from agntcy.oasfsdk.translation.v1.translation_service_pb2 import (
+    A2AToRecordRequest,
     RecordToA2ARequest,
 )
 from agntcy.oasfsdk.translation.v1.translation_service_pb2_grpc import (
@@ -16,118 +19,150 @@ from agntcy.oasfsdk.translation.v1.translation_service_pb2_grpc import (
 )
 
 from a2a.types import (
-    AgentCapabilities,
     AgentCard,
-    AgentSkill,
-)
-
-record_data = {
-    "name": "example.org/my-agent",
-    "schema_version": "0.7.0",
-    "version": "v1.0.0",
-    "description": "An example agent for demonstration",
-    "authors": ["Your Name <your.email@example.com>"],
-    "created_at": "2025-01-01T00:00:00Z",
-    "domains": [{"id": 101, "name": "technology/internet_of_things"}],
-    "locators": [{"type": "docker_image", "url": "ghcr.io/example/my-agent:latest"}],
-    "skills": [
-        {
-            "name": "natural_language_processing/natural_language_understanding",
-            "id": 101,
-        }
-    ],
-}
-
-skill = AgentSkill(
-    id="hello_world",
-    name="Returns hello world",
-    description="just returns hello world",
-    tags=["hello world"],
-    examples=["hi", "hello world"],
-)
-
-agent_card = AgentCard(
-    name="Hello World Agent",
-    description="Just a hello world agent",
-    url="http://localhost:9999/",
-    version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
-    capabilities=AgentCapabilities(streaming=True),
-    skills=[skill],  # Only the basic skill for the public card
-    supportsAuthenticatedExtendedCard=False,
 )
 
 
-def validate_record():
-    # Sample OASF record to validate
+class SemanticTranslator:
+    """
+    Handles translation and validation between agent semantic protocols such as
+    A2A, MCP, and OASF record formats.
 
-    # Create gRPC channel
-    with grpc.insecure_channel("localhost:31234") as channel:
-        stub = ValidationServiceStub(channel)
+    Translation and validation is performed by the oasfsdk gRPC service.
+    """
 
-        # Convert dict to protobuf Struct
+    def __init__(
+        self, host: str = "localhost", port: int = 31234, auto_connect: bool = True
+    ):
+        """
+        Initialize the SemanticTranslator.
+
+        Args:
+            host: gRPC server host
+            port: gRPC server port
+            auto_connect: If True, establishes connection immediately.
+                         If False, call connect() manually.
+        """
+        self.address = f"{host}:{port}"
+        self._channel: Optional[grpc.Channel] = None
+        self._translation_stub: Optional[TranslationServiceStub] = None
+        self._validation_stub: Optional[ValidationServiceStub] = None
+        self._managed_context = False
+
+        if auto_connect:
+            self.connect()
+
+    def connect(self) -> None:
+        """Establish gRPC connection and initialize stubs."""
+        if self._channel is None:
+            self._channel = grpc.insecure_channel(self.address)
+            self._translation_stub = TranslationServiceStub(self._channel)
+            self._validation_stub = ValidationServiceStub(self._channel)
+
+    def close(self) -> None:
+        """Close gRPC connection and cleanup resources."""
+        if self._channel:
+            self._channel.close()
+            self._channel = None
+            self._translation_stub = None
+            self._validation_stub = None
+
+    def __enter__(self):
+        """Context manager entry - establishes gRPC connection."""
+        self._managed_context = True
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - closes gRPC connection."""
+        if self._managed_context:
+            self.close()
+            self._managed_context = False
+
+    def __del__(self):
+        """Cleanup on garbage collection."""
+        self.close()
+
+    def validate_oasf(self, record_data: dict) -> tuple[bool, list[str]]:
+        """
+        Validate an OASF record.
+
+        Args:
+            record_data: Dictionary containing the OASF record to validate
+
+        Returns:
+            Tuple of (is_valid, errors) where errors is a list of error messages
+
+        Raises:
+            RuntimeError: If not connected
+            grpc.RpcError: If the gRPC call fails
+        """
+        if not self._validation_stub:
+            raise RuntimeError(
+                "Not connected. Call connect() or use as context manager."
+            )
+
         record_struct = Struct()
         record_struct.update(record_data)
 
-        # Create validation request
-        request = ValidateRecordRequest(
-            record=record_struct
-            # schema_url="https://schema.oasf.outshift.com/schema/0.7.0/objects/record"  # Optional
-        )
+        request = ValidateRecordRequest(record=record_struct)
+        response = self._validation_stub.ValidateRecord(request)
 
-        try:
-            # Call validation service
-            response = stub.ValidateRecord(request)
+        return response.is_valid, list(response.errors)
 
-            # Print results
-            print(f"Valid: {response.is_valid}")
-            if response.errors:
-                print("Errors:")
-                for error in response.errors:
-                    print(f"  - {error}")
-            else:
-                print("No validation errors found!")
+    def a2a_to_oasf(self, agent_card: AgentCard) -> Optional[Struct]:
+        """
+        Translate an A2A AgentCard to an OASF record.
 
-        except grpc.RpcError as e:
-            print(f"gRPC error: {e.code()}: {e.details()}")
+        Args:
+            agent_card: The A2A AgentCard to translate
 
+        Returns:
+            Protobuf Struct containing the OASF record, or None if translation fails
 
-def translate_a2a_to_record():
-    with grpc.insecure_channel("localhost:31234") as channel:
-        stub = TranslationServiceStub(channel)
+        Raises:
+            RuntimeError: If not connected
+            grpc.RpcError: If the gRPC call fails
+        """
+        if not self._translation_stub:
+            raise RuntimeError(
+                "Not connected. Call connect() or use as context manager."
+            )
+
+        dict_agent_card = json.loads(agent_card.model_dump_json())
+        data = {"a2aCard": dict_agent_card}
 
         record_struct = Struct()
-        record_struct.update(agent_card)
+        record_struct.update(data)
 
-        # Create translation request
-        # request = A2AToRecordRequest(
-        #    data=agent_card,
-        # )
+        request = A2AToRecordRequest(data=record_struct)
+        response = self._translation_stub.A2AToRecord(request)
 
+        return response.record
 
-def translate_record_to_a2a():
-    with grpc.insecure_channel("localhost:31234") as channel:
-        stub = TranslationServiceStub(channel)
+    def oasf_to_a2a(self, record: dict) -> str:
+        """
+        Translate an OASF record to an A2A Card.
 
-        # Convert dict to protobuf Struct
+        Args:
+            record: Dictionary containing the OASF record
+
+        Returns:
+            String containing the A2A Card
+
+        Raises:
+            RuntimeError: If not connected
+            grpc.RpcError: If the gRPC call fails
+        """
+        if not self._translation_stub:
+            raise RuntimeError(
+                "Not connected. Call connect() or use as context manager."
+            )
+
         record_struct = Struct()
-        record_struct.update(record_data)
+        record_struct.update(record)
 
-        # Create translation request
         request = RecordToA2ARequest(record=record_struct)
+        response = self._translation_stub.RecordToA2A(request)
 
-        try:
-            # Call translation service
-            response = stub.RecordToA2A(request)
-
-            # Print results
-            print("A2A Message:")
-            print(response.a2a_message)
-        except grpc.RpcError as e:
-            print(f"gRPC error: {e.code()}: {e.details()}")
-
-
-if __name__ == "__main__":
-    validate_record()
-    translate_record_to_a2a()
+        return response
