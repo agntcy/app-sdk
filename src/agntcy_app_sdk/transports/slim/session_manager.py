@@ -77,9 +77,9 @@ class SessionManager:
         )
         # use the same lock for session creation and lookup
         async with self._lock:
-            if session_key in self._sessions:
-                logger.info(f"Reusing existing group broadcast session: {session_key}")
-                return session_key, self._sessions[session_key]
+            # if session_key in self._sessions:
+            #     logger.info(f"Reusing existing group broadcast session: {session_key}")
+            #     return session_key, self._sessions[session_key]
 
             logger.debug(f"Creating new group broadcast session: {session_key}")
             created_session = await self._slim.create_session(
@@ -100,7 +100,7 @@ class SessionManager:
                     logger.error(f"Failed to invite {invitee}: {e}")
 
             # store the created session
-            self._sessions[session_key] = created_session
+            # self._sessions[session_key] = created_session
             return session_key, created_session
 
     async def close_session(self, session: PySession, end_signal: str = None):
@@ -128,11 +128,6 @@ class SessionManager:
                 )
                 await session.publish(end_msg.serialize())
 
-                # resends the end message a few times to increase the likelihood
-                # of all group members receive this end signal
-                for _ in range(3):
-                    await session.publish(end_msg.serialize())
-                    await asyncio.sleep(0.5)
 
             logger.info(f"Waiting before attempting to delete session: {session.id}")
             # todo: proper way to wait for all messages to be processed
@@ -144,7 +139,7 @@ class SessionManager:
             # remove session from cache before attempting to delete it from SLIM server
             # this cannot be performed after deleting session, otherwise it
             # results in "session already closed" exception when trying to access the session stored in cache
-            await self._local_cache_cleanup(session_id)
+            # await self._local_cache_cleanup(session_id)
 
             # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
