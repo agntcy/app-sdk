@@ -366,14 +366,19 @@ class SLIMTransport(BaseTransport):
 
                 # Initiate the group broadcast
                 await group_session.publish(message.serialize())
-
+                helpdesk_counter = 0
+                non_helpdesk_counter = 0
                 # Wait for responses from invitees until the end message is received
                 while True:
                     try:
                         _, msg = await group_session.get_message()
                         deserialized_msg = Message.deserialize(msg)
                         responses.append(deserialized_msg)
-
+                        logger.info(f"received message in request_group(): deserialized_msg: {deserialized_msg}")
+                        if "Logistics Helpdesk IDLE" in str(deserialized_msg):
+                            helpdesk_counter += 1
+                        else:
+                            non_helpdesk_counter += 1
                         # Check for end message to stop collection
                         if end_message in str(deserialized_msg.payload):
                             break
@@ -387,6 +392,8 @@ class SLIMTransport(BaseTransport):
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
         finally:
+            logger.info(f"Helpdesk counter: {helpdesk_counter}")
+            logger.info(f"Non-helpdesk counter: {non_helpdesk_counter}")
             if group_session:
                 try:
                     logger.debug(f"Closing group session from _request_group(): {group_session.id}")
@@ -581,10 +588,10 @@ class SLIMTransport(BaseTransport):
             payload = output.serialize()
 
             if respond_to_source:
-                logger.debug(f"Responding to source on channel: {session.src}")
+                logger.info(f"Responding to source on channel: {session.src}")
                 await session.publish_to(msg_ctx, payload)
             elif respond_to_group:
-                logger.debug(
+                logger.info(
                     f"Responding to group on channel: {session.dst} with payload:\n {output}"
                 )
                 await session.publish(payload)
