@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from threading import Lock
-from typing import Any
+from typing import Any, Optional
+import signal
 
 from a2a.server.apps import A2AStarletteApplication
 from mcp.server.lowlevel import Server as MCPServer
@@ -41,6 +41,7 @@ class AppContainer:
         self.protocol_handler: BaseAgentProtocol = self._register_protocol_handler(
             server
         )
+        self._shutdown_event: Optional[asyncio.Event] = None
         self.is_running = False
 
     def _register_protocol_handler(self, server: Any):
@@ -125,16 +126,37 @@ class AppContainer:
             await self.loop_forever()
 
     async def loop_forever(self):
-        """Keep the event loop running."""
-        while True:
-            await asyncio.sleep(0.1)
+        """Keep the event loop running until shutdown signal received."""
+        self._shutdown_event = asyncio.Event()
+
+        # Get the running event loop
+        loop = asyncio.get_running_loop()
+
+        # Register signal handlers for graceful shutdown
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(
+                sig, lambda s=sig: asyncio.create_task(self._handle_shutdown(s))
+            )
+
+        # Wait indefinitely until shutdown event is set
+        await self._shutdown_event.wait()
+
+    async def _handle_shutdown(self, sig: signal.Signals):
+        """Handle shutdown signals gracefully."""
+        logger.info(f"Received signal {sig.name}, initiating shutdown...")
+        self._shutdown_event.set()
 
     async def stop(self):
         """Stop all components of the app container."""
+        if self._shutdown_event:
+            self._shutdown_event.set()
+
         if self.transport:
             await self.transport.close()
+
         # TODO: add any protocol handler or directory cleanup if needed
         logger.info("App session stopped.")
+
         self.is_running = False
 
 
@@ -149,7 +171,7 @@ class AppSession:
     ):
         self.max_sessions = max_sessions
         self.app_containers = {}
-        self._lock = Lock()
+        self._lock = asyncio.Lock()
 
     def add_app_container(self, session_id: str, container: AppContainer):
         if len(self.app_containers) >= self.max_sessions:
