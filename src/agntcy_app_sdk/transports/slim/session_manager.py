@@ -168,20 +168,18 @@ class SessionManager:
         """
         async with self._lock:
             logger.info(f"Removing session {session_id} from local cache. There are {len(self._sessions)} sessions in local cache")
+            session_key = None
             for key, sess in self._sessions.items():
-                logger.info(f"[DEBUG] session id {sess.id}, key {key}.")
-                session_key = None
-                for key, sess in self._sessions.items():
-                    logger.info(f"session id {sess.id}, key {key}.")
-                    if sess.id == session_id:
-                        session_key = key
-                        break
+                logger.info(f"session id {sess.id}, key {key}.")
+                if sess.id == session_id:
+                    session_key = key
+                    break
 
-                if session_key:
-                    del self._sessions[session_key]
-                    logger.debug(f"Locally cleaned up session: {session_id}")
-                else:
-                    logger.warning(f"Session {session_id} cannot be removed from local cache since this session was not found.")
+            if session_key:
+                del self._sessions[session_key]
+                logger.debug(f"Locally cleaned up session: {session_id}")
+            else:
+                logger.warning(f"Session {session_id} cannot be removed from local cache since this session was not found.")
 
     def session_details(self, session_key: str):
         """
