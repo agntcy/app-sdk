@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from a2a.client import A2AClient, A2ACardResolver
-from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH
+from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH
 from a2a.types import (
     AgentCard,
 )
@@ -48,35 +48,16 @@ async def get_client_from_agent_card_topic(
     """
     logger.info(f"Getting agent card from topic {topic}")
 
-    method = "GET"
+    request = Message(
+        type="A2ARequest",
+        payload=json.dumps({"path": AGENT_CARD_WELL_KNOWN_PATH, "method": "GET"}),
+        route_path=AGENT_CARD_WELL_KNOWN_PATH,
+        method="GET",
+    )
+    response = await transport.request(topic, request)
 
-    # Try v3 path first, fall back to v2 if anything goes wrong
-    try:
-        request = Message(
-            type="A2ARequest",
-            payload=json.dumps({"path": AGENT_CARD_WELL_KNOWN_PATH, "method": method}),
-            route_path=AGENT_CARD_WELL_KNOWN_PATH,
-            method=method,
-        )
-        response = await transport.request(topic, request)
-
-        response.payload = json.loads(response.payload.decode("utf-8"))
-        card = AgentCard.model_validate(response.payload)
-    except Exception as e:
-        logger.info(f"A2A v3 path failed or invalid payload, falling back to v2: {e}")
-
-        request = Message(
-            type="A2ARequest",
-            payload=json.dumps(
-                {"path": PREV_AGENT_CARD_WELL_KNOWN_PATH, "method": method}
-            ),
-            route_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
-            method=method,
-        )
-        response = await transport.request(topic, request)
-
-        response.payload = json.loads(response.payload.decode("utf-8"))
-        card = AgentCard.model_validate(response.payload)
+    response.payload = json.loads(response.payload.decode("utf-8"))
+    card = AgentCard.model_validate(response.payload)
 
     cl = A2AClient(
         agent_card=card,
@@ -96,27 +77,10 @@ async def get_client_from_agent_card_url(
     Replacement for removed get_client_from_agent_card_url().
     Tries both agent-card.json (v0.3.0) and legacy agent.json.
     """
-    try:
-        agent_card: AgentCard = await A2ACardResolver(
-            httpx_client,
-            base_url=base_url,
-            agent_card_path=AGENT_CARD_WELL_KNOWN_PATH,
-        ).get_agent_card(http_kwargs=http_kwargs)
-    except Exception as e:
-        logger.info(
-            f"Failed to get client from agent card url with v3 path, "
-            f"falling back to v2 path: {e}"
-        )
-        try:
-            agent_card: AgentCard = await A2ACardResolver(
-                httpx_client,
-                base_url=base_url,
-                agent_card_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
-            ).get_agent_card(http_kwargs=http_kwargs)
-        except Exception as e:
-            logger.error(
-                f"Failed to get client from agent card url with v2 " f"path: {e}"
-            )
-            raise e
+    agent_card: AgentCard = await A2ACardResolver(
+        httpx_client,
+        base_url=base_url,
+        agent_card_path=AGENT_CARD_WELL_KNOWN_PATH,
+    ).get_agent_card(http_kwargs=http_kwargs)
 
     return A2AClient(httpx_client=httpx_client, agent_card=agent_card)
