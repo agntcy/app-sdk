@@ -362,6 +362,9 @@ async def test_groupchat(run_a2a_server, transport):
             "default/default/foo",
             "default/default/bar",
         ],
+        muted_participants=[
+            "default/default/bar",
+        ],
         end_message="DELIVERED",
         timeout=30,
     )

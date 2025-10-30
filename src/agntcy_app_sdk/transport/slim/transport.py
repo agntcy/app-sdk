@@ -7,10 +7,7 @@ import asyncio
 from uuid import uuid4
 import datetime
 import slim_bindings
-from slim_bindings import (
-    PyName,
-    PySession
-)
+from slim_bindings import PyName, PySession
 from slim_bindings._slim_bindings import PyMessageContext
 
 from .common import (
@@ -28,6 +25,41 @@ logger = get_logger(__name__)
 """
 SLIM implementation of the BaseTransport interface.
 """
+
+# Global SLIM client instance
+slim = None
+
+
+async def get_global_slim_instance(
+    pyname,
+    endpoint,
+    tls_insecure,
+    shared_secret_identity,
+    jwt,
+    bundle,
+    audience,
+    enable_opentelemetry,
+):
+    global slim
+
+    # Return existing instance if already created
+    if slim is not None:
+        return slim
+
+    slim = await create_local_app(
+        pyname,
+        slim={
+            "endpoint": endpoint,
+            "tls": {"insecure": tls_insecure},
+        },
+        enable_opentelemetry=enable_opentelemetry,
+        shared_secret=shared_secret_identity,
+        jwt=jwt,
+        bundle=bundle,
+        audience=audience,
+    )
+
+    return slim
 
 
 class SLIMTransport(BaseTransport):
@@ -88,7 +120,6 @@ class SLIMTransport(BaseTransport):
         self.enable_opentelemetry = False
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             # Initialize tracing if enabled
-            from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
             # TODO: upgrade ioa sdk and uncomment this line
             # SLIMInstrumentor().instrument()
@@ -270,6 +301,7 @@ class SLIMTransport(BaseTransport):
         participants: List[str],
         init_message: Message,
         end_message: str = "done",
+        muted_participants: List[str] = [],
         timeout: float = 60.0,
         **kwargs,
     ) -> List[Message]:
@@ -278,9 +310,16 @@ class SLIMTransport(BaseTransport):
         """
         responses = []
         async for msg in self.start_streaming_conversation(
-            group_channel, participants, init_message, end_message, timeout, **kwargs
+            group_channel,
+            participants,
+            init_message,
+            end_message,
+            muted_participants=muted_participants,
+            timeout=timeout,
+            **kwargs,
         ):
             responses.append(msg)
+
         return responses
 
     async def start_streaming_conversation(
@@ -289,6 +328,7 @@ class SLIMTransport(BaseTransport):
         participants: List[str],
         init_message: Message,
         end_message: str = "done",
+        muted_participants: List[str] = [],
         timeout: float = 60.0,
         **kwargs,
     ) -> AsyncIterator[Message]:
@@ -310,6 +350,9 @@ class SLIMTransport(BaseTransport):
 
         # Convert recipients to PyName objects
         invitees = [self.build_pyname(recipient) for recipient in participants]
+        muted_participants = [
+            str(self.build_pyname(recipient)) for recipient in muted_participants
+        ]
 
         if not init_message.headers:
             init_message.headers = {}
@@ -319,6 +362,8 @@ class SLIMTransport(BaseTransport):
         # Optionally include an end message to signal to receivers they can close the session
         end_signal = uuid4().hex
         init_message.headers["x-session-end-message"] = end_signal
+        init_message.headers["x-muted-participants"] = ",".join(muted_participants)
+
         group_session = None
         try:
             async with asyncio.timeout(timeout):
@@ -330,7 +375,7 @@ class SLIMTransport(BaseTransport):
                 )
 
                 # Give the session a moment to be fully established on the SLIM dataplane- arbitrary delay
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1)
 
                 # Initiate the group broadcast
                 await group_session.publish(init_message.serialize())
@@ -361,7 +406,7 @@ class SLIMTransport(BaseTransport):
                         group_session, remote=remote_name, end_signal=end_signal
                     )
                 except Exception as e:
-                    logger.error(f"Failed to close session {group_session.id}: {e}")
+                    logger.error(f"Failed to close session: {e}")
 
     # -----------------------------------------------------------------------------
     # Utilities and setup methods
@@ -500,7 +545,9 @@ class SLIMTransport(BaseTransport):
                 try:
                     msg_ctx, msg = await session.get_message()
                     consecutive_errors = 0  # Reset on success
-                    end_session = await self._process_received_message(session, msg_ctx, msg)
+                    end_session = await self._process_received_message(
+                        session, msg_ctx, msg
+                    )
                     if end_session:
                         logger.info(
                             f"Ending session {session.id} as requested by client"
@@ -526,7 +573,9 @@ class SLIMTransport(BaseTransport):
             logger.info(f"Session {session.id} handler cancelled")
             raise
 
-    async def _process_received_message(self, session: PySession, msg_ctx: PyMessageContext, msg: bytes) -> bool:
+    async def _process_received_message(
+        self, session: PySession, msg_ctx: PyMessageContext, msg: bytes
+    ) -> bool:
         """Process a single received message and handle response logic."""
         # Deserialize the message
         try:
@@ -555,7 +604,13 @@ class SLIMTransport(BaseTransport):
         await self._handle_response(session, msg_ctx, deserialized_msg, output)
         return False
 
-    async def _handle_response(self, session: PySession, msg_ctx: PyMessageContext, original_msg, output: Message) -> None:
+    async def _handle_response(
+        self,
+        session: PySession,
+        msg_ctx: PyMessageContext,
+        original_msg,
+        output: Message,
+    ) -> None:
         """Handle response publishing based on message headers."""
         try:
             respond_to_source = (
@@ -570,6 +625,14 @@ class SLIMTransport(BaseTransport):
             if not output.headers:
                 output.headers = {}
 
+            # check if we are muted
+            muted_participants = original_msg.headers.get("x-muted-participants", "")
+            if str(self.pyname) in muted_participants.split(","):
+                logger.info(
+                    f"Not responding on session {session.id} because transport is muted."
+                )
+                return
+
             # propagate relevant headers from the original message if not already set
             if "x-respond-to-source" not in output.headers:
                 output.headers["x-respond-to-source"] = original_msg.headers.get(
@@ -582,6 +645,10 @@ class SLIMTransport(BaseTransport):
             if "x-session-end-message" not in output.headers:
                 output.headers["x-session-end-message"] = original_msg.headers.get(
                     "x-session-end-message", ""
+                )
+            if "x-muted-participants" not in output.headers:
+                output.headers["x-muted-participants"] = original_msg.headers.get(
+                    "x-muted-participants", ""
                 )
 
             payload = output.serialize()
@@ -612,17 +679,15 @@ class SLIMTransport(BaseTransport):
         if self._slim:
             return  # Already connected
 
-        self._slim: slim_bindings.Slim = await create_local_app(
+        self._slim = await get_global_slim_instance(
             self.pyname,
-            slim={
-                "endpoint": self._endpoint,
-                "tls": {"insecure": self._tls_insecure},
-            },
-            enable_opentelemetry=self.enable_opentelemetry,
-            shared_secret=self._shared_secret_identity,
-            jwt=self._jwt,
-            bundle=self._bundle,
-            audience=self._audience,
+            self._endpoint,
+            self._tls_insecure,
+            self._shared_secret_identity,
+            self._jwt,
+            self._bundle,
+            self._audience,
+            self.enable_opentelemetry,
         )
 
         self._session_manager.set_slim(self._slim)

@@ -30,6 +30,7 @@ def experimental_a2a_transport_methods(
         init_message: SendMessageRequest,
         group_channel: str,
         participants: List[str],
+        muted_participants: List[str] = [],
         timeout: float = 60,
         end_message: str = "work-done",
     ) -> List[SendMessageResponse]:
@@ -43,6 +44,7 @@ def experimental_a2a_transport_methods(
             member_messages = await transport.start_conversation(
                 group_channel=group_channel,
                 participants=participants,
+                muted_participants=muted_participants,
                 init_message=msg,
                 end_message=end_message,
                 timeout=timeout,
@@ -67,6 +69,7 @@ def experimental_a2a_transport_methods(
         init_message: SendMessageRequest,
         group_channel: str,
         participants: List[str],
+        muted_participants: List[str] = [],
         timeout: float = 60,
         end_message: str = "work-done",
     ) -> AsyncIterator[SendMessageResponse]:
@@ -80,6 +83,7 @@ def experimental_a2a_transport_methods(
         async for raw_member_message in transport.start_streaming_conversation(
             group_channel=group_channel,
             participants=participants,
+            muted_participants=muted_participants,
             init_message=msg,
             end_message=end_message,
             timeout=timeout,

@@ -13,7 +13,6 @@ from slim_bindings import (
     PySessionConfiguration,
 )
 from agntcy_app_sdk.semantic.message import Message
-from threading import Lock
 
 configure_logging()
 logger = get_logger(__name__)
@@ -23,7 +22,7 @@ class SessionManager:
     def __init__(self):
         self._sessions: Dict[str, PySession] = {}
         self._slim = None
-        self._lock = Lock()
+        self._lock = asyncio.Lock()
 
     def set_slim(self, slim: slim_bindings.Slim):
         """
@@ -50,7 +49,7 @@ class SessionManager:
             logger.info(f"Reusing existing point-to-point session: {session_key}")
             return self._sessions[session_key].id, self._sessions[session_key]
 
-        with self._lock:
+        async with self._lock:
             session = await self._slim.create_session(
                 PySessionConfiguration.PointToPoint(
                     peer_name=remote_name,
@@ -83,7 +82,7 @@ class SessionManager:
         )
 
         # use the same lock for session creation and lookup
-        with self._lock:
+        async with self._lock:
             if session_key in self._sessions:
                 logger.info(f"Reusing existing group broadcast session: {session_key}")
                 return session_key, self._sessions[session_key]
@@ -124,9 +123,12 @@ class SessionManager:
 
         session_deleted_server_side = False
         try:
+            session_id = session.id
             # send the end signal to the remote if provided
             if remote is not None and end_signal is not None:
-                logger.info(f"Sending end signal '{end_signal}' to remote {session.dst}")
+                logger.info(
+                    f"Sending end signal '{end_signal}' to remote {session.dst}"
+                )
 
                 end_msg = Message(
                     type="text/plain",
@@ -135,56 +137,54 @@ class SessionManager:
                 )
                 await session.publish(end_msg.serialize())
 
-            logger.info(f"Waiting before attempting to delete session: {session.id}")
-            # todo: proper way to wait for all messages to be processed
-            await asyncio.sleep(
-                random.uniform(5, 10)
-            )  # add sleep before closing to allow for any in-flight messages to be processed
-            logger.info(f"Attempting to delete session: {session.id}")
+                # Random sleep to allow remote to process the end signal
+                await asyncio.sleep(
+                    random.uniform(5, 10)
+                )  # add sleep before closing to allow for any in-flight messages to be processed
+                logger.info(f"Attempting to delete session: {session_id}")
 
-            # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
-                await asyncio.wait_for(
-                    self._slim.delete_session(session), timeout=5.0
-                )
-                logger.info(
-                    f"Session {session.id} deleted successfully within timeout."
-                )
-                session_deleted_server_side = True
-            except asyncio.TimeoutError:
-                logger.warning(f"Timed out while trying to delete session {session.id}. "
-                               f"It might still have been deleted on SLIM server, but no confirmation was received.")
-                session_deleted_server_side = True
+                await self._slim.delete_session(session)
             except Exception as e:
-                logger.error(f"Error deleting session {session.id}: {e}")
+                if "already closed" in str(e):
+                    logger.info(
+                        f"Session {session_id} was already closed on the server side."
+                    )
+            session_deleted_server_side = True
         except Exception as e:
-            logger.warning(f"Error closing SLIM session {session.id}: {e}")
+            logger.warning(f"Error closing SLIM session {session_id}: {e}")
             return
 
         # Clean up local cache only if SLIM server-side deletion was attempted and potentially successful/timed out
         if session_deleted_server_side:
-            logger.info(f"Removing session {session.id} from local cache.")
-            self._local_cache_cleanup(session.id)
+            await self._local_cache_cleanup(session_id)
         else:
-            logger.info(f"Session {session.id} not removed from local cache due to confirmed server-side deletion failure.")
+            logger.info(
+                f"Session {session_id} not removed from local cache due to confirmed server-side deletion failure."
+            )
 
-    def _local_cache_cleanup(self, session_id: int):
+    async def _local_cache_cleanup(self, session_id: int):
         """
         Perform local cleanup of a session without attempting to close it on the SLIM client.
         """
-        with self._lock:
+        async with self._lock:
             session_key = None
             for key, sess in self._sessions.items():
-                if sess.id == session_id:
-                    session_key = key
-                    break
+                try:
+                    if sess.id == session_id:
+                        session_key = key
+                        break
+                except Exception as _:
+                    pass
 
-            if session_key:
+            if session_key is not None:
                 del self._sessions[session_key]
                 logger.debug(f"Locally cleaned up session: {session_id}")
             else:
-                logger.warning(f"Session {session_id} cannot be removed from "
-                               f"local cache since this session was not found.")
+                logger.warning(
+                    f"Session {session_id} cannot be removed from "
+                    f"local cache since this session was not found."
+                )
 
     def session_details(self, session_key: str):
         """
@@ -192,7 +192,6 @@ class SessionManager:
         """
         session = self._sessions.get(session_key)
         if session:
-            print(dir(session))
             return {
                 "id": session.id,
             }
