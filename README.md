@@ -154,7 +154,7 @@ The `/tests` directory contains e2e tests for the factory, including A2A client 
 Run the required message bus services:
 
 ```bash
-docker-compose -f infra/docker/docker-compose.yaml up
+docker-compose -f services/docker/docker-compose.yaml up
 ```
 
 **✅ Test the factory with A2A client and all available transports**
