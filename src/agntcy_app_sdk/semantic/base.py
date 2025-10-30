@@ -136,13 +136,6 @@ class BaseAgentProtocol(ABC):
         pass
 
     @abstractmethod
-    def message_translator(
-        self, request: Any, headers: dict[str, Any] | None = None
-    ) -> Message:
-        """Translate a request into a message."""
-        pass
-
-    @abstractmethod
     def create_agent_topic(*args, **kwargs) -> str:
         """Create a unique topic identifier for the agent."""
         pass

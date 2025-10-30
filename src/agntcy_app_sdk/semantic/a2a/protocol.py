@@ -1,68 +1,37 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from starlette.types import Scope
-from typing import Dict, Any, List, AsyncIterator
+from typing import Dict, Any
 import json
 from uuid import uuid4
 import httpx
 import os
 
 from a2a.client import A2AClient, A2ACardResolver
-from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH
 from a2a.server.apps import A2AStarletteApplication
+from starlette.types import Scope
 from a2a.types import (
     AgentCard,
     SendMessageRequest,
-    SendStreamingMessageRequest,
-    SendMessageResponse,
     JSONRPCSuccessResponse,
     MessageSendParams,
 )
 from agntcy_app_sdk.semantic.base import BaseAgentProtocol
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
-from opentelemetry.instrumentation.starlette import StarletteInstrumentor
+from agntcy_app_sdk.semantic.a2a.utils import (
+    get_client_from_agent_card_url,
+    get_client_from_agent_card_topic,
+    message_translator,
+)
+from agntcy_app_sdk.semantic.a2a.experimental import (
+    experimental_a2a_transport_methods,
+)
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
 configure_logging()
 logger = get_logger(__name__)
-
-
-async def get_client_from_agent_card_url(
-    httpx_client: httpx.AsyncClient,
-    base_url: str,
-    http_kwargs: dict[str, Any] | None = None,
-) -> A2AClient:
-    """
-    Replacement for removed get_client_from_agent_card_url().
-    Tries both agent-card.json (v0.3.0) and legacy agent.json.
-    """
-    try:
-        agent_card: AgentCard = await A2ACardResolver(
-            httpx_client,
-            base_url=base_url,
-            agent_card_path=AGENT_CARD_WELL_KNOWN_PATH,
-        ).get_agent_card(http_kwargs=http_kwargs)
-    except Exception as e:
-        logger.info(
-            f"Failed to get client from agent card url with v3 path, "
-            f"falling back to v2 path: {e}"
-        )
-        try:
-            agent_card: AgentCard = await A2ACardResolver(
-                httpx_client,
-                base_url=base_url,
-                agent_card_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
-            ).get_agent_card(http_kwargs=http_kwargs)
-        except Exception as e:
-            logger.error(
-                f"Failed to get client from agent card url with v2 " f"path: {e}"
-            )
-            raise e
-
-    return A2AClient(httpx_client=httpx_client, agent_card=agent_card)
 
 
 class A2AProtocol(BaseAgentProtocol):
@@ -76,112 +45,129 @@ class A2AProtocol(BaseAgentProtocol):
         """
         return f"{agent_card.name}_{agent_card.version}"
 
-    async def get_client_from_agent_card_topic(
-        self, topic: str, transport: BaseTransport
-    ) -> A2AClient:
-        """
-        Create an A2A client from the agent card topic, bypassing all need for a URL.
-        """
-        logger.info(f"Getting agent card from topic {topic}")
-
-        method = "GET"
-
-        # Try v3 path first, fall back to v2 if anything goes wrong
-        try:
-            request = Message(
-                type="A2ARequest",
-                payload=json.dumps(
-                    {"path": AGENT_CARD_WELL_KNOWN_PATH, "method": method}
-                ),
-                route_path=AGENT_CARD_WELL_KNOWN_PATH,
-                method=method,
-            )
-            response = await transport.request(topic, request)
-
-            response.payload = json.loads(response.payload.decode("utf-8"))
-            card = AgentCard.model_validate(response.payload)
-        except Exception as e:
-            logger.info(
-                f"A2A v3 path failed or invalid payload, falling back to v2: {e}"
-            )
-
-            request = Message(
-                type="A2ARequest",
-                payload=json.dumps(
-                    {"path": PREV_AGENT_CARD_WELL_KNOWN_PATH, "method": method}
-                ),
-                route_path=PREV_AGENT_CARD_WELL_KNOWN_PATH,
-                method=method,
-            )
-            response = await transport.request(topic, request)
-
-            response.payload = json.loads(response.payload.decode("utf-8"))
-            card = AgentCard.model_validate(response.payload)
-
-        cl = A2AClient(
-            agent_card=card,
-            httpx_client=None,  # Set the httpx_client to None so it will use the overridden version of _send_request() below
-            url=None,
-        )
-        cl.agent_card = card
-        return cl
-
     async def create_client(
         self,
         url: str = None,
         topic: str = None,
         transport: BaseTransport = None,
+        add_experimental_patterns: bool = True,
         **kwargs,
     ) -> A2AClient:
         """
-        Create an A2A client, overriding the default client _send_request method to
-        use the provided transport.
+        Create an A2A client with optional custom transport.
+
+        Args:
+            url: Agent card URL (required if topic not provided)
+            topic: Agent topic (required if url not provided)
+            transport: Custom transport implementation
+            add_experimental_patterns: Whether to add experimental transport methods
+            **kwargs: Additional arguments (currently unused)
+
+        Returns:
+            Configured A2AClient instance
+
+        Raises:
+            ValueError: If neither url nor topic is provided
         """
+        self._initialize_tracing_if_enabled()
+        self._validate_inputs(url, topic)
+
+        if transport:
+            await transport.setup()
+
+        client = await self._create_base_client(url, topic, transport)
+
+        if transport:
+            effective_topic = topic or self.create_agent_topic(client.agent_card)
+            self._configure_transport(client, transport, effective_topic)
+
+        if add_experimental_patterns:
+            self._add_experimental_patterns(client, transport, topic)
+
+        return client
+
+    def _initialize_tracing_if_enabled(self) -> None:
+        """Initialize OpenTelemetry tracing if enabled via environment variable."""
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            # Initialize tracing if enabled
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
             A2AInstrumentor().instrument()
             logger.info("A2A Instrumentor enabled for tracing")
 
+    def _validate_inputs(self, url: str, topic: str) -> None:
+        """Ensure at least one of url or topic is provided."""
         if url is None and topic is None:
             raise ValueError("Either url or topic must be provided")
 
-        if transport:
-            await transport.setup()
+    async def _create_base_client(
+        self,
+        url: str,
+        topic: str,
+        transport: BaseTransport,
+    ) -> A2AClient:
+        """
+        Create the base A2A client from either topic or URL.
 
-        # if a transport and a topic are provided, bypass the URL and use the topic
+        Args:
+            url: Agent card URL
+            topic: Agent topic
+            transport: Custom transport (used with topic-based creation)
+
+        Returns:
+            A2AClient instance with agent card attached
+        """
         if topic and transport:
-            client = await self.get_client_from_agent_card_topic(topic, transport)
-        else:
-            httpx_client = httpx.AsyncClient()
-            try:
-                client = await get_client_from_agent_card_url(httpx_client, url)
-            except Exception as e:
-                logger.error(f"Failed to retrieve A2A client: {e}")
-                raise e
+            return await get_client_from_agent_card_topic(topic, transport)
 
-            # ensure the client has an agent card
-            if not hasattr(client, "agent_card"):
-                agent_card = await A2ACardResolver(
-                    httpx_client,
-                    base_url=url,
-                ).get_agent_card()
-                client.agent_card = agent_card
+        return await self._create_client_from_url(url)
 
-        if transport:
-            logger.info(
-                f"Using transport {transport.type()} for A2A client {topic or client.agent_card.name}"
-            )
-            if not topic:
-                topic = self.create_agent_topic(client.agent_card)
+    async def _create_client_from_url(self, url: str) -> A2AClient:
+        """Create client from agent card URL and ensure agent card is attached."""
+        httpx_client = httpx.AsyncClient()
 
-            # override the _send_request method to use the provided transport
-            self._override_send_methods(client, transport, topic)
+        try:
+            client = await get_client_from_agent_card_url(httpx_client, url)
+        except Exception as e:
+            logger.error(f"Failed to retrieve A2A client from URL '{url}': {e}")
+            raise
+
+        # Ensure agent card is attached
+        if not hasattr(client, "agent_card"):
+            agent_card = await A2ACardResolver(
+                httpx_client,
+                base_url=url,
+            ).get_agent_card()
+            client.agent_card = agent_card
 
         return client
 
-    def _override_send_methods(
+    def _configure_transport(
+        self,
+        client: A2AClient,
+        transport: BaseTransport,
+        topic: str,
+    ) -> None:
+        """Configure client to use custom transport for requests."""
+        logger.info(
+            f"Using transport {transport.type()} for A2A client "
+            f"'{topic or client.agent_card.name}'"
+        )
+        self._register_transport(client, transport, topic)
+
+    def _add_experimental_patterns(
+        self,
+        client: A2AClient,
+        transport: BaseTransport,
+        topic: str,
+    ) -> None:
+        """Dynamically add experimental transport methods to client."""
+        logger.info("Adding experimental A2A transport patterns to client")
+
+        experimental_methods = experimental_a2a_transport_methods(transport, topic)
+        for method_name, method in experimental_methods.items():
+            setattr(client, method_name, method)
+
+    def _register_transport(
         self, client: A2AClient, transport: BaseTransport, topic: str
     ) -> None:
         """
@@ -203,9 +189,7 @@ class A2AProtocol(BaseAgentProtocol):
             try:
                 response = await transport.request(
                     topic,
-                    self.message_translator(
-                        request=rpc_request_payload, headers=headers
-                    ),
+                    message_translator(request=rpc_request_payload, headers=headers),
                 )
 
                 response.payload = json.loads(response.payload.decode("utf-8"))
@@ -216,184 +200,8 @@ class A2AProtocol(BaseAgentProtocol):
                 )
                 raise e  # TODO: handle errors more gracefully
 
-        async def start_groupchat(
-            init_message: SendMessageRequest,
-            group_channel: str,
-            participants: List[str],
-            timeout: float = 60,
-            end_message: str = "work-done",
-        ) -> List[SendMessageResponse]:
-            if not init_message.id:
-                init_message.id = str(uuid4())
-
-            msg = self.message_translator(
-                request=init_message.model_dump(mode="json", exclude_none=True)
-            )
-            try:
-                member_messages = await transport.start_conversation(
-                    group_channel=group_channel,
-                    participants=participants,
-                    init_message=msg,
-                    end_message=end_message,
-                    timeout=timeout,
-                )
-                groupchat_messages = []
-                for raw_msg in member_messages:
-                    try:
-                        resp = json.loads(raw_msg.payload.decode("utf-8"))
-                        groupchat_messages.append(SendMessageResponse(resp))
-                    except Exception as e:
-                        logger.error(f"Error decoding JSON response: {e}")
-                        continue
-
-                return groupchat_messages
-            except Exception as e:
-                logger.error(
-                    f"Error starting group chat A2A request with transport {transport.type()}: {e}"
-                )
-                return []
-
-        async def start_streaming_groupchat(
-            init_message: SendMessageRequest,
-            group_channel: str,
-            participants: List[str],
-            timeout: float = 60,
-            end_message: str = "work-done",
-        ) -> AsyncIterator[SendMessageResponse]:
-            if not init_message.id:
-                init_message.id = str(uuid4())
-
-            msg = self.message_translator(
-                request=init_message.model_dump(mode="json", exclude_none=True)
-            )
-
-            async for raw_member_message in transport.start_streaming_conversation(
-                group_channel=group_channel,
-                participants=participants,
-                init_message=msg,
-                end_message=end_message,
-                timeout=timeout,
-            ):
-                message = json.loads(raw_member_message.payload.decode("utf-8"))
-                yield SendMessageResponse(message)
-
-        async def broadcast_message_streaming(
-            request: SendStreamingMessageRequest,
-            recipients: List[str] | None = None,
-            broadcast_topic: str = None,
-            message_limit: int = None,
-            timeout: float = 60.0,
-        ) -> AsyncIterator[SendMessageResponse]:
-            """
-            Broadcast a streaming request using the provided transport.
-            """
-            if not request.id:
-                request.id = str(uuid4())
-
-            msg = self.message_translator(
-                request=request.model_dump(mode="json", exclude_none=True)
-            )
-
-            if not broadcast_topic:
-                broadcast_topic = topic
-
-            # determine how many messages to stream until we break out
-            # if none, set strict number of recipients messages
-            if message_limit is None:
-                message_limit = len(recipients)
-
-            try:
-                async for raw_resp in transport.gather_stream(
-                    broadcast_topic,
-                    msg,
-                    recipients=recipients,
-                    message_limit=message_limit,
-                    timeout=timeout,
-                ):
-                    try:
-                        resp = json.loads(raw_resp.payload.decode("utf-8"))
-                        yield SendMessageResponse(resp)
-                    except Exception as e:
-                        logger.error(f"Error decoding JSON response: {e}")
-                        continue
-            except Exception as e:
-                logger.error(
-                    f"Error gathering streaming A2A request with transport {transport.type()}: {e}"
-                )
-                return
-
-        async def broadcast_message(
-            request: SendMessageRequest | SendStreamingMessageRequest,
-            recipients: List[str] | None = None,
-            broadcast_topic: str = None,
-            timeout: float = 60.0,
-        ) -> List[SendMessageResponse]:
-            """
-            Broadcast a request using the provided transport.
-            """
-            if not request.id:
-                request.id = str(uuid4())
-
-            msg = self.message_translator(
-                request=request.model_dump(mode="json", exclude_none=True)
-            )
-
-            if not broadcast_topic:
-                broadcast_topic = topic
-
-            try:
-                responses = await transport.gather(
-                    broadcast_topic,
-                    msg,
-                    recipients=recipients,
-                    timeout=timeout,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error gathering A2A request with transport {transport.type()}: {e}"
-                )
-                return []
-
-            broadcast_responses = []
-            for raw_resp in responses:
-                try:
-                    resp = json.loads(raw_resp.payload.decode("utf-8"))
-                    broadcast_responses.append(SendMessageResponse(resp))
-                except Exception as e:
-                    logger.error(f"Error decoding JSON response: {e}")
-                    continue
-
-            return broadcast_responses
-
         # override the _send_request method to use the provided transport
         client._transport._send_request = _send_request
-
-        # monkey patch experimental patterns
-        client.broadcast_message = broadcast_message
-        client.broadcast_message_streaming = broadcast_message_streaming
-        client.start_groupchat = start_groupchat
-        client.start_streaming_groupchat = start_streaming_groupchat
-
-    def message_translator(
-        self, request: dict[str, Any], headers: dict[str, Any] | None = None
-    ) -> Message:
-        """
-        Translate an A2A request into the internal Message object.
-        """
-        if headers is None:
-            headers = {}
-        if not isinstance(headers, dict):
-            raise ValueError("Headers must be a dictionary")
-
-        message = Message(
-            type="A2ARequest",
-            payload=json.dumps(request),
-            route_path="/",  # json-rpc path
-            method="POST",  # A2A json-rpc will always use POST
-            headers=headers,
-        )
-
-        return message
 
     def bind_server(self, server: A2AStarletteApplication) -> None:
         """Bind the protocol to a server."""
@@ -416,7 +224,6 @@ class A2AProtocol(BaseAgentProtocol):
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
             A2AInstrumentor().instrument()
-            StarletteInstrumentor().instrument_app(self._app)
             logger.info("A2A ASGI app instrumented for tracing")
 
     async def handle_message(self, message: Message) -> Message:
