@@ -5,6 +5,7 @@ from typing import Optional
 import grpc
 import json
 from google.protobuf.struct_pb2 import Struct
+from agntcy.dir_sdk.models import core_v1
 
 from agntcy.oasfsdk.validation.v1.validation_service_pb2 import ValidateRecordRequest
 from agntcy.oasfsdk.validation.v1.validation_service_pb2_grpc import (
@@ -82,6 +83,34 @@ class SemanticTranslator:
     def __del__(self):
         """Cleanup on garbage collection."""
         self.close()
+
+    def to_oasf_record_data(self, record: core_v1.Record) -> dict:
+        """
+        Convert a core_v1.Record to OASF record data dictionary.
+
+        Args:
+            record: core_v1.Record instance
+
+        Returns:
+            Dictionary representation of the OASF record
+        """
+        record_json = record.model_dump_json()
+        record_data = json.loads(record_json)
+        return record_data
+
+    def from_oasf_record_data(self, record_data: dict) -> core_v1.Record:
+        """
+        Convert OASF record data dictionary to core_v1.Record.
+
+        Args:
+            record_data: Dictionary representation of the OASF record
+
+        Returns:
+            core_v1.Record instance
+        """
+        record_json = json.dumps(record_data)
+        record = core_v1.Record.model_validate_json(record_json)
+        return record
 
     def validate_oasf(self, record_data: dict) -> tuple[bool, list[str]]:
         """

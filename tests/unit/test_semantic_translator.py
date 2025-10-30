@@ -3,6 +3,7 @@
 
 import pytest
 from google.protobuf.struct_pb2 import Struct
+from agntcy.dir_sdk.models import core_v1
 
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from agntcy_app_sdk.semantic.translator import SemanticTranslator
@@ -29,6 +30,38 @@ def valid_oasf_record():
             }
         ],
     }
+
+
+@pytest.fixture
+def valid_oasf_corev1_record():
+    """Fixture for a valid OASF CoreV1 record."""
+    return core_v1.Record(
+        data={
+            "name": "Example Agent",
+            "version": "v1.0.0",
+            "schema_version": "0.7.0",
+            "description": "Test agent: Example Agent",
+            "authors": ["AGNTCY"],
+            "created_at": "2025-03-19T17:06:37Z",
+            "skills": [
+                {
+                    "name": "natural_language_processing/natural_language_generation/text_completion",
+                    "id": 10201,
+                },
+                {
+                    "name": "natural_language_processing/analytical_reasoning/problem_solving",
+                    "id": 10702,
+                },
+            ],
+            "locators": [
+                {
+                    "type": "docker_image",
+                    "url": "https://ghcr.io/agntcy/example-agent:latest",
+                }
+            ],
+            "domains": [{"name": "technology/networking", "id": 103}],
+        },
+    )
 
 
 @pytest.fixture
@@ -79,6 +112,15 @@ def test_validate_oasf_valid_record(translator, valid_oasf_record):
 
     assert is_valid is True
     assert len(errors) == 0
+
+
+def test_dir_sdk_to_oasf_sdk_record_conversion(translator, valid_oasf_corev1_record):
+    """Test conversion from dir_sdk core_v1.Record to OASF record data dictionary."""
+    record_data = translator.to_oasf_record_data(valid_oasf_corev1_record)
+
+    assert record_data is not None
+    assert isinstance(record_data, dict)
+    assert record_data["name"] == "Example Agent"
 
 
 def test_a2a_to_oasf_translation(translator, agent_card):

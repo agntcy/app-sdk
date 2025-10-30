@@ -22,6 +22,11 @@ dependencies = [
     "agntcy-oasf-sdk-protocolbuffers-python==32.1.0.1.20250917120021+8b2bf93bf8dc",
 ]
 
+[tool.uv]
+override-dependencies = [
+    "protobuf>=6.33.0",
+]
+
 [project.urls]
 "Homepage" = "https://github.com/agntcy/app-sdk"
 "Bug Tracker" = "https://github.com/agntcy/app-sdk/issues"
