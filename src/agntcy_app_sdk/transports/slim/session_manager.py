@@ -129,12 +129,12 @@ class SessionManager:
                 await session.publish(end_msg.serialize())
 
 
-            logger.info(f"Waiting before attempting to delete session: {session.id}")
-            # todo: proper way to wait for all messages to be processed
-            await asyncio.sleep(
-                random.uniform(5, 10)
-            )  # add sleep before closing to allow for any in-flight messages to be processed
-            logger.info(f"Attempting to delete session: {session_id}")
+                logger.info(f"Waiting before attempting to delete session: {session.id}")
+                # todo: proper way to wait for all messages to be processed
+                await asyncio.sleep(
+                    random.uniform(5, 10)
+                )  # add sleep before closing to allow for any in-flight messages to be processed
+                logger.info(f"Attempting to delete session: {session_id}")
 
             # remove session from cache before attempting to delete it from SLIM server
             # this cannot be performed after deleting session, otherwise it
@@ -143,7 +143,7 @@ class SessionManager:
 
             # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
-                await asyncio.wait_for(self._slim.delete_session(session), timeout=5.0)
+                await self._slim.delete_session(session)
                 logger.info(f"Session {session_id} deleted successfully within timeout.")
             except asyncio.TimeoutError:
                 logger.warning(f"Timed out while trying to delete session {session_id}. "

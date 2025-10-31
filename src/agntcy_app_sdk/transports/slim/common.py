@@ -100,6 +100,40 @@ class DictParamType(click.ParamType):
         except json.JSONDecodeError:
             self.fail(f"{value} is not valid JSON", param, ctx)
 
+# Global singleton instance
+slim = None
+
+async def get_global_slim_instance(
+    pyname,
+    endpoint,
+    tls_insecure,
+    shared_secret_identity,
+    jwt,
+    bundle,
+    audience,
+    enable_opentelemetry,
+):
+    global slim
+
+    # Return existing instance if already created
+    if slim is not None:
+        return slim
+
+    slim = await create_local_app(
+        pyname,
+        slim={
+            "endpoint": endpoint,
+            "tls": {"insecure": tls_insecure},
+        },
+        enable_opentelemetry=enable_opentelemetry,
+        shared_secret=shared_secret_identity,
+        jwt=jwt,
+        bundle=bundle,
+        audience=audience,
+    )
+
+    return slim
+
 
 async def create_local_app(
     local: slim_bindings.PyName,

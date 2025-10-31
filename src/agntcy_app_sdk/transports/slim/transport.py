@@ -9,10 +9,7 @@ import inspect
 import datetime
 import slim_bindings
 from slim_bindings import (PyName, PySession, PyMessageContext, )
-from .common import (
-    create_local_app,
-    split_id,
-)
+from .common import (create_local_app, split_id, get_global_slim_instance, )
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.transports.transport import BaseTransport, ResponseMode, Message
 from agntcy_app_sdk.transports.slim.session_manager import SessionManager
@@ -588,10 +585,10 @@ class SLIMTransport(BaseTransport):
             payload = output.serialize()
 
             if respond_to_source:
-                logger.info(f"Responding to source on channel: {session.src}")
+                logger.debug(f"Responding to source on channel: {session.src}")
                 await session.publish_to(msg_ctx, payload)
             elif respond_to_group:
-                logger.info(
+                logger.debug(
                     f"Responding to group on channel: {session.dst} with payload:\n {output}"
                 )
                 await session.publish(payload)
@@ -613,17 +610,15 @@ class SLIMTransport(BaseTransport):
         if self._slim:
             return  # Already connected
 
-        self._slim: slim_bindings.Slim = await create_local_app(
+        self._slim: slim_bindings.Slim = await get_global_slim_instance(
             self.pyname,
-            slim={
-                "endpoint": self._endpoint,
-                "tls": {"insecure": self._tls_insecure},
-            },
-            enable_opentelemetry=self.enable_opentelemetry,
-            shared_secret=self._shared_secret_identity,
+            endpoint=self._endpoint,
+            tls_insecure=self._tls_insecure,
+            shared_secret_identity=self._shared_secret_identity,
             jwt=self._jwt,
             bundle=self._bundle,
             audience=self._audience,
+            enable_opentelemetry=self.enable_opentelemetry
         )
 
         self._session_manager.set_slim(self._slim)
