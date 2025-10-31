@@ -116,12 +116,7 @@ async def main(
             topic=topic,
         )
         app_session.add_app_container("default_session", app_container)
-        await app_session.start_all_sessions(blocking=block)
-
-        """if not topic or topic == "":
-            topic = A2AProtocol.create_agent_topic(server.agent_card)
-        bridge = factory.create_bridge(server, transport=transport, topic=topic)
-        await bridge.start(blocking=block)"""
+        await app_session.start_all_sessions(keep_alive=block)
 
 
 if __name__ == "__main__":

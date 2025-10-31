@@ -51,7 +51,7 @@ async def main(transport_type: str, endpoint: str, name: str, block: bool = True
         app_session = factory.create_app_session(max_sessions=1)
         app_container = AppContainer(mcp, transport=transport, topic="fastmcp")
         app_session.add_app_container("default_session", app_container)
-        await app_session.start_all_sessions(blocking=block)
+        await app_session.start_all_sessions(keep_alive=block)
 
         print("[start] App session started.")
 

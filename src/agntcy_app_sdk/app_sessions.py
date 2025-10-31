@@ -85,7 +85,7 @@ class AppContainer:
         self.topic = topic
 
     async def run(
-        self, blocking: bool = False, push_to_directory_on_startup: bool = False
+        self, keep_alive: bool = False, push_to_directory_on_startup: bool = False
     ):
         """Start all components of the app container."""
         if self.is_running:
@@ -121,48 +121,63 @@ class AppContainer:
         logger.info("App session started.")
         self.is_running = True
 
-        if blocking:
-            # Run the loop forever if blocking is True
+        if keep_alive:
+            # Run the loop forever if keep_alive is True
             await self.loop_forever()
 
     async def loop_forever(self):
         """Keep the event loop running until shutdown signal received."""
         self._shutdown_event = asyncio.Event()
+        self.is_running = True
 
-        # Get the running event loop
         loop = asyncio.get_running_loop()
 
         # Register signal handlers for graceful shutdown
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(
-                sig, lambda s=sig: asyncio.create_task(self._handle_shutdown(s))
-            )
+        try:
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(
+                    sig, lambda s=sig: asyncio.create_task(self._handle_shutdown(s))
+                )
+                logger.debug(f"Registered handler for {sig.name}")
+        except NotImplementedError:
+            # Happens on Windows or inside restricted loops
+            logger.warning("Signal handlers not supported in this environment.")
 
-        # Wait indefinitely until shutdown event is set
-        await self._shutdown_event.wait()
+        logger.info("App started. Waiting for shutdown signal (Ctrl+C)...")
+
+        try:
+            await self._shutdown_event.wait()
+        except asyncio.CancelledError:
+            logger.info("Event loop cancelled; shutting down gracefully...")
+        finally:
+            await self.stop()
 
     async def _handle_shutdown(self, sig: signal.Signals):
         """Handle shutdown signals gracefully."""
-        logger.info(f"Received signal {sig.name}, initiating shutdown...")
-        self._shutdown_event.set()
+        if not self._shutdown_event.is_set():
+            logger.warning(f"Received signal {sig.name}, initiating shutdown...")
+            self._shutdown_event.set()
+        else:
+            logger.debug(f"Ignoring duplicate signal: {sig.name}")
 
     async def stop(self):
         """Stop all components of the app container."""
-        if self._shutdown_event:
-            self._shutdown_event.set()
+        logger.info("Stopping app session...")
 
         if self.transport:
-            await self.transport.close()
-
-        # TODO: add any protocol handler or directory cleanup if needed
-        logger.info("App session stopped.")
+            try:
+                await self.transport.close()
+                logger.info("Transport closed cleanly.")
+            except Exception as e:
+                logger.exception(f"Error closing transport: {e}")
 
         self.is_running = False
+        logger.info("App session stopped. Exiting event loop.")
 
 
 class AppSession:
     """
-    Manages the application session, including transport, protocol handler, and directory.
+    Manages the agent application session, including transport, protocol handler, and directory.
     """
 
     def __init__(
@@ -190,16 +205,24 @@ class AppSession:
     async def start_session(
         self,
         session_id: str,
-        blocking: bool = False,
+        keep_alive: bool = False,
         push_to_directory_on_startup: bool = False,
+        **kwargs,
     ):
-        """Start a specific app container."""
+        """
+        Start a specific app container.
+
+        Args:
+            session_id (str): The ID of the session to start.
+            keep_alive (bool): Whether to keep the session alive.
+            push_to_directory_on_startup (bool): Whether to push to directory on startup.
+        """
         container = self.get_app_container(session_id)
         if not container:
             raise ValueError(f"No app container found for session ID: {session_id}")
         if not container.is_running:
             await container.run(
-                blocking=blocking,
+                keep_alive=keep_alive,
                 push_to_directory_on_startup=push_to_directory_on_startup,
             )
 
@@ -212,13 +235,13 @@ class AppSession:
             await container.stop()
 
     async def start_all_sessions(
-        self, blocking: bool = False, push_to_directory_on_startup: bool = False
+        self, keep_alive: bool = False, push_to_directory_on_startup: bool = False
     ):
         """Start all app containers."""
         for container in self.app_containers.values():
             if not container.is_running:
                 await container.run(
-                    blocking=blocking,
+                    keep_alive=keep_alive,
                     push_to_directory_on_startup=push_to_directory_on_startup,
                 )
 

@@ -28,7 +28,7 @@ async def main(transport_type: str, endpoint: str, name: str, block: bool = True
         topic="mcp",
     )
     app_session.add_app_container("default_session", app_container)
-    await app_session.start_all_sessions(blocking=block)
+    await app_session.start_all_sessions(keep_alive=block)
 
 
 if __name__ == "__main__":
