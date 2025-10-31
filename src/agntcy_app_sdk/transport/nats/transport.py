@@ -48,6 +48,9 @@ class NatsTransport(BaseTransport):
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             logger.info("NatsTransport initialized with tracing enabled")
+            from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
+
+            NATSInstrumentor().instrument()
             self.tracing_enabled = True
 
     # -----------------------------------------------------------------------------

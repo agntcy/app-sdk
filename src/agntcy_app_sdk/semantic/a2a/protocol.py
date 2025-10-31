@@ -224,7 +224,6 @@ class A2AProtocol(BaseAgentProtocol):
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
             A2AInstrumentor().instrument()
-            logger.info("A2A ASGI app instrumented for tracing")
 
     async def handle_message(self, message: Message) -> Message:
         """

@@ -8,11 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## 0.4.0
 
 ### Added
+* Pubsub gather streaming
 * Groupchat streaming
 * App Session management
+* Directory abstract class
 
 ### Changed
-* Refactored folder structure to match agntcy tech pillars
+* Refactored directory structure to match agntcy tech pillars
+* protocols directory renamed to semantic
+* transports directory renamed to transport
+* message bridge replaced with app containers and app sessions
+
 
 ### Fixed
 

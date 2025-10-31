@@ -14,7 +14,6 @@ from slim_bindings import (
     PySessionDirection,
 )
 from agntcy_app_sdk.semantic.message import Message
-from threading import Lock
 
 configure_logging()
 logger = get_logger(__name__)
@@ -24,7 +23,7 @@ class SessionManager:
     def __init__(self):
         self._sessions: Dict[str, PySessionInfo] = {}
         self._slim = None
-        self._lock = Lock()
+        self._lock = asyncio.Lock()
 
     def set_slim(self, slim: slim_bindings.Slim):
         """
@@ -58,7 +57,7 @@ class SessionManager:
                 )
                 continue
 
-        with self._lock:
+        async with self._lock:
             session = await self._slim.create_session(
                 PySessionConfiguration.FireAndForget(
                     max_retries=max_retries,
@@ -88,7 +87,7 @@ class SessionManager:
             [str(invitee) for invitee in invitees]
         )
         # use the same lock for session creation and lookup
-        with self._lock:
+        async with self._lock:
             if session_key in self._sessions:
                 logger.info(f"Reusing existing group broadcast session: {session_key}")
                 return session_key, self._sessions[session_key]
@@ -160,16 +159,16 @@ class SessionManager:
             logger.info(f"Closed session: {session.id}")
 
             # remove from local store
-            self._local_cache_cleanup(session.id)
+            await self._local_cache_cleanup(session.id)
         except Exception as e:
             logger.warning(f"Error closing SLIM session {session.id}: {e}")
             return
 
-    def _local_cache_cleanup(self, session_id: int):
+    async def _local_cache_cleanup(self, session_id: int):
         """
         Perform local cleanup of a session without attempting to close it on the SLIM client.
         """
-        with self._lock:
+        async with self._lock:
             session_key = None
             for key, sess in self._sessions.items():
                 if sess.id == session_id:

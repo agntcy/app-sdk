@@ -10,6 +10,7 @@ from typing import Any
 import uuid
 import pytest
 import asyncio
+from ioa_observe.sdk.tracing import session_start
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
@@ -42,6 +43,8 @@ async def test_client(run_a2a_server, transport):
     transport_instance = factory.create_transport(
         transport, endpoint=endpoint, name="default/default/default"
     )
+
+    session_start()
 
     # Create A2A client
     print("[test] Creating A2A client...")
