@@ -126,7 +126,7 @@ class SLIMTransport(BaseTransport):
 
         await self._slim.set_route(remote_name)
 
-        # create or get a point-to-point session
+        # create a point-to-point session
         _, session = await self._session_manager.point_to_point_session(
             remote_name, timeout=datetime.timedelta(seconds=timeout)
         )
@@ -145,6 +145,9 @@ class SLIMTransport(BaseTransport):
         except Exception as e:
             logger.warning(f"Failed to publish message: {e}")
             return None
+        finally:
+            logger.debug(f"Closing point-to-point session: {session.id} ")
+            await self._session_manager.close_session(session)
 
         reply = Message.deserialize(reply)
         return reply
@@ -253,12 +256,14 @@ class SLIMTransport(BaseTransport):
                             f"Error receiving message on session {group_session.id}: {e}"
                         )
                         continue
-                # TODO: close session properly with SLIM v0.7.0: https://github.com/agntcy/slim/issues/780
-                # await self._session_manager.close_session(group_session)
         except asyncio.TimeoutError:
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
+        finally:
+            if group_session:
+                logger.debug(f"Closing group session {group_session.id} after gathering responses")
+                await self._session_manager.close_session(group_session)
 
     # -----------------------------------------------------------------------------
     # Group Chat / Multi-Party Conversation
@@ -357,9 +362,8 @@ class SLIMTransport(BaseTransport):
         finally:
             if group_session:
                 try:
-                    await self._session_manager.close_session(
-                        group_session, remote=remote_name, end_signal=end_signal
-                    )
+                    await self._session_manager.close_session(group_session,
+                                                              end_signal=end_signal)
                 except Exception as e:
                     logger.error(f"Failed to close session {group_session.id}: {e}")
 
@@ -472,8 +476,10 @@ class SLIMTransport(BaseTransport):
             while not self._shutdown_event.is_set():
                 try:
                     received_session = await self._slim.listen_for_session()
-                    logger.debug(
-                        f"Received new session: {received_session.id} - {received_session.dst}"
+                    logger.info(
+                        f"Received new session with id: {received_session.id}, "
+                        f"type: {received_session.session_type}, "
+                        f"destination: {received_session.dst}"
                     )
 
                     task = asyncio.create_task(
