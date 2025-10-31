@@ -2126,22 +2126,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d6/fd/5b54fef3c64fb78493a5e9b07292b1c6d0dc0eba8f28840cf933036bf594/opentelemetry_instrumentation_anthropic-0.43.1-py3-none-any.whl", hash = "sha256:2528d434767c76c1597d5fd89f5b03e665750e5bedf7c876614f14a4c7ead298", size = 15164, upload-time = "2025-07-23T14:38:50.333Z" },
 ]
 
-[[package]]
-name = "opentelemetry-instrumentation-bedrock"
-version = "0.43.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anthropic" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation" },
-    { name = "opentelemetry-semantic-conventions" },
-    { name = "opentelemetry-semantic-conventions-ai" },
-    { name = "tokenizers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/9a/032ea5fc0d0a085afbd8b066d88751b2a4555eeef919abaf979f8c1b4c34/opentelemetry_instrumentation_bedrock-0.43.1.tar.gz", hash = "sha256:b772245da335ab6b0868ab9056fa8f6974e07885f79b72a9dd38b774ceb90812", size = 14549, upload-time = "2025-07-23T14:39:32.495Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/3f/2be7a9e792aad909079f8b42e24b7796df210ae4d1112a75b3399ffd167d/opentelemetry_instrumentation_bedrock-0.43.1-py3-none-any.whl", hash = "sha256:4c38b78ba46bbc39cadaf49f0ebe50053f31b851720e7aed8744687fd069ab1c", size = 18167, upload-time = "2025-07-23T14:38:52.156Z" },
-]
 
 [[package]]
 name = "opentelemetry-instrumentation-cohere"
@@ -2324,6 +2308,25 @@ wheels = [
 ]
 
 [[package]]
+<<<<<<< HEAD
+=======
+name = "opentelemetry-instrumentation-starlette"
+version = "0.58b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-instrumentation-asgi" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/10/23/cdd66add389c6fef71accf9eed47be4a36fed7910285db3618e8c9030876/opentelemetry_instrumentation_starlette-0.58b0.tar.gz", hash = "sha256:e6a5d8a7433e3f99cb1da58c9431c840a823afda82deb5a97976445e1fa32bda", size = 14656, upload-time = "2025-09-11T11:42:53.493Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/cc/c534bb93a316e703903139c4fd22b17dad7e8e267fce78664e23829da500/opentelemetry_instrumentation_starlette-0.58b0-py3-none-any.whl", hash = "sha256:7cb1c58a4f3efd78c19eac2f98def6ea5cea725c0ffafab960a708fa17c25b2a", size = 11779, upload-time = "2025-09-11T11:41:56.371Z" },
+]
+
+[[package]]
+>>>>>>> b29cf75 (Bump up ioa-observe-sdk version to 1.0.23)
 name = "opentelemetry-instrumentation-threading"
 version = "0.58b0"
 source = { registry = "https://pypi.org/simple" }

@@ -90,8 +90,7 @@ class SLIMTransport(BaseTransport):
             # Initialize tracing if enabled
             from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
-            # TODO: upgrade ioa sdk and uncomment this line
-            # SLIMInstrumentor().instrument()
+            SLIMInstrumentor().instrument()
             logger.info("SLIMTransport initialized with tracing enabled")
 
         logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
