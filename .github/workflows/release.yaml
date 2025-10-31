@@ -36,7 +36,7 @@ jobs:
           fi
 
           if [[ ! "${TAG_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]+)?$ ]]; then
-            echo "Tag ${TAG_NAME} does not match vX.Y.Z pattern."
+            echo "Tag ${TAG_NAME} does not match vX.Y.Z pattern or vX.Y.Z-dev.a pattern."
             exit 1
           fi
 
