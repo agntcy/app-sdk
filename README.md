@@ -13,7 +13,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/agntcy-app-sdk.svg)](https://pypi.org/project/agntcy-app-sdk/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/agntcy/app-sdk/LICENSE)
-[![Python 3.8+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
 </div>
 <div align="center">
@@ -36,7 +36,7 @@ The Agntcy Application SDK provides a unified factory interface for building int
 
 <table>
 <tr>
-<td width="25%">
+<td width="25%" valign="top">
 
 **🔌 Semantic Layer**
 
@@ -45,7 +45,7 @@ The Agntcy Application SDK provides a unified factory interface for building int
 - Experimental agentic communication patterns
 
 </td>
-<td width="25%">
+<td width="25%" valign="top">
 
 **🚀 Transport Layer**
 
@@ -56,7 +56,7 @@ The Agntcy Application SDK provides a unified factory interface for building int
 - Group chat messaging
 
 </td>
-<td width="25%">
+<td width="25%" valign="top">
 
 **📂 Directory 🕐**
 
@@ -66,7 +66,7 @@ The Agntcy Application SDK provides a unified factory interface for building int
 - Agent discovery
 
 </td>
-<td width="25%">
+<td width="25%" valign="top">
 
 **🔐 Identity 🕐**
 
