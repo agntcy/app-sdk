@@ -1,109 +1,148 @@
 <div align='center'>
 
-<h1>
-  Application SDK
-</h1>
+<h1>Agntcy Application SDK</h1>
 
 <a href="https://agntcy.org">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/_logo-Agntcy_White@2x.png" width="300">
-    <img alt="" src="assets/_logo-Agntcy_FullColor@2x.png" width="300">
+    <img alt="Agntcy Logo" src="assets/_logo-Agntcy_FullColor@2x.png" width="300">
   </picture>
 </a>
 
-&nbsp;
-
-</div>
-
-The Agntcy Application SDK offers an interoperable factory hub for constructing / instantiating multi-agent components as part of the emerging [internet of agents](https://outshift.cisco.com/the-internet-of-agents). The SDK factory will provide a single high-level interface to interact with Agntcy components such as [SLIM](https://github.com/agntcy/slim), [Observe-SDK](https://github.com/agntcy/observe/tree/main), and [Identity](https://github.com/agntcy/identity/tree/main), while enabling interoperability with agentic protocols such as A2A and MCP. The initial release of the Agntcy Application SDK focuses on this interoperability across agent protocols and message transports. It introduces a BaseTransport interface, with implementations for SLIM, NATS, and StreamableHTTP, and a BaseAgentProtocol interface, implemented by protocols such as A2A and MCP. These interfaces decouple protocol logic from transport, enabling flexible and extensible agent communication
-
-<div align='center'>
-  
-<pre>
-✅ A2A over SLIM           ✅ A2A over NATS              🕐 A2A over MQTT             
-✅ Request-reply           ✅ Publish-subscribe          ✅ Broadcast                 
-✅ MCP over SLIM           ✅ MCP over NATS              ✅ Observability provider       
-🕐 Identity provider         
-</pre>
-
-<div align='center'>
+<p><i>Build interoperable multi-agent systems for the Internet of Agents</i></p>
 
 [![PyPI version](https://img.shields.io/pypi/v/agntcy-app-sdk.svg)](https://pypi.org/project/agntcy-app-sdk/)
-[![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/agntcy/app-sdk/LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/agntcy/app-sdk/LICENSE)
+[![Python 3.8+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-</div>
 </div>
 <div align="center">
   <div style="text-align: center;">
     <a target="_blank" href="#quick-start" style="margin: 0 10px;">Quick Start</a> •
-    <a target="_blank" href="docs/USAGE_GUIDE.md" style="margin: 0 10px;">Usage Guide</a> •
+    <a target="_blank" href="docs/API_REFERENCE.md" style="margin: 0 10px;">API Reference</a> •
     <a target="_blank" href="#reference-application" style="margin: 0 10px;">Reference Application</a> •
     <a target="_blank" href="#agntcy-component-usage" style="margin: 0 10px;">Agntcy Component Usage</a> •
     <a target="_blank" href="#contributing" style="margin: 0 10px;">Contributing</a>
   </div>
 </div>
 
-&nbsp;
+</div>
 
-# Quick Start
+## Overview
 
-Install the SDK via pip:
+The Agntcy Application SDK provides a unified factory interface for building interoperable, multi-agent components. It defines standard abstractions and interoperability layers that connect Agntcy and open-source transports, protocols, and directories—enabling agents to communicate and coordinate seamlessly.
+
+### Features
+
+<table>
+<tr>
+<td width="25%">
+
+**🔌 Semantic Layer**
+
+- A2A over abstract transport
+- MCP over abstract transport
+- Experimental agentic communication patterns
+
+</td>
+<td width="25%">
+
+**🚀 Transport Layer**
+
+- SLIM transport setup
+- NATS transport setup
+- Point-to-point messaging
+- Pub-sub messaging
+- Group chat messaging
+
+</td>
+<td width="25%">
+
+**📂 Directory 🕐**
+
+- Agntcy Directory integration
+- Git-based directory
+- Agent registry
+- Agent discovery
+
+</td>
+<td width="25%">
+
+**🔐 Identity 🕐**
+
+- Agent badge creation
+- Agent badge verification
+- Tool-based access control
+- Task-based access control
+
+</td>
+</tr>
+<tr>
+<td colspan="4" align="center">
+
+**🔍 Observability** • Built-in Agntcy Observe SDK integration
+
+</td>
+</tr>
+</table>
+
+## 📦 Installation
 
 ```bash
+# Install via pip
 pip install agntcy-app-sdk
-# or install via uv: uv add agntcy-app-sdk
-```
 
-Or install from source:
+# Or use uv for faster installs
+uv add agntcy-app-sdk
 
-```bash
+# Install from source
 git clone https://github.com/agntcy/app-sdk.git
 pip install -e app-sdk
 ```
 
-Now we can list the registered protocols, transports, and observability providers in the factory:
+# Quick Start
 
-```python
-factory = AgntcyFactory()
-
-protocols = factory.registered_protocols()
-transports = factory.registered_transports()
-observability_providers = factory.registered_observability_providers()
-
-# ['A2A', 'MCP', 'FastMCP']
-# ['SLIM', 'NATS', 'STREAMABLE_HTTP']
-# ['ioa_observe']
-```
-
-Next, we can create a protocol client over a transport of choice using the factory:
-
-[**MCP Client**](#mcp-client-from-factory-example): Create an MCP client with a `SLIM` | `NATS` transport.  
-[**A2A Client**](#a2a-client-from-factory-example): Create an A2A client with a `SLIM` | `NATS` transport.
-
-## MCP Client from Factory Example
+### Explore Available Components
 
 ```python
 from agntcy_app_sdk.factory import AgntcyFactory
 
-# Create factory and transport
 factory = AgntcyFactory()
-transport_instance = factory.create_transport(
-    transport="SLIM", endpoint="http://localhost:46357", name="org/namespace/agent-foo"
+
+print(factory.registered_protocols())              # ['A2A', 'MCP', 'FastMCP']
+print(factory.registered_transports())             # ['SLIM', 'NATS', 'STREAMABLE_HTTP']
+print(factory.registered_observability_providers()) # ['ioa_observe']
+```
+
+### Create an MCP Client
+
+```python
+from agntcy_app_sdk.factory import AgntcyFactory
+
+factory = AgntcyFactory()
+
+# Initialize transport
+transport = factory.create_transport(
+    transport="SLIM",
+    endpoint="http://localhost:46357",
+    name="org/namespace/agent-foo"
 )
 
-# Create MCP client
+# Create and use MCP client
 mcp_client = factory.create_client(
     "MCP",
     agent_topic="my_remote_mcp_server",
-    transport=transport_instance,
+    transport=transport
 )
+
 async with mcp_client as client:
-  tools = await client.list_tools()
+    tools = await client.list_tools()
+    # Your agent logic here
 ```
 
-See the [MCP Usage Guide](docs/MCP_USAGE_GUIDE.md) for an end-to-end guide on using the MCP client and server with different transports.
+**📖 [View complete MCP guide →](docs/MCP_USAGE_GUIDE.md)**
 
-### A2A Client from Factory Example
+### Create an A2A Client
 
 ```python
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -111,11 +150,29 @@ from agntcy_app_sdk.factory import AgntcyFactory
 factory = AgntcyFactory()
 transport = factory.create_transport("NATS", "localhost:4222")
 
-# or connect via agent topic
-client_over_nats = await factory.create_client("A2A", agent_topic="my_remote_a2a_server", transport=transport)
+# Connect to remote A2A server
+client = await factory.create_client(
+    "A2A",
+    agent_topic="my_remote_a2a_server",
+    transport=transport
+)
 ```
 
-See the [A2A Usage Guide](docs/A2A_USAGE_GUIDE.md) for an end-to-end guide on using the A2A client and server with different transports.
+**📖 [View complete A2A guide →](docs/A2A_USAGE_GUIDE.md)**
+
+## 📁 Project Structure
+
+```
+📁 src/
+└── 📦 agntcy_app_sdk/
+    ├── 🏭 factory.py            # Main factory interface
+    ├── 🔄 app_sessions.py       # Session management
+    ├── 📂 directory/            # Agent directory services
+    ├── 🔐 identity/             # Authentication & identity
+    ├── 🧠 semantic/             # Semantic layer (SLIM)
+    ├── 🌐 transport/            # Transport implementations
+    └── 🛠️  common/              # Shared utilities
+```
 
 # Reference Application
 
@@ -127,63 +184,78 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
 
 # Agntcy Component Usage
 
-### SLIM (0.4.0)
+<a href="https://github.com/agntcy/coffeeAgntcy">
+  <img alt="Agntcy App SDK Architecture" src="assets/app-sdk-arch.jpg" width="600">
+</a>
 
-SLIM (Secure Low-Latency Interactive Messaging) may be used to facilitate communication between AI agents with various communication patterns such as request-reply, and moderated group-chat. The AgntcyFactory implements a high-level SLIM transport wrapper which is used to standardize integration with agntcy-app-sdk protocol implementations including A2A and MCP. For more details and usage guides for SLIM, see the [docs](https://docs.agntcy.org/messaging/slim-core/) and [repository](https://github.com/agntcy/slim).
-
-### Observe (1.0.15)
-
-The AgntcyFactory may be configured to use the Observe-SDK for multi-agentic application observability by setting the `enable_tracing` parameter to `True` when creating the factory instance. This will initialize an observe tracer and enable SLIM and A2A auto-instrumentation if necessary.
-
-```
-factory = AgntcyFactory(enable_tracing=True)
-```
-
-For more details and usage guides for Agntcy Observe, see the [Observe-SDK repository](https://github.com/agntcy/observe/tree/main)
-
-### Identity (coming soon)
-
-See the [Identity repository](https://github.com/agntcy/identity/tree/main) for more details.
+| Component       | Version       | Description                                                                                                                                                                                | Repo                                                 |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| **SLIM**        | `0.4.1`       | Secure Low-Latency Interactive Messaging (SLIM) facilitates communication between AI agents using request-reply and moderated group-chat patterns.                                         | [Repo](https://github.com/agntcy/slim)               |
+| **Observe SDK** | `1.0.23`      | Enables multi-agent observability by setting `enable_tracing=True` when initializing the `AgntcyFactory`. This automatically configures tracing and auto-instrumentation for SLIM and A2A. | [Repo](https://github.com/agntcy/observe/tree/main)  |
+| **Directory**   | _Coming soon_ | Component for service discovery and directory-based agent lookups.                                                                                                                         | [Repo](https://github.com/agntcy/dir)                |
+| **Identity**    | _Coming soon_ | Provides agent identity, authentication, and verification mechanisms.                                                                                                                      | [Repo](https://github.com/agntcy/identity/tree/main) |
 
 # Testing
 
-The `/tests` directory contains e2e tests for the factory, including A2A client and various transports.
+The `/tests` directory contains both unit and end-to-end (E2E) tests for Agntcy components and workflows.
 
-### Prerequisites
+## Prerequisites
 
-Run the required message bus services:
+Before running tests, start the required message bus services:
 
 ```bash
 docker-compose -f services/docker/docker-compose.yaml up
 ```
 
-**✅ Test the factory with A2A client and all available transports**
+## Running Tests
 
-Run the parameterized e2e test for the A2A client across all transports:
+### 🧩 A2A Client Tests
+
+**Run all transports**
+
+Run the parameterized E2E test for the A2A client across all supported transports:
 
 ```bash
 uv run pytest tests/e2e/test_a2a.py::test_client -s
 ```
 
-Or run a single transport test:
+**Run a single transport**
+
+To test only a specific transport (e.g. SLIM):
 
 ```bash
 uv run pytest tests/e2e/test_a2a.py::test_client -s -k "SLIM"
 ```
 
-**✅ Test the factory with FastMCP client and all available transports**
+**Broadcast messaging**
 
-Run a single transport test for FastMCP:
+Run the E2E test for A2A broadcast communication across all transports:
+
+```bash
+uv run pytest tests/e2e/test_a2a.py::test_broadcast -s
+```
+
+**Group chat**
+
+Run the E2E test for A2A moderated group-chat using a specific transport (e.g. SLIM):
+
+```bash
+uv run pytest tests/e2e/test_a2a.py::test_groupchat -s -k "SLIM"
+```
+
+### FastMCP Client Tests
+
+**Single transport**
+
+Run an E2E test for the FastMCP client with a specific transport:
 
 ```bash
 uv run pytest tests/e2e/test_fast_mcp.py::test_client -s -k "SLIM"
 ```
 
-Run a single transport test for concurrent FastMCP:
+# Contributing
 
-```bash
-uv run pytest tests/e2e/test_concurrent_fast_mcp.py::test_client -s -k "SLIM"
-```
+Contributions are welcome! Please see the [contribution guide](CONTRIBUTING.md) for details on how to contribute to the Agntcy Application SDK.
 
 ## PyPI Release Flow
 
@@ -204,7 +276,3 @@ Publishing to PyPI is automated via GitHub Actions. To release a new version:
 5. The release workflow will validate the tag and version, then publish to PyPI if all checks pass.
 
 **Note:** Tags must always be created from the `main` branch and must match the version in `pyproject.toml`.
-
-# Contributing
-
-Contributions are welcome! Please see the [contribution guide](CONTRIBUTING.md) for details on how to contribute to the Agntcy Application SDK.
