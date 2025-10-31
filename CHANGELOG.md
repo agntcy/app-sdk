@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+### Added
+* Pubsub gather streaming
+* Groupchat streaming
+* App Session management
+* Directory abstract class
+
+### Changed
+* Refactored directory structure to match agntcy tech pillars
+* protocols directory renamed to semantic
+* transports directory renamed to transport
+* message bridge replaced with app containers and app sessions
+
+
+### Fixed
+
 ## 0.2.3
 
 ### Added

@@ -3,6 +3,7 @@
 
 from mcp.server.fastmcp import FastMCP
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.app_sessions import AppContainer
 from agntcy_app_sdk.factory import TransportTypes
 import asyncio
 import argparse
@@ -19,8 +20,15 @@ async def main(transport_type: str, endpoint: str, name: str, block: bool = True
         return "Temperature: 30°C\n" "Humidity: 50%\n" "Condition: Sunny\n"
 
     transport = factory.create_transport(transport_type, endpoint=endpoint, name=name)
-    bridge = factory.create_bridge(mcp._mcp_server, transport=transport, topic="mcp")
-    await bridge.start(blocking=block)
+
+    app_session = factory.create_app_session(max_sessions=1)
+    app_container = AppContainer(
+        mcp._mcp_server,
+        transport=transport,
+        topic="mcp",
+    )
+    app_session.add_app_container("default_session", app_container)
+    await app_session.start_all_sessions(keep_alive=block)
 
 
 if __name__ == "__main__":

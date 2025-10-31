@@ -5,22 +5,19 @@ from typing import Dict, Type
 from enum import Enum
 import os
 
-from agntcy_app_sdk.transports.transport import BaseTransport
-from agntcy_app_sdk.protocols.protocol import BaseAgentProtocol
+from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.semantic.base import BaseAgentProtocol
 
-from agntcy_app_sdk.transports.slim.transport import SLIMTransport
-from agntcy_app_sdk.transports.nats.transport import NatsTransport
-from agntcy_app_sdk.transports.streamable_http.transport import StreamableHTTPTransport
+from agntcy_app_sdk.transport.slim.transport import SLIMTransport
+from agntcy_app_sdk.transport.nats.transport import NatsTransport
+from agntcy_app_sdk.transport.streamable_http.transport import StreamableHTTPTransport
 
-from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
-from agntcy_app_sdk.protocols.mcp.protocol import MCPProtocol
-from agntcy_app_sdk.protocols.fast_mcp.protocol import FastMCPProtocol
-from a2a.server.apps import A2AStarletteApplication
+from agntcy_app_sdk.semantic.a2a.protocol import A2AProtocol
+from agntcy_app_sdk.semantic.mcp.protocol import MCPProtocol
+from agntcy_app_sdk.semantic.fast_mcp.protocol import FastMCPProtocol
 
-from mcp.server.lowlevel import Server as MCPServer
-from mcp.server.fastmcp import FastMCP
 
-from agntcy_app_sdk.bridge import MessageBridge
+from agntcy_app_sdk.app_sessions import AppSession
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
@@ -142,47 +139,15 @@ class AgntcyFactory:
 
         return client
 
-    def create_bridge(
+    def create_app_session(
         self,
-        server,
-        transport: BaseTransport,
-        topic: str | None = None,
-    ) -> MessageBridge:
+        max_sessions: int = 10,
+    ) -> AppSession:
         """
-        Create a bridge/receiver for the specified transport and protocol.
+        Create an app session to manage multiple app containers.
         """
-
-        if isinstance(server, A2AStarletteApplication):
-            if topic is None:
-                topic = A2AProtocol.create_agent_topic(server.agent_card)
-            handler = self.create_protocol("A2A")
-            handler.bind_server(server)
-        elif isinstance(server, MCPServer):
-            if topic is None:
-                raise ValueError("Topic must be provided for MCP server")
-            logger.info(f"Creating MCP bridge for topic: {topic}")
-            handler = self.create_protocol("MCP")
-            handler.bind_server(server)
-
-        elif isinstance(server, FastMCP):
-            if topic is None:
-                raise ValueError("Topic must be provided for FastMCP server")
-            logger.info(f"Creating FastMCP bridge for topic: {topic}")
-            handler = self.create_protocol("FastMCP")
-            handler.bind_server(server)
-
-        else:
-            raise ValueError("Unsupported server type")
-
-        bridge = MessageBridge(
-            transport=transport,
-            protocol_handler=handler,
-            topic=topic,
-        )
-
-        self._bridges[topic] = bridge
-
-        return bridge
+        session = AppSession(max_sessions=max_sessions)
+        return session
 
     def create_transport(
         self, transport: str, name=None, client=None, endpoint: str = None, **kwargs

@@ -13,7 +13,7 @@ from slim_bindings import (
     PySessionConfiguration,
     PySessionDirection,
 )
-from agntcy_app_sdk.transports.transport import Message
+from agntcy_app_sdk.semantic.message import Message
 
 configure_logging()
 logger = get_logger(__name__)

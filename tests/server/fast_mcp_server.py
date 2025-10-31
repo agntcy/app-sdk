@@ -4,6 +4,7 @@
 import argparse
 import asyncio
 from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
+from agntcy_app_sdk.app_sessions import AppContainer
 from mcp.server.fastmcp import FastMCP
 
 # Initialize the factory with tracing disabled
@@ -47,14 +48,12 @@ async def main(transport_type: str, endpoint: str, name: str, block: bool = True
             f"[setup] Transport created: {transport_type} | Endpoint: {endpoint} | Name: {name}"
         )
 
-        # Create the bridge between MCP and transport
-        bridge = factory.create_bridge(mcp, transport=transport, topic="fastmcp")
-        print("[setup] Bridge created with topic: fastmcp")
+        app_session = factory.create_app_session(max_sessions=1)
+        app_container = AppContainer(mcp, transport=transport, topic="fastmcp")
+        app_session.add_app_container("default_session", app_container)
+        await app_session.start_all_sessions(keep_alive=block)
 
-        # Start the bridge
-        print("[start] Starting the bridge...")
-        await bridge.start(blocking=block)
-        print("[start] Bridge started successfully.")
+        print("[start] App session started.")
 
     except Exception as e:
         print(f"[error] Failed to start the MCP server: {e}")
