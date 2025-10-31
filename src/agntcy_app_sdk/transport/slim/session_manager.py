@@ -44,12 +44,6 @@ class SessionManager:
         if not self._slim:
             raise ValueError("SLIM client is not set")
 
-        session_key = f"PySessionConfiguration.PointToPoint:{remote_name}"
-
-        if session_key in self._sessions:
-            logger.info(f"Reusing existing point-to-point session: {session_key}")
-            return self._sessions[session_key].id, self._sessions[session_key]
-
         with self._lock:
             session = await self._slim.create_session(
                 PySessionConfiguration.PointToPoint(
@@ -60,7 +54,6 @@ class SessionManager:
                 )
             )
 
-            self._sessions[session_key] = session
             return session.id, session
 
     async def group_broadcast_session(
@@ -110,9 +103,7 @@ class SessionManager:
             self._sessions[session_key] = group_session
             return session_key, group_session
 
-    async def close_session(
-        self, session: PySession, remote: PyName = None, end_signal: str = None
-    ):
+    async def close_session(self, session: PySession, end_signal: str = None):
         """
         Close and remove a session.
         Args:
@@ -122,10 +113,10 @@ class SessionManager:
         if not self._slim:
             raise ValueError("SLIM client is not set")
 
-        session_deleted_server_side = False
+        session_id = session.id
         try:
             # send the end signal to the remote if provided
-            if remote is not None and end_signal is not None:
+            if end_signal is not None:
                 logger.info(f"Sending end signal '{end_signal}' to remote {session.dst}")
 
                 end_msg = Message(
@@ -135,38 +126,30 @@ class SessionManager:
                 )
                 await session.publish(end_msg.serialize())
 
-            logger.info(f"Waiting before attempting to delete session: {session.id}")
-            # todo: proper way to wait for all messages to be processed
-            await asyncio.sleep(
-                random.uniform(5, 10)
-            )  # add sleep before closing to allow for any in-flight messages to be processed
-            logger.info(f"Attempting to delete session: {session.id}")
+                logger.debug(f"Waiting before attempting to delete session "
+                             f"{session_id} to ensure all recipients receive "
+                             f"the end signal")
+                # TODO: Remove this temporary sleep once SLIM's group session termination is fully implemented and reliably signals session closure.
+                await asyncio.sleep(
+                    random.uniform(5, 10)
+                )
 
-            # Sometimes SLIM delete_session can hang indefinitely but still deletes the session, so we add a timeout
             try:
-                await asyncio.wait_for(
-                    self._slim.delete_session(session), timeout=5.0
-                )
-                logger.info(
-                    f"Session {session.id} deleted successfully within timeout."
-                )
-                session_deleted_server_side = True
+                # Removing session from local cache must be done before the actual session deletion from SLIM,
+                # otherwise it would result in "session already closed" error since SLIM doesn't allow accessing
+                # properties on a closed session.
+                logger.debug(f"Attempting to remove session {session_id} from local cache.")
+                self._local_cache_cleanup(session_id)
+                logger.debug(f"Attempting to delete session {session_id} from SLIM server.")
+                await self._slim.delete_session(session)
+                logger.info(f"Session {session_id} deleted successfully.")
             except asyncio.TimeoutError:
-                logger.warning(f"Timed out while trying to delete session {session.id}. "
+                logger.warning(f"Timed out while trying to delete session {session_id}. "
                                f"It might still have been deleted on SLIM server, but no confirmation was received.")
-                session_deleted_server_side = True
             except Exception as e:
-                logger.error(f"Error deleting session {session.id}: {e}")
-        except Exception as e:
-            logger.warning(f"Error closing SLIM session {session.id}: {e}")
+                logger.error(f"Error deleting session {session_id}: {e}")
+        except Exception:
             return
-
-        # Clean up local cache only if SLIM server-side deletion was attempted and potentially successful/timed out
-        if session_deleted_server_side:
-            logger.info(f"Removing session {session.id} from local cache.")
-            self._local_cache_cleanup(session.id)
-        else:
-            logger.info(f"Session {session.id} not removed from local cache due to confirmed server-side deletion failure.")
 
     def _local_cache_cleanup(self, session_id: int):
         """
