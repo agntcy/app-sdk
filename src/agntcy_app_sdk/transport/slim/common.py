@@ -143,7 +143,8 @@ async def create_local_app(
             secret=shared_secret,
         )
 
-    local_app = await slim_bindings.Slim.new(local, provider, verifier)
+    # TODO: leverage the global SLIM instance that has been added in SLIM v0.6.x
+    local_app = await slim_bindings.Slim.new(local, provider, verifier, local_service=True)
 
     # Connect to slim server
     _ = await local_app.connect(slim)
