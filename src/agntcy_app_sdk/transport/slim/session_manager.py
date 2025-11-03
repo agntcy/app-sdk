@@ -129,9 +129,7 @@ class SessionManager:
                              f"{session_id} to ensure all recipients receive "
                              f"the end signal")
                 # TODO: Remove this temporary sleep once SLIM's group session termination is fully implemented and reliably signals session closure.
-                await asyncio.sleep(
-                    random.uniform(5, 10)
-                )
+                await asyncio.sleep(5)
 
             try:
                 # Removing session from local cache must be done before the actual session deletion from SLIM,
