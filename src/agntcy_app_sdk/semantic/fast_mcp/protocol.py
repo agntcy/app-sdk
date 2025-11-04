@@ -74,9 +74,7 @@ class FastMCPProtocol(MCPProtocol):
             try:
                 self._app.add_middleware(IdentityServiceMCPMiddleware)
             except Exception as e:
-                logger.warning(f"Failed to add IdentityServiceMCPMiddleware: {e}")
-        else:
-            logger.info("Identity auth disabled (IDENTITY_SERVICE_API_KEY unset or empty)")
+                logger.warning(f"Failed to add Identity Auth Middleware: {e}")
 
         host = os.getenv("FAST_MCP_HOST", "localhost")
         port_raw = os.getenv("FAST_MCP_PORT")
@@ -283,13 +281,25 @@ class FastMCPProtocol(MCPProtocol):
             # Extract the payload from the response body
             body = bytes(response_data["body"]).decode("utf-8").strip()
 
+            if any(keyword in body.lower() for keyword in ["authentication failed", "unauthorized"]):
+                error_message = {"error": "Authentication failed or unauthorized access detected", "response_body": body}
+                return Message(
+                    type="MCPResponse",
+                    payload=json.dumps(error_message).encode("utf-8"),
+                    reply_to=message.reply_to,
+                )
+
             for line in body.splitlines():
                 if line.startswith("data: "):
                     json_data_str = line.removeprefix("data: ").strip()
                     payload = json.dumps(json.loads(json_data_str)).encode("utf-8")
                     break
             else:
-                raise ValueError("Missing 'data:' line in SSE response")
+                # This will only execute if no "data: " line is found in the entire body
+                return Message(
+                    type="MCPResponse", payload=json.dumps({"error": f"Invalid response format, body: {body}"}).encode("utf-8"),
+                    reply_to=message.reply_to
+                )
 
             return Message(
                 type="MCPResponse", payload=payload, reply_to=message.reply_to

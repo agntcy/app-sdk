@@ -64,8 +64,7 @@ class MCPClient:
                 raise RuntimeError(f"[MCP Error] {method} failed: {data['error']}")
             return data["result"]
         except Exception as e:
-            print(f"[error] Failed MCP method '{method}': {e}")
-            raise
+            raise RuntimeError(f"[MCP Error] {method} call failed: {e}")
 
     # Specific wrappers
     async def call_tool(
