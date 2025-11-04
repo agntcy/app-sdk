@@ -16,10 +16,11 @@ from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 from mcp.server.fastmcp import FastMCP
 
+from identityservice.auth.starlette import IdentityServiceMCPMiddleware
+
 # Configure logging for the application
 configure_logging()
 logger = get_logger(__name__)
-
 
 class FastMCPProtocol(MCPProtocol):
     """
@@ -67,10 +68,28 @@ class FastMCPProtocol(MCPProtocol):
 
         self._app = self._server.streamable_http_app()
 
+        api_key = os.getenv("IDENTITY_SERVICE_API_KEY")
+        if api_key:
+            logger.info("Identity auth enabled")
+            try:
+                self._app.add_middleware(IdentityServiceMCPMiddleware)
+            except Exception as e:
+                logger.warning(f"Failed to add IdentityServiceMCPMiddleware: {e}")
+        else:
+            logger.info("Identity auth disabled (IDENTITY_SERVICE_API_KEY unset or empty)")
+
+        host = os.getenv("FAST_MCP_HOST", "localhost")
+        port_raw = os.getenv("FAST_MCP_PORT")
+        try:
+            port = int(port_raw) if port_raw else 8081
+        except ValueError:
+            logger.warning(f"Invalid FAST_MCP_PORT '{port_raw}', falling back to 8081")
+            port = 8081
+
         config = uvicorn.Config(
             self._app,
-            host=os.getenv("FAST_MCP_HOST", "localhost"),
-            port=int(os.getenv("FAST_MCP_PORT", 8081)),
+            host=host,
+            port=port,
             timeout_graceful_shutdown=3,
             lifespan="on",
         )
@@ -198,21 +217,26 @@ class FastMCPProtocol(MCPProtocol):
             # Parse the message payload
             payload_dict = json.loads(message.payload.decode("utf-8"))
 
-            # Construct the ASGI scope for the request
+            # Build headers list
+            headers = [
+                (b"accept", b"application/json, text/event-stream"),
+                (b"content-type", b"application/json"),
+                (
+                    b"mcp-session-id",
+                    message.headers.get("Mcp-Session-Id", "default_session_id").encode("utf-8"),
+                ),
+            ]
+
+            # Check for Authorization (case-insensitive)
+            auth_value = message.headers.get("Authorization") or message.headers.get("authorization")
+            if auth_value:
+                headers.append((b"authorization", auth_value.encode("utf-8")))
+
             scope = {
                 "type": "http",
                 "method": "POST",
                 "path": message.route_path,
-                "headers": [
-                    (b"accept", b"application/json, text/event-stream"),
-                    (b"content-type", b"application/json"),
-                    (
-                        b"mcp-session-id",
-                        message.headers.get(
-                            "Mcp-Session-Id", "default_session_id"
-                        ).encode("utf-8"),
-                    ),
-                ],
+                "headers": headers,
                 "query_string": b"",
                 "root_path": "",
                 "scheme": "http",

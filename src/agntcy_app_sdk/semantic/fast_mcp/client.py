@@ -4,6 +4,8 @@
 import json
 from typing import Any, Dict, Optional
 from agntcy_app_sdk.semantic.message import Message
+import os
+from identityservice.sdk import IdentityServiceSdk
 
 
 class MCPClient:
@@ -67,10 +69,26 @@ class MCPClient:
 
     # Specific wrappers
     async def call_tool(
-        self, name: str, arguments: Dict[str, Any], request_id: int = 1
+            self,
+            name: str,
+            arguments: Dict[str, Any],
+            request_id: int = 1,
     ) -> dict:
+        headers: Dict[str, Any] = {}
+        api_key = os.getenv("IDENTITY_SERVICE_API_KEY")
+        if api_key:  # non-empty and not None
+            try:
+                access_token = IdentityServiceSdk().access_token(tool_name=name)
+                if access_token:
+                    headers["Authorization"] = f"Bearer {access_token}"
+            except Exception as e:
+                print(f"[warn] Failed to get access token for tool '{name}': {e}")
+
         return await self.call_mcp_method(
-            "tools/call", {"name": name, "arguments": arguments}, request_id=request_id
+            "tools/call",
+            {"name": name, "arguments": arguments},
+            request_id=request_id,
+            headers=headers,
         )
 
     async def list_tools(self, request_id: int = 1) -> dict:

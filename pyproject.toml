@@ -17,6 +17,7 @@ dependencies = [
     "ioa-observe-sdk==1.0.24",
     "asgi-lifespan>=2.1.0",
     "slim-bindings==0.6.3",
+    "agntcy-identity-service-sdk==0.0.7",
 ]
 
 [project.urls]
