@@ -25,9 +25,6 @@ jobs:
           - runner: windows-latest
             os: windows
             target: x64
-          - runner: macos-13 # We use macos-13 as it is a x86_64 runner
-            os: macos
-            target: x86_64
           - runner: macos-15
             os: macos
             target: aarch64
