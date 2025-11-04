@@ -3,7 +3,7 @@ name = "agntcy-app-sdk"
 version = "0.4.0"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
-requires-python = ">=3.12,<4.0"
+requires-python = ">=3.13,<4.0"
 license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
@@ -17,11 +17,22 @@ dependencies = [
     "ioa-observe-sdk==1.0.23",
     "asgi-lifespan>=2.1.0",
     "slim-bindings==0.4.1",
+    "agntcy-dir>=0.4.0",
+    "agntcy-oasf-sdk-grpc-python==1.75.0.1.20250917120021+8b2bf93bf8dc",
+    "agntcy-oasf-sdk-protocolbuffers-python==32.1.0.1.20250917120021+8b2bf93bf8dc",
+]
+
+[tool.uv]
+override-dependencies = [
+    "protobuf>=6.33.0",
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/agntcy/app-sdk"
 "Bug Tracker" = "https://github.com/agntcy/app-sdk/issues"
+
+[[tool.uv.index]]
+url = "https://buf.build/gen/python"
 
 [dependency-groups]
 dev = [

@@ -25,6 +25,8 @@ from agntcy_app_sdk.factory import TransportTypes
 from agntcy_app_sdk.app_sessions import AppContainer
 from agntcy_app_sdk.factory import AgntcyFactory
 
+print("Creating agent card...\n", AgentCard.model_fields.keys())
+
 factory = AgntcyFactory(enable_tracing=True)
 
 skill = AgentSkill(
@@ -39,6 +41,16 @@ agent_card = AgentCard(
     name="Hello World Agent",
     description="Just a hello world agent",
     url="http://localhost:9999/",
+    additional_interfaces=[
+        {
+            "transport": TransportTypes.NATS.value,
+            "url": "agents.hello_world.nats",
+        },
+        {
+            "transport": TransportTypes.SLIM.value,
+            "url": "agents.hello_world.slim",
+        },
+    ],
     version="1.0.0",
     defaultInputModes=["text"],
     defaultOutputModes=["text"],
