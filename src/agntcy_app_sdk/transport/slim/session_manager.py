@@ -136,7 +136,7 @@ class SessionManager:
                 # otherwise it would result in "session already closed" error since SLIM doesn't allow accessing
                 # properties on a closed session.
                 logger.debug(f"Attempting to remove session {session_id} from local cache.")
-                self._local_cache_cleanup(session_id)
+                await self._local_cache_cleanup(session_id)
 
                 logger.debug(f"Attempting to delete session {session_id} from SLIM server.")
                 await self._slim.delete_session(session)
@@ -164,7 +164,7 @@ class SessionManager:
 
             if session_key:
                 del self._sessions[session_key]
-                logger.debug(f"Locally cleaned up session: {session_id}")
+                logger.info(f"Locally cleaned up session: {session_id}")
             else:
                 logger.warning(f"Session {session_id} cannot be removed from "
                                f"local cache since this session was not found.")

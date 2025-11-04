@@ -14,13 +14,15 @@ from slim_bindings import (
 from slim_bindings._slim_bindings import PyMessageContext
 
 from .common import (
-    create_local_app,
+    get_or_create_slim_instance,
     split_id,
 )
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
+
+import agntcy_app_sdk.transport.slim.common
 
 configure_logging()
 logger = get_logger(__name__)
@@ -38,6 +40,7 @@ class SLIMTransport(BaseTransport):
     def __init__(
         self,
         routable_name: str = None,
+        local_slim: bool = False,
         slim_instance=None,
         endpoint: Optional[str] = None,
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=60),
@@ -70,6 +73,7 @@ class SLIMTransport(BaseTransport):
         self.local_name = local_name
         self._endpoint = endpoint
         self._slim = slim_instance
+        self._local_slim = local_slim
 
         self._callback = None
         self.message_timeout = message_timeout
@@ -413,6 +417,12 @@ class SLIMTransport(BaseTransport):
         # handle slim server disconnection
         try:
             await self._slim.disconnect(self._endpoint)
+
+            # reset global slim instance to None to allow new transport instances
+            # to be created in the same runtime environment
+            if not self._local_slim:
+                agntcy_app_sdk.transport.slim.common.global_slim = None
+
         except Exception as e:
             if "connection not found" in str(e).lower():
                 # Silence benign "connection not found" errors;
@@ -617,7 +627,7 @@ class SLIMTransport(BaseTransport):
         if self._slim:
             return  # Already connected
 
-        self._slim: slim_bindings.Slim = await create_local_app(
+        self._slim: slim_bindings.Slim = await get_or_create_slim_instance(
             self.pyname,
             slim={
                 "endpoint": self._endpoint,
@@ -628,6 +638,7 @@ class SLIMTransport(BaseTransport):
             jwt=self._jwt,
             bundle=self._bundle,
             audience=self._audience,
+            local_slim=self._local_slim
         )
 
         self._session_manager.set_slim(self._slim)
