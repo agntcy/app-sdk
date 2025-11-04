@@ -101,7 +101,9 @@ class DictParamType(click.ParamType):
             self.fail(f"{value} is not valid JSON", param, ctx)
 
 
-async def create_local_app(
+global_slim = None
+
+async def get_or_create_slim_instance(
     local: slim_bindings.PyName,
     slim: dict,
     remote: str | None = None,
@@ -110,7 +112,14 @@ async def create_local_app(
     jwt: str | None = None,
     bundle: str | None = None,
     audience: list[str] | None = None,
+    local_slim: bool = False
 ):
+    global global_slim
+
+    # This check ensures that if global_slim is already set AND we're not asking for a local_slim
+    if global_slim is not None and not local_slim:
+        return global_slim
+
     # init tracing
     slim_bindings.init_tracing(
         {
@@ -143,10 +152,14 @@ async def create_local_app(
             secret=shared_secret,
         )
 
-    # TODO: leverage the global SLIM instance that has been added in SLIM v0.6.x
-    local_app = await slim_bindings.Slim.new(local, provider, verifier, local_service=True)
+    slim_instance = await slim_bindings.Slim.new(local, provider, verifier,
+                                             local_service=local_slim)
 
     # Connect to slim server
-    _ = await local_app.connect(slim)
+    _ = await slim_instance.connect(slim)
 
-    return local_app
+    if local_slim:
+        return slim_instance
+
+    global_slim = slim_instance
+    return global_slim
