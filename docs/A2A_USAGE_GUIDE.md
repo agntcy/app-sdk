@@ -216,6 +216,12 @@ root=SendMessageSuccessResponse(id='1c24a07e-45af-4800-81bc-cc2fd1b579e1', jsonr
 
 For a fully functional multi-agent example integrating A2A, Agntcy, and Langgraph, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy).
 
+### Identity TBAC Integration
+Activate Agntcy Identity Service TBAC by configuring the `IDENTITY_AUTH_ENABLED` and `IDENTITY_SERVICE_API_KEY` environment variable with the Identity App Service API key.  
+For more details, refer to the [official documentation](https://identity-docs.outshift.com/docs/dev#a2a-integration-using-the-python-sdk).
+
+**Important**: Ensure the `IDENTITY_SERVICE_API_KEY` values for the client and server are different to enforce proper TBAC functionality.
+
 ### ⚙️ Contributing additional Transports
 
 To contribute a new transport implementation, follow these steps:
