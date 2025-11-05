@@ -248,8 +248,8 @@ if __name__ == "__main__":
 
 For more details, refer to the [FastMCP API Reference](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram).
 
-### Identity TBAC Integration (Updated: 2025-11-04)
-Activate Agntcy Identity Service TBAC by configuring the `IDENTITY_SERVICE_API_KEY` environment variable with the Identity App Service API key.  
+### Identity TBAC Integration
+Activate Agntcy Identity Service TBAC by configuring the `IDENTITY_AUTH_ENABLED` and `IDENTITY_SERVICE_API_KEY` environment variable with the Identity App Service API key.  
 For more details, refer to the [official documentation](https://identity-docs.outshift.com/docs/dev#mcp-integration-using-the-python-sdk).
 
 **Important**: Ensure the `IDENTITY_SERVICE_API_KEY` values for the client and server are different to enforce proper TBAC functionality.
