@@ -15,11 +15,13 @@ from agntcy_app_sdk.semantic.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 from mcp.server.fastmcp import FastMCP
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+
+from identityservice.auth.starlette import IdentityServiceMCPMiddleware
 
 # Configure logging for the application
 configure_logging()
 logger = get_logger(__name__)
-
 
 class FastMCPProtocol(MCPProtocol):
     """
@@ -67,10 +69,22 @@ class FastMCPProtocol(MCPProtocol):
 
         self._app = self._server.streamable_http_app()
 
+        if is_identity_auth_enabled():
+            logger.info("Identity auth enabled")
+            self._app.add_middleware(IdentityServiceMCPMiddleware)
+
+        host = os.getenv("FAST_MCP_HOST", "localhost")
+        port_raw = os.getenv("FAST_MCP_PORT")
+        try:
+            port = int(port_raw) if port_raw else 8081
+        except ValueError:
+            logger.warning(f"Invalid FAST_MCP_PORT '{port_raw}', falling back to 8081")
+            port = 8081
+
         config = uvicorn.Config(
             self._app,
-            host=os.getenv("FAST_MCP_HOST", "localhost"),
-            port=int(os.getenv("FAST_MCP_PORT", 8081)),
+            host=host,
+            port=port,
             timeout_graceful_shutdown=3,
             lifespan="on",
         )
@@ -198,21 +212,26 @@ class FastMCPProtocol(MCPProtocol):
             # Parse the message payload
             payload_dict = json.loads(message.payload.decode("utf-8"))
 
-            # Construct the ASGI scope for the request
+            # Build headers list
+            headers = [
+                (b"accept", b"application/json, text/event-stream"),
+                (b"content-type", b"application/json"),
+                (
+                    b"mcp-session-id",
+                    message.headers.get("Mcp-Session-Id", "default_session_id").encode("utf-8"),
+                ),
+            ]
+
+            # Check for Authorization (case-insensitive)
+            auth_value = message.headers.get("Authorization") or message.headers.get("authorization")
+            if auth_value:
+                headers.append((b"authorization", auth_value.encode("utf-8")))
+
             scope = {
                 "type": "http",
                 "method": "POST",
                 "path": message.route_path,
-                "headers": [
-                    (b"accept", b"application/json, text/event-stream"),
-                    (b"content-type", b"application/json"),
-                    (
-                        b"mcp-session-id",
-                        message.headers.get(
-                            "Mcp-Session-Id", "default_session_id"
-                        ).encode("utf-8"),
-                    ),
-                ],
+                "headers": headers,
                 "query_string": b"",
                 "root_path": "",
                 "scheme": "http",
@@ -259,13 +278,25 @@ class FastMCPProtocol(MCPProtocol):
             # Extract the payload from the response body
             body = bytes(response_data["body"]).decode("utf-8").strip()
 
+            if any(keyword in body.lower() for keyword in ["authentication failed", "unauthorized"]):
+                error_message = {"error": "Authentication failed or unauthorized access detected", "response_body": body}
+                return Message(
+                    type="MCPResponse",
+                    payload=json.dumps(error_message).encode("utf-8"),
+                    reply_to=message.reply_to,
+                )
+
             for line in body.splitlines():
                 if line.startswith("data: "):
                     json_data_str = line.removeprefix("data: ").strip()
                     payload = json.dumps(json.loads(json_data_str)).encode("utf-8")
                     break
             else:
-                raise ValueError("Missing 'data:' line in SSE response")
+                # This will only execute if no "data: " line is found in the entire body
+                return Message(
+                    type="MCPResponse", payload=json.dumps({"error": f"Invalid response format, body: {body}"}).encode("utf-8"),
+                    reply_to=message.reply_to
+                )
 
             return Message(
                 type="MCPResponse", payload=payload, reply_to=message.reply_to

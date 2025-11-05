@@ -246,13 +246,13 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-#### Key Notes:
-
-- **`route_path`**: Specifies the custom route path for the client. If not provided, it defaults to `/`.
-- **Authentication**: Supports both bearer tokens and `httpx.Auth` instances for flexible authentication.
-- **Initialization Flow**: The client performs two POST requests to initialize the MCP connection, ensuring proper session setup.
-
 For more details, refer to the [FastMCP API Reference](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram).
+
+### Identity TBAC Integration
+Activate Agntcy Identity Service TBAC by configuring the `IDENTITY_AUTH_ENABLED` and `IDENTITY_SERVICE_API_KEY` environment variable with the Identity App Service API key.  
+For more details, refer to the [official documentation](https://identity-docs.outshift.com/docs/dev#mcp-integration-using-the-python-sdk).
+
+**Important**: Ensure the `IDENTITY_SERVICE_API_KEY` values for the client and server are different to enforce proper TBAC functionality.
 
 ### ⚙️ Contributing additional Transports
 
@@ -269,3 +269,5 @@ To contribute a new transport implementation, follow these steps:
 5. **Submit a Pull Request**: Once your changes are complete, submit a pull request for review.
 
 See [API Reference](API_REFERENCE.md) for detailed SDK API documentation.
+
+

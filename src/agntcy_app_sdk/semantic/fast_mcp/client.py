@@ -3,8 +3,14 @@
 
 import json
 from typing import Any, Dict, Optional
-from agntcy_app_sdk.semantic.message import Message
 
+from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.semantic.message import Message
+from identityservice.sdk import IdentityServiceSdk
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+
+configure_logging()
+logger = get_logger(__name__)
 
 class MCPClient:
     def __init__(self, transport, session_id: str, topic: str, route_path: str = "/"):
@@ -62,15 +68,30 @@ class MCPClient:
                 raise RuntimeError(f"[MCP Error] {method} failed: {data['error']}")
             return data["result"]
         except Exception as e:
-            print(f"[error] Failed MCP method '{method}': {e}")
-            raise
+            raise RuntimeError(f"[MCP Error] {method} call failed: {e}")
 
     # Specific wrappers
     async def call_tool(
-        self, name: str, arguments: Dict[str, Any], request_id: int = 1
+            self,
+            name: str,
+            arguments: Dict[str, Any],
+            request_id: int = 1,
     ) -> dict:
+        headers: Dict[str, Any] = {}
+
+        if is_identity_auth_enabled():
+            try:
+                access_token = IdentityServiceSdk().access_token(tool_name=name)
+                if access_token:
+                    headers["Authorization"] = f"Bearer {access_token}"
+            except Exception as e:
+                logger.error(f"failed to get access token for tool '{name}': {e}")
+
         return await self.call_mcp_method(
-            "tools/call", {"name": name, "arguments": arguments}, request_id=request_id
+            "tools/call",
+            {"name": name, "arguments": arguments},
+            request_id=request_id,
+            headers=headers,
         )
 
     async def list_tools(self, request_id: int = 1) -> dict:
