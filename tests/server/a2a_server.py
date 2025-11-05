@@ -41,7 +41,7 @@ agent_card = AgentCard(
     name="Hello World Agent",
     description="Just a hello world agent",
     url="http://localhost:9999/",
-    additional_interfaces=[
+    additionalInterfaces=[
         {
             "transport": TransportTypes.NATS.value,
             "url": "agents.hello_world.nats",

@@ -1,10 +1,11 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import pytest
-from google.protobuf.struct_pb2 import Struct
 from agntcy.dir_sdk.models import core_v1
 
+from agntcy_app_sdk.factory import TransportTypes
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from agntcy_app_sdk.semantic.translator import SemanticTranslator
 
@@ -90,6 +91,16 @@ def agent_card(agent_skill):
         id="accountant-agent",
         description="An AI agent that confirms the payment.",
         url="",
+        additionalInterfaces=[
+            {
+                "transport": TransportTypes.NATS.value,
+                "url": "agents.hello_world.nats",
+            },
+            {
+                "transport": TransportTypes.SLIM.value,
+                "url": "agents.hello_world.slim",
+            },
+        ],
         version="1.0.0",
         defaultInputModes=["text"],
         defaultOutputModes=["text"],
@@ -114,13 +125,20 @@ def test_validate_oasf_valid_record(translator, valid_oasf_record):
     assert len(errors) == 0
 
 
-'''def test_dir_sdk_to_oasf_sdk_record_conversion(translator, valid_oasf_corev1_record):
+def test_dir_sdk_to_oasf_sdk_record_conversion(translator, valid_oasf_corev1_record):
     """Test conversion from dir_sdk core_v1.Record to OASF record data dictionary."""
-    record_data = translator.to_oasf_record_data(valid_oasf_corev1_record)
+    record_struct = translator._dir_sdk_record_to_oasf_sdk_record(valid_oasf_corev1_record)
+    record_data = dict(record_struct)
 
     assert record_data is not None
     assert isinstance(record_data, dict)
-    assert record_data["name"] == "Example Agent"'''
+    assert record_data["name"] == "Example Agent"
+
+    # convert back to core_v1.Record to verify roundtrip
+    record_back = translator._oasf_sdk_record_to_dir_sdk_record(record_struct)
+    assert record_back is not None
+    assert isinstance(record_back, core_v1.Record)
+    assert record_back.data["name"] == "Example Agent"
 
 
 def test_a2a_to_oasf_translation(translator, agent_card):
@@ -128,7 +146,7 @@ def test_a2a_to_oasf_translation(translator, agent_card):
     oasf_record = translator.a2a_to_oasf(agent_card)
 
     assert oasf_record is not None
-    assert isinstance(oasf_record, Struct)
+    assert isinstance(oasf_record, core_v1.Record)
 
 
 def test_roundtrip_translation(translator, agent_card):
@@ -138,9 +156,11 @@ def test_roundtrip_translation(translator, agent_card):
     assert oasf_record is not None
 
     # OASF back to A2A
-    a2a_message = translator.oasf_to_a2a(oasf_record)
-    assert a2a_message is not None
+    a2a_card = translator.oasf_to_a2a(oasf_record)
+    assert a2a_card is not None
+    assert isinstance(a2a_card, AgentCard)
 
+    print(json.dumps(a2a_card.model_dump(), indent=2))
 
 def test_connection_error_when_not_connected():
     """Test that methods raise error when not connected."""

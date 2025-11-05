@@ -5,6 +5,7 @@ from typing import Optional
 import grpc
 import json
 from google.protobuf.struct_pb2 import Struct
+from google.protobuf.json_format import MessageToJson
 from agntcy.dir_sdk.models import core_v1
 
 from agntcy.oasfsdk.validation.v1.validation_service_pb2 import ValidateRecordRequest
@@ -49,9 +50,50 @@ class SemanticTranslator:
         self._translation_stub: Optional[TranslationServiceStub] = None
         self._validation_stub: Optional[ValidationServiceStub] = None
         self._managed_context = False
+        self.to_translators = {
+            "A2A": self.a2a_to_oasf,
+        },
+        self.from_translators = {
+            "A2A": self.oasf_to_a2a,
+        }
 
         if auto_connect:
             self.connect()
+
+    def translate_to(
+        self, protocol: str, record: dict
+    ) -> Optional[Struct]:
+        """
+        Translate an OASF record to the specified protocol format.
+
+        Args:
+            protocol: Target protocol (e.g., "A2A")
+            record: Dictionary containing the OASF record
+
+        Returns:
+            Protobuf Struct representation of the translated record
+        """
+        translator = self.to_translators.get(protocol)
+        if not translator:
+            raise ValueError(f"Unsupported protocol: {protocol}")
+        return translator(record)
+    
+    def translate_from(
+        self, protocol: str, record: dict
+    ) -> str:
+        """
+        Translate a record from the specified protocol format to OASF.
+
+        Args:
+            protocol: Source protocol (e.g., "A2A")
+            record: Dictionary containing the record in the source protocol format
+        Returns:
+            String representation of the translated OASF record
+        """        
+        translator = self.from_translators.get(protocol)
+        if not translator:
+            raise ValueError(f"Unsupported protocol: {protocol}")
+        return translator(record)
 
     def connect(self) -> None:
         """Establish gRPC connection and initialize stubs."""
@@ -84,7 +126,7 @@ class SemanticTranslator:
         """Cleanup on garbage collection."""
         self.close()
 
-    def _oafs_sdk_record_to_dir_sdk_record(
+    def _oasf_sdk_record_to_dir_sdk_record(
         self, record_struct: Struct
     ) -> core_v1.Record:
         """
@@ -96,23 +138,31 @@ class SemanticTranslator:
         Returns:
             core_v1.Record instance
         """
-        record_json = json.dumps(dict(record_struct))
-        record = core_v1.Record.model_validate_json(record_json)
-        return record
+        record_dict = json.loads(MessageToJson(record_struct))
 
-    def from_oasf_record_data(self, record_data: dict) -> core_v1.Record:
+
+        record = core_v1.Record()
+        record.data.update(record_dict)
+        
+        return record
+    
+    def _dir_sdk_record_to_oasf_sdk_record(
+        self, record: core_v1.Record
+    ) -> Struct:
         """
-        Convert OASF record data dictionary to core_v1.Record.
+        Convert core_v1.Record to OASF record Struct.
 
         Args:
-            record_data: Dictionary representation of the OASF record
+            record: core_v1.Record instance
 
         Returns:
-            core_v1.Record instance
+            Protobuf Struct representation of the OASF record
         """
-        record_json = json.dumps(record_data)
-        record = core_v1.Record.model_validate_json(record_json)
-        return record
+        record_dict = json.loads(MessageToJson(record.data))
+        record_struct = Struct()
+        record_struct.update(record_dict)
+
+        return record_struct
 
     def validate_oasf(self, record_data: dict) -> tuple[bool, list[str]]:
         """
@@ -169,14 +219,15 @@ class SemanticTranslator:
         request = A2AToRecordRequest(data=record_struct)
         response = self._translation_stub.A2AToRecord(request)
 
-        return response.record
+        # need to return a core_v1.Record
+        return self._oasf_sdk_record_to_dir_sdk_record(response.record)
 
-    def oasf_to_a2a(self, record: dict) -> str:
+    def oasf_to_a2a(self, record: core_v1.Record) -> AgentCard:
         """
         Translate an OASF record to an A2A Card.
 
         Args:
-            record: Dictionary containing the OASF record
+            record: core_v1.Record containing the OASF record
 
         Returns:
             String containing the A2A Card
@@ -189,11 +240,20 @@ class SemanticTranslator:
             raise RuntimeError(
                 "Not connected. Call connect() or use as context manager."
             )
-
-        record_struct = Struct()
-        record_struct.update(record)
+        
+        record_struct = self._dir_sdk_record_to_oasf_sdk_record(record)
 
         request = RecordToA2ARequest(record=record_struct)
         response = self._translation_stub.RecordToA2A(request)
 
-        return response
+        data_dict = json.loads(MessageToJson(response.data))
+        card_data = data_dict.get("a2aCard", {})
+
+        # Patch known mismatches
+        card_data.setdefault("version", "1.0")
+        for skill in card_data.get("skills", []):
+            skill.setdefault("tags", [])
+        if isinstance(card_data.get("capabilities", {}).get("extensions"), bool):
+            card_data["capabilities"]["extensions"] = []
+
+        return AgentCard.model_validate(card_data)

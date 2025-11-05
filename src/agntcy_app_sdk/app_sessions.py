@@ -14,6 +14,7 @@ from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.base import BaseAgentProtocol
 from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.semantic.a2a.protocol import A2AProtocol
+from agntcy_app_sdk.semantic.translator import SemanticTranslator
 
 logger = get_logger(__name__)
 
@@ -41,39 +42,9 @@ class AppContainer:
         self.protocol_handler: BaseAgentProtocol = self._register_protocol_handler(
             server
         )
+        self.translator = SemanticTranslator()
         self._shutdown_event: Optional[asyncio.Event] = None
         self.is_running = False
-
-    def _register_protocol_handler(self, server: Any):
-        """
-        Create and bind the appropriate protocol handler based on the server type.
-        """
-        from agntcy_app_sdk.factory import AgntcyFactory
-
-        factory = AgntcyFactory()
-
-        if isinstance(server, A2AStarletteApplication):
-            if self.topic is None or self.topic == "":
-                self.topic = A2AProtocol.create_agent_topic(server.agent_card)
-            handler = factory.create_protocol("A2A")
-            handler.bind_server(server)
-            return handler
-        elif isinstance(server, MCPServer):
-            if self.topic is None or self.topic == "":
-                raise ValueError("Topic must be provided for MCP server")
-            logger.info(f"Creating MCP bridge for topic: {self.topic}")
-            handler = factory.create_protocol("MCP")
-            handler.bind_server(server)
-            return handler
-        elif isinstance(server, FastMCP):
-            if self.topic is None or self.topic == "":
-                raise ValueError("Topic must be provided for FastMCP server")
-            logger.info(f"Creating FastMCP bridge for topic: {self.topic}")
-            handler = factory.create_protocol("FastMCP")
-            handler.bind_server(server)
-            return handler
-        else:
-            raise ValueError("Unsupported server type")
 
     def set_transport(self, transport: BaseTransport):
         self.transport = transport
@@ -87,7 +58,27 @@ class AppContainer:
     async def run(
         self, keep_alive: bool = False, push_to_directory_on_startup: bool = False
     ):
-        """Start all components of the app container."""
+        """
+        Start all components of the app container.
+        
+        STARTUP ORDER:
+        1. Transport      - Network layer (must be first)
+        2. Directory      - Service registry
+        3. Identity       - Authentication (needs network)
+        4. Protocol       - Message handler (needs identity)
+        5. Subscription   - Topic subscription (needs protocol)
+        
+        SHUTDOWN ORDER:
+        5. Subscription   - Unsubscribe (first)
+        4. Protocol       - Stop handling
+        3. Identity       - Cleanup sessions
+        2. Directory      - Deregister
+        1. Transport      - Close connections (last)
+
+        Args:
+            keep_alive (bool): Whether to keep the session alive.
+            push_to_directory_on_startup (bool): Whether to push to directory on startup.
+        """
         if self.is_running:
             logger.warning("App session is already running.")
             return
@@ -124,6 +115,37 @@ class AppContainer:
         if keep_alive:
             # Run the loop forever if keep_alive is True
             await self.loop_forever()
+
+    def _register_protocol_handler(self, server: Any):
+        """
+        Create and bind the appropriate protocol handler based on the server type.
+        """
+        from agntcy_app_sdk.factory import AgntcyFactory
+
+        factory = AgntcyFactory()
+
+        if isinstance(server, A2AStarletteApplication):
+            if self.topic is None or self.topic == "":
+                self.topic = A2AProtocol.create_agent_topic(server.agent_card)
+            handler = factory.create_protocol("A2A")
+            handler.bind_server(server)
+            return handler
+        elif isinstance(server, MCPServer):
+            if self.topic is None or self.topic == "":
+                raise ValueError("Topic must be provided for MCP server")
+            logger.info(f"Creating MCP bridge for topic: {self.topic}")
+            handler = factory.create_protocol("MCP")
+            handler.bind_server(server)
+            return handler
+        elif isinstance(server, FastMCP):
+            if self.topic is None or self.topic == "":
+                raise ValueError("Topic must be provided for FastMCP server")
+            logger.info(f"Creating FastMCP bridge for topic: {self.topic}")
+            handler = factory.create_protocol("FastMCP")
+            handler.bind_server(server)
+            return handler
+        else:
+            raise ValueError("Unsupported server type")
 
     async def loop_forever(self):
         """Keep the event loop running until shutdown signal received."""
