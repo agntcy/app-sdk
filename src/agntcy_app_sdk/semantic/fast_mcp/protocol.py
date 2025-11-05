@@ -15,6 +15,7 @@ from agntcy_app_sdk.semantic.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 from mcp.server.fastmcp import FastMCP
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
 from identityservice.auth.starlette import IdentityServiceMCPMiddleware
 
@@ -68,13 +69,9 @@ class FastMCPProtocol(MCPProtocol):
 
         self._app = self._server.streamable_http_app()
 
-        api_key = os.getenv("IDENTITY_SERVICE_API_KEY")
-        if api_key:
+        if is_identity_auth_enabled():
             logger.info("Identity auth enabled")
-            try:
-                self._app.add_middleware(IdentityServiceMCPMiddleware)
-            except Exception as e:
-                logger.warning(f"Failed to add Identity Auth Middleware: {e}")
+            self._app.add_middleware(IdentityServiceMCPMiddleware)
 
         host = os.getenv("FAST_MCP_HOST", "localhost")
         port_raw = os.getenv("FAST_MCP_PORT")

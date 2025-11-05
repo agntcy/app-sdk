@@ -3,10 +3,14 @@
 
 import json
 from typing import Any, Dict, Optional
-from agntcy_app_sdk.semantic.message import Message
-import os
-from identityservice.sdk import IdentityServiceSdk
 
+from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.semantic.message import Message
+from identityservice.sdk import IdentityServiceSdk
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+
+configure_logging()
+logger = get_logger(__name__)
 
 class MCPClient:
     def __init__(self, transport, session_id: str, topic: str, route_path: str = "/"):
@@ -74,14 +78,14 @@ class MCPClient:
             request_id: int = 1,
     ) -> dict:
         headers: Dict[str, Any] = {}
-        api_key = os.getenv("IDENTITY_SERVICE_API_KEY")
-        if api_key:  # non-empty and not None
+
+        if is_identity_auth_enabled():
             try:
                 access_token = IdentityServiceSdk().access_token(tool_name=name)
                 if access_token:
                     headers["Authorization"] = f"Bearer {access_token}"
             except Exception as e:
-                print(f"[warn] Failed to get access token for tool '{name}': {e}")
+                logger.error(f"failed to get access token for tool '{name}': {e}")
 
         return await self.call_mcp_method(
             "tools/call",
