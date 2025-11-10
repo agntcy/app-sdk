@@ -7,6 +7,7 @@ import asyncio
 from uuid import uuid4
 import datetime
 import slim_bindings
+from identityservice.sdk import IdentityServiceSdk
 from slim_bindings import (
     PyName,
     PySession
@@ -23,6 +24,7 @@ from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 
 import agntcy_app_sdk.transport.slim.common
+from ...common.auth import is_identity_auth_enabled
 
 configure_logging()
 logger = get_logger(__name__)
@@ -244,7 +246,13 @@ class SLIMTransport(BaseTransport):
                     message.headers = {}
                 message.headers["x-respond-to-source"] = "true"
 
-                ## TODO: Add auth header here?
+                if is_identity_auth_enabled():
+                    try:
+                        access_token = IdentityServiceSdk().access_token()
+                        if access_token:
+                            message.headers["Authorization"] = f"Bearer {access_token}"
+                    except Exception as e:
+                        logger.error(f"Failed to get access token for agent: {e}")
 
                 await group_session.publish(message.serialize())
 
