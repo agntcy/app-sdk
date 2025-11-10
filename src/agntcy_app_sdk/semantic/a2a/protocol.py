@@ -195,7 +195,6 @@ class A2AProtocol(BaseAgentProtocol):
             if is_identity_auth_enabled():
                 try:
                     access_token = IdentityServiceSdk().access_token()
-                    logger.info(f"Obtained access token for agent: {access_token}")
                     if access_token:
                         headers["Authorization"] = f"Bearer {access_token}"
                 except Exception as e:
@@ -277,7 +276,7 @@ class A2AProtocol(BaseAgentProtocol):
         """
         assert self._app is not None, "ASGI app is not set up"
 
-        logger.info(f"Handling A2A message with payload: {message}")
+        logger.debug(f"Handling A2A message with payload: {message}")
 
         body = message.payload
         route_path = (
