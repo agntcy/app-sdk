@@ -195,10 +195,11 @@ class A2AProtocol(BaseAgentProtocol):
             if is_identity_auth_enabled():
                 try:
                     access_token = IdentityServiceSdk().access_token()
+                    logger.info(f"Obtained access token for agent: {access_token}")
                     if access_token:
                         headers["Authorization"] = f"Bearer {access_token}"
                 except Exception as e:
-                    logger.error("Failed to get access token for agent")
+                    logger.error(f"Failed to get access token for agent: {e}")
 
             try:
                 response = await transport.request(
@@ -310,6 +311,9 @@ class A2AProtocol(BaseAgentProtocol):
         auth_value = message.headers.get("Authorization") or message.headers.get("authorization")
         if auth_value:
             headers.append((b"authorization", auth_value.encode("utf-8")))
+        else:
+            # Ensure authorization header is present to avoid issues with some ASGI A2A apps
+            headers.append((b"authorization", b""))
 
         # Set up ASGI scope
         scope: Scope = {
@@ -340,7 +344,6 @@ class A2AProtocol(BaseAgentProtocol):
             "headers": None,
             "body": bytearray(),
         }
-
 
 
         async def send(message: Dict[str, Any]) -> None:

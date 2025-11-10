@@ -244,6 +244,8 @@ class SLIMTransport(BaseTransport):
                     message.headers = {}
                 message.headers["x-respond-to-source"] = "true"
 
+                ## TODO: Add auth header here?
+
                 await group_session.publish(message.serialize())
 
                 # wait for responses from all invitees or be interrupted by caller
