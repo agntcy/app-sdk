@@ -8,5 +8,3 @@ def is_identity_auth_enabled() -> bool:
 
     return (os.getenv("IDENTITY_AUTH_ENABLED", "false").lower() in ["true", "enabled"] and
             os.getenv("IDENTITY_SERVICE_API_KEY", "") != "")
-
-

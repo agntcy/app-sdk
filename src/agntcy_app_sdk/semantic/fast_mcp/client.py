@@ -27,7 +27,7 @@ class MCPClient:
             try:
                 await self.transport.close()
             except Exception as e:
-                print(f"[error] Transport close failed: {e}")
+                logger.error(f"transport close failed: {e}")
 
     def _build_message(
         self,

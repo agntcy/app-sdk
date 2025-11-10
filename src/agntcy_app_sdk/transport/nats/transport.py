@@ -5,7 +5,10 @@ import asyncio
 import os
 
 import nats
+from identityservice.sdk import IdentityServiceSdk
 from nats.aio.client import Client as NATS
+
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.semantic.message import Message
@@ -170,6 +173,15 @@ class NatsTransport(BaseTransport):
         publish_topic = self.santize_topic(topic)
         reply_topic = uuid4().hex
         message.reply_to = reply_topic
+
+        if is_identity_auth_enabled():
+            try:
+                access_token = IdentityServiceSdk().access_token()
+                logger.info(f"Fetched access token for agent.{access_token}")
+                if access_token:
+                    message.headers["Authorization"] = f"Bearer {access_token}"
+            except Exception as e:
+                logger.error(f"Failed to get access token for agent: {e}")
 
         logger.info(f"Publishing to: {publish_topic} and receiving from: {reply_topic}")
 

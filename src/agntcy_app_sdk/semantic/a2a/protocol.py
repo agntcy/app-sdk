@@ -8,13 +8,15 @@ import httpx
 import os
 
 from a2a.client import A2AClient, A2ACardResolver
+from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH
 from a2a.server.apps import A2AStarletteApplication
+
 from starlette.types import Scope
 from a2a.types import (
     AgentCard,
     SendMessageRequest,
     JSONRPCSuccessResponse,
-    MessageSendParams,
+    MessageSendParams, HTTPAuthSecurityScheme, SecurityScheme,
 )
 from agntcy_app_sdk.semantic.base import BaseAgentProtocol
 from agntcy_app_sdk.transport.base import BaseTransport
@@ -29,6 +31,10 @@ from agntcy_app_sdk.semantic.a2a.experimental import (
 )
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+
+from identityservice.auth.starlette import IdentityServiceA2AMiddleware
+from identityservice.sdk import IdentityServiceSdk
 
 configure_logging()
 logger = get_logger(__name__)
@@ -175,8 +181,8 @@ class A2AProtocol(BaseAgentProtocol):
         """
 
         async def _send_request(
-            rpc_request_payload: dict[str, Any],
-            http_kwargs: dict[str, Any] | None = None,
+                rpc_request_payload: dict[str, Any],
+                http_kwargs: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
             """
             Send a request using the provided transport.
@@ -186,6 +192,14 @@ class A2AProtocol(BaseAgentProtocol):
                 http_kwargs = {}
             headers = http_kwargs.get("headers", {})
 
+            if is_identity_auth_enabled():
+                try:
+                    access_token = IdentityServiceSdk().access_token()
+                    if access_token:
+                        headers["Authorization"] = f"Bearer {access_token}"
+                except Exception as e:
+                    logger.error(f"Failed to get access token for agent: {e}")
+
             try:
                 response = await transport.request(
                     topic,
@@ -193,12 +207,19 @@ class A2AProtocol(BaseAgentProtocol):
                 )
 
                 response.payload = json.loads(response.payload.decode("utf-8"))
+
+                # Handle Identity Middleware AuthN error messages
+                if "error" in response.payload and "reason" in response.payload:
+                    if response.payload["error"] == "unauthorized":
+                        raise ValueError(f"Unauthorized: {response.payload['reason']}")
+
                 return response.payload
+
             except Exception as e:
                 logger.error(
                     f"Error sending A2A request with transport {transport.type()}: {e}"
                 )
-                raise e  # TODO: handle errors more gracefully
+                raise
 
         # override the _send_request method to use the provided transport
         client._transport._send_request = _send_request
@@ -217,19 +238,45 @@ class A2AProtocol(BaseAgentProtocol):
                 "A2A server is not bound to the protocol, please bind it first"
             )
 
-        # Create an ASGI adapter
-        self._app = self._server.build()
+        if is_identity_auth_enabled():
+            logger.info("Identity auth enabled")
+            try:
+                self._configure_identity_auth()
+            except Exception as e:
+                logger.warning(f"Failed to add IdentityServiceMCPMiddleware: {e}")
+        else:
+            self._app = self._server.build()
+
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
             A2AInstrumentor().instrument()
 
+    def _configure_identity_auth(self) -> None:
+        """Configure identity authentication for the server."""
+        AUTH_SCHEME = "IdentityServiceAuthScheme"
+        auth_scheme = HTTPAuthSecurityScheme(
+            scheme="bearer",
+            bearerFormat="JWT",
+        )
+        self._server.agent_card.security_schemes = {AUTH_SCHEME: SecurityScheme(root=auth_scheme)}
+        self._server.agent_card.security = [{AUTH_SCHEME: ["*"]}]
+
+        self._app = self._server.build()
+        self._app.add_middleware(
+            IdentityServiceA2AMiddleware, # Define the middleware
+            agent_card=self._server.agent_card,
+            public_paths=[AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH],
+        )
+
     async def handle_message(self, message: Message) -> Message:
         """
         Handle an incoming request and return a response.
         """
         assert self._app is not None, "ASGI app is not set up"
+
+        logger.debug(f"Handling A2A message with payload: {message}")
 
         body = message.payload
         route_path = (
@@ -261,6 +308,14 @@ class A2AProtocol(BaseAgentProtocol):
             else:
                 raise ValueError(f"Unsupported header value type: {type(value)}")
 
+        # Check for Authorization (case-insensitive)
+        auth_value = message.headers.get("Authorization") or message.headers.get("authorization")
+        if auth_value:
+            headers.append((b"authorization", auth_value.encode("utf-8")))
+        else:
+            # Ensure authorization header is present to avoid issues with some ASGI A2A apps
+            headers.append((b"authorization", b""))
+
         # Set up ASGI scope
         scope: Scope = {
             "type": "http",
@@ -290,6 +345,7 @@ class A2AProtocol(BaseAgentProtocol):
             "headers": None,
             "body": bytearray(),
         }
+
 
         async def send(message: Dict[str, Any]) -> None:
             message_type = message["type"]
