@@ -24,7 +24,7 @@ from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 
 import agntcy_app_sdk.transport.slim.common
-from ...common.auth import is_identity_auth_enabled
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
 configure_logging()
 logger = get_logger(__name__)
