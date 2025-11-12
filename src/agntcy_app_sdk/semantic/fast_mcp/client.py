@@ -23,11 +23,10 @@ class MCPClient:
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        if self.transport:
-            try:
-                await self.transport.close()
-            except Exception as e:
-                logger.error(f"transport close failed: {e}")
+        # Passive cleanup only. Transport and sessions should not be closed here.
+        # Transport will close during server/bridge shutdown, and sessions will close
+        # at the transport level after the point-to-point communication (FastMCP's only mode) completes.
+        pass
 
     def _build_message(
         self,
