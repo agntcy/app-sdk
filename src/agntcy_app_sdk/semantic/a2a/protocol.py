@@ -24,7 +24,7 @@ from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.semantic.a2a.utils import (
     get_client_from_agent_card_url,
     get_client_from_agent_card_topic,
-    message_translator,
+    message_translator, get_identity_auth_error,
 )
 from agntcy_app_sdk.semantic.a2a.experimental import (
     experimental_a2a_transport_methods,
@@ -209,9 +209,9 @@ class A2AProtocol(BaseAgentProtocol):
                 response.payload = json.loads(response.payload.decode("utf-8"))
 
                 # Handle Identity Middleware AuthN error messages
-                if "error" in response.payload and "reason" in response.payload:
-                    if response.payload["error"] == "unauthorized":
-                        raise ValueError(f"Unauthorized: {response.payload['reason']}")
+                if response.payload.get("error") == "forbidden":
+                    logger.error("Received forbidden error in A2A response due to identity auth")
+                    return get_identity_auth_error()
 
                 return response.payload
 

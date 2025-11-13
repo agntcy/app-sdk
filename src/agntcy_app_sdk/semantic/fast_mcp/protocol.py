@@ -73,7 +73,7 @@ class FastMCPProtocol(MCPProtocol):
             logger.info("Identity auth enabled")
             self._app.add_middleware(IdentityServiceMCPMiddleware)
 
-        host = os.getenv("FAST_MCP_HOST", "localhost")
+        host = os.getenv("FAST_MCP_HOST", "0.0.0.0")
         port_raw = os.getenv("FAST_MCP_PORT")
         try:
             port = int(port_raw) if port_raw else 8081

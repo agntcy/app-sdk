@@ -11,7 +11,7 @@ from a2a.types import (
     SendMessageResponse,
 )
 
-from agntcy_app_sdk.semantic.a2a.utils import message_translator
+from agntcy_app_sdk.semantic.a2a.utils import message_translator, get_identity_auth_error
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
@@ -122,7 +122,13 @@ def experimental_a2a_transport_methods(
             ):
                 try:
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
-                    yield SendMessageResponse(resp)
+                    if resp.get("error") == "forbidden":
+                        logger.warning(
+                            f"Received forbidden error in broadcast streaming response: {resp}"
+                        )
+                        yield SendMessageResponse(get_identity_auth_error())
+                    else:
+                        yield SendMessageResponse(resp)
                 except Exception as e:
                     logger.error(f"Error decoding JSON response: {e}")
                     continue
