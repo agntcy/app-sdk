@@ -177,7 +177,6 @@ class NatsTransport(BaseTransport):
         if is_identity_auth_enabled():
             try:
                 access_token = IdentityServiceSdk().access_token()
-                logger.info(f"Fetched access token for agent.{access_token}")
                 if access_token:
                     message.headers["Authorization"] = f"Bearer {access_token}"
             except Exception as e:

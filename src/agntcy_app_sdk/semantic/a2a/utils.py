@@ -3,6 +3,7 @@
 
 import httpx
 import json
+from uuid import uuid4
 from typing import Any
 
 from a2a.client import A2AClient, A2ACardResolver
@@ -17,6 +18,7 @@ from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 
 configure_logging()
 logger = get_logger(__name__)
+
 
 
 def message_translator(
@@ -84,3 +86,19 @@ async def get_client_from_agent_card_url(
     ).get_agent_card(http_kwargs=http_kwargs)
 
     return A2AClient(httpx_client=httpx_client, agent_card=agent_card)
+
+def get_identity_auth_error() -> dict[str, Any]:
+    """
+    Generate a standard identity authentication error response.
+    """
+    return {
+        "id": str(uuid4()),
+        "jsonrpc": "2.0",
+        "result": {
+            "kind": "message",
+            "messageId": str(uuid4()),
+            "metadata": {"name": "None"},
+            "parts": [{"kind": "text", "text": "Access Forbidden. Please check permissions."}],
+            "role": "agent"
+        }
+    }
