@@ -121,8 +121,9 @@ def experimental_a2a_transport_methods(
                 timeout=timeout,
             ):
                 try:
+                    logger.info(raw_resp)
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
-                    if resp.get("error") == "forbidden":
+                    if resp.get("error") == "forbidden" or raw_resp.status_code == 403:
                         logger.warning(
                             f"Received forbidden error in broadcast streaming response: {resp}"
                         )

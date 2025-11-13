@@ -209,7 +209,7 @@ class A2AProtocol(BaseAgentProtocol):
                 response.payload = json.loads(response.payload.decode("utf-8"))
 
                 # Handle Identity Middleware AuthN error messages
-                if response.payload.get("error") == "forbidden":
+                if response.payload.get("error") == "forbidden" or response.status_code == 403:
                     logger.error("Received forbidden error in A2A response due to identity auth")
                     return get_identity_auth_error()
 
