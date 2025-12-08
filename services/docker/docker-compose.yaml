@@ -30,7 +30,7 @@ services:
       - gateway
 
   apiserver:
-    image: ghcr.io/agntcy/dir-apiserver:v0.4.0
+    image: ghcr.io/agntcy/dir-apiserver:latest
     env_file:
       - ./configs/dir/apiserver.env
     ports:
@@ -64,9 +64,9 @@ services:
       retries: 60
       start_period: 15s
 
-  oasf:
-    image: chartsoo/oasf-sdk:a2a-to-record-fix
-    container_name: oasf-sdk
+  oasf-translation-service:
+    image: ghcr.io/agntcy/oasf-sdk:latest
+    container_name: oasf-translation-service
     ports:
       - "31234:31234"
 

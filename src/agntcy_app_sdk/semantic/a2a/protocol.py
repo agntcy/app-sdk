@@ -207,6 +207,11 @@ class A2AProtocol(BaseAgentProtocol):
         """Bind the protocol to a server."""
         self._server = server
 
+    def agent_record(self):
+        if self._server:
+            return self._server.agent_card
+        return None
+
     async def setup(self, *args, **kwargs) -> None:
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.

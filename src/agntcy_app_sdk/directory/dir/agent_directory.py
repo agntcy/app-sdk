@@ -53,6 +53,9 @@ class AgntcyAgentDirectory(BaseAgentDirectory):
 
         self.client = Client(config)
 
+    async def setup(self):
+        pass
+
     async def push_agent_record(
         self,
         record: core_v1.Record,

@@ -18,6 +18,11 @@ class BaseAgentDirectory(ABC):
     High level interface for storing, retrieving, searching, and signing agent records.
     """
 
+    @abstractmethod
+    async def setup(self):
+        """Run any async logic"""
+        pass
+
     ###########################################################################
     #  Store API
     @abstractmethod

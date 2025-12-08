@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional
+from typing import Optional, Any
 import grpc
 import json
 from google.protobuf.struct_pb2 import Struct
@@ -51,18 +51,16 @@ class SemanticTranslator:
         self._validation_stub: Optional[ValidationServiceStub] = None
         self._managed_context = False
         self.to_translators = {
-            "A2A": self.a2a_to_oasf,
-        },
-        self.from_translators = {
             "A2A": self.oasf_to_a2a,
+        }
+        self.from_translators = {
+            "A2A": self.a2a_to_oasf,
         }
 
         if auto_connect:
             self.connect()
 
-    def translate_to(
-        self, protocol: str, record: dict
-    ) -> Optional[Struct]:
+    def translate_to(self, protocol: str, record: dict) -> Any:
         """
         Translate an OASF record to the specified protocol format.
 
@@ -77,10 +75,8 @@ class SemanticTranslator:
         if not translator:
             raise ValueError(f"Unsupported protocol: {protocol}")
         return translator(record)
-    
-    def translate_from(
-        self, protocol: str, record: dict
-    ) -> str:
+
+    def translate_from(self, protocol: str, record: dict) -> Any:
         """
         Translate a record from the specified protocol format to OASF.
 
@@ -89,7 +85,7 @@ class SemanticTranslator:
             record: Dictionary containing the record in the source protocol format
         Returns:
             String representation of the translated OASF record
-        """        
+        """
         translator = self.from_translators.get(protocol)
         if not translator:
             raise ValueError(f"Unsupported protocol: {protocol}")
@@ -140,15 +136,12 @@ class SemanticTranslator:
         """
         record_dict = json.loads(MessageToJson(record_struct))
 
-
         record = core_v1.Record()
         record.data.update(record_dict)
-        
+
         return record
-    
-    def _dir_sdk_record_to_oasf_sdk_record(
-        self, record: core_v1.Record
-    ) -> Struct:
+
+    def _dir_sdk_record_to_oasf_sdk_record(self, record: core_v1.Record) -> Struct:
         """
         Convert core_v1.Record to OASF record Struct.
 
@@ -191,7 +184,7 @@ class SemanticTranslator:
 
         return response.is_valid, list(response.errors)
 
-    def a2a_to_oasf(self, agent_card: AgentCard) -> Optional[Struct]:
+    def a2a_to_oasf(self, agent_card: AgentCard) -> core_v1.Record:
         """
         Translate an A2A AgentCard to an OASF record.
 
@@ -219,6 +212,10 @@ class SemanticTranslator:
         request = A2AToRecordRequest(data=record_struct)
         response = self._translation_stub.A2AToRecord(request)
 
+        # write to file for debugging
+        with open("oasf_record_from_a2a.json", "w") as f:
+            f.write(MessageToJson(response.record))
+
         # need to return a core_v1.Record
         return self._oasf_sdk_record_to_dir_sdk_record(response.record)
 
@@ -240,7 +237,7 @@ class SemanticTranslator:
             raise RuntimeError(
                 "Not connected. Call connect() or use as context manager."
             )
-        
+
         record_struct = self._dir_sdk_record_to_oasf_sdk_record(record)
 
         request = RecordToA2ARequest(record=record_struct)
@@ -248,12 +245,5 @@ class SemanticTranslator:
 
         data_dict = json.loads(MessageToJson(response.data))
         card_data = data_dict.get("a2aCard", {})
-
-        # Patch known mismatches
-        card_data.setdefault("version", "1.0")
-        for skill in card_data.get("skills", []):
-            skill.setdefault("tags", [])
-        if isinstance(card_data.get("capabilities", {}).get("extensions"), bool):
-            card_data["capabilities"]["extensions"] = []
 
         return AgentCard.model_validate(card_data)

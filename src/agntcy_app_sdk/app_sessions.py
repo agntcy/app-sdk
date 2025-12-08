@@ -60,14 +60,14 @@ class AppContainer:
     ):
         """
         Start all components of the app container.
-        
+
         STARTUP ORDER:
         1. Transport      - Network layer (must be first)
         2. Directory      - Service registry
         3. Identity       - Authentication (needs network)
         4. Protocol       - Message handler (needs identity)
         5. Subscription   - Topic subscription (needs protocol)
-        
+
         SHUTDOWN ORDER:
         5. Subscription   - Unsubscribe (first)
         4. Protocol       - Stop handling
@@ -104,7 +104,11 @@ class AppContainer:
         await self.transport.subscribe(self.topic)
 
         if push_to_directory_on_startup and self.directory:
-            await self.directory.push_agent_record(self.protocol_handler.agent_record())
+            oasf_record = self.translator.translate_from(
+                self.protocol_handler.type(), self.protocol_handler.agent_record()
+            )
+            cid = await self.directory.push_agent_record(oasf_record)
+            logger.info(f"pushed agent record with cid: {cid}")
 
         # call the protocol handler setup method, any async logic should be handled there
         await self.protocol_handler.setup()

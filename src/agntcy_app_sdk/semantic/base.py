@@ -28,7 +28,7 @@ class BaseAgentSemanticLayer(ABC):
         pass
 
     @abstractmethod
-    def get_agent_record(self):
+    def agent_record(self):
         """Return the identifying record for this semantic type."""
         pass
 
@@ -122,6 +122,11 @@ class BaseAgentProtocol(ABC):
     @abstractmethod
     async def setup(self, *args, **kwargs) -> None:
         """Setup any async handlers or state for the protocol."""
+        pass
+
+    @abstractmethod
+    def agent_record(self):
+        """Return the identifying record for this semantic type."""
         pass
 
     @abstractmethod

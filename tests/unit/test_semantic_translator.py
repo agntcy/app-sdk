@@ -86,12 +86,26 @@ def agent_skill():
 @pytest.fixture
 def agent_card(agent_skill):
     """Fixture for an AgentCard."""
-    return AgentCard(
+
+    skill = AgentSkill(
+        id="get_accounting_status",
+        name="Get Accounting Status",
+        description="Returns the accounting / payment status of coffee bean orders.",
+        tags=["coffee", "accounting", "payments"],
+        examples=[
+            "Has the order moved from CUSTOMS_CLEARANCE to PAYMENT_COMPLETE yet?",
+            "Confirm payment completion for the Colombia shipment.",
+            "Did the Brazil order clear CUSTOMS_CLEARANCE and get marked PAYMENT_COMPLETE?",
+            "Is any payment still pending after CUSTOMS_CLEARANCE?",
+            "Mark the 50 lb Colombia order as PAYMENT_COMPLETE if customs is cleared.",
+        ],
+    )
+
+    return AgentCard(  # type: ignore
         name="Accountant agent",
-        id="accountant-agent",
         description="An AI agent that confirms the payment.",
         url="",
-        additionalInterfaces=[
+        additional_interfaces=[
             {
                 "transport": TransportTypes.NATS.value,
                 "url": "agents.hello_world.nats",
@@ -102,11 +116,11 @@ def agent_card(agent_skill):
             },
         ],
         version="1.0.0",
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
-        skills=[agent_skill],
-        supportsAuthenticatedExtendedCard=False,
+        skills=[skill],
+        supports_authenticated_extended_card=False,
     )
 
 
@@ -127,7 +141,9 @@ def test_validate_oasf_valid_record(translator, valid_oasf_record):
 
 def test_dir_sdk_to_oasf_sdk_record_conversion(translator, valid_oasf_corev1_record):
     """Test conversion from dir_sdk core_v1.Record to OASF record data dictionary."""
-    record_struct = translator._dir_sdk_record_to_oasf_sdk_record(valid_oasf_corev1_record)
+    record_struct = translator._dir_sdk_record_to_oasf_sdk_record(
+        valid_oasf_corev1_record
+    )
     record_data = dict(record_struct)
 
     assert record_data is not None
@@ -161,6 +177,15 @@ def test_roundtrip_translation(translator, agent_card):
     assert isinstance(a2a_card, AgentCard)
 
     print(json.dumps(a2a_card.model_dump(), indent=2))
+
+
+def test_roundtrip_translation_short(translator, agent_card):
+    """Test roundtrip translation: A2A -> OASF -> A2A (short version)."""
+    oasf_record = translator.translate_from("A2A", agent_card)
+    a2a_card = translator.translate_to("A2A", oasf_record)
+    assert a2a_card is not None
+    assert isinstance(a2a_card, AgentCard)
+
 
 def test_connection_error_when_not_connected():
     """Test that methods raise error when not connected."""

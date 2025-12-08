@@ -91,7 +91,6 @@ class TestPushAgentRecord:
         cleanup_refs.append(cid)
 
         assert cid is not None
-        # assert isinstance(cid, str)
 
     @pytest.mark.asyncio
     async def test_push_private_record(self, directory, cleanup_refs):

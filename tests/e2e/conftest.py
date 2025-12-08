@@ -24,6 +24,7 @@ def run_a2a_server():
         version="1.0.0",
         name="default/default/Hello_World_Agent_1.0.0",
         topic="",
+        publish_record=False,
     ):
         cmd = [
             "uv",
@@ -41,6 +42,9 @@ def run_a2a_server():
             "--version",
             version,
         ]
+
+        if publish_record:
+            cmd.append("--publish_record")
 
         proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
 

@@ -21,11 +21,10 @@ import asyncio
 import argparse
 from uvicorn import Config, Server
 
+from agntcy_app_sdk.directory.dir.agent_directory import AgntcyAgentDirectory
 from agntcy_app_sdk.factory import TransportTypes
 from agntcy_app_sdk.app_sessions import AppContainer
 from agntcy_app_sdk.factory import AgntcyFactory
-
-print("Creating agent card...\n", AgentCard.model_fields.keys())
 
 factory = AgntcyFactory(enable_tracing=True)
 
@@ -75,14 +74,14 @@ async def main(
     topic: str,
     endpoint: str,
     version="1.0.0",
-    block: bool = True,
+    publish_record: bool = False,
 ):
     """
     This is a simple example of how to create a bridge between an A2A server and a transport.
     It creates a Hello World agent and sets up the transport to communicate with it.
     """
     skill = AgentSkill(
-        id="hello_world",
+        id="browser",
         name="Returns hello world",
         description="just returns hello world",
         tags=["hello world"],
@@ -117,18 +116,29 @@ async def main(
         await userver.serve()
     else:
         print(f"Creating transport for {transport_type} at {endpoint} with name {name}")
+        print(f"Publishing record: {publish_record}")
+
         transport = factory.create_transport(
             transport_type, endpoint=endpoint, name=name
         )
+
+        directory = None
+        if publish_record:
+            directory = AgntcyAgentDirectory()
 
         app_session = factory.create_app_session(max_sessions=1)
         app_container = AppContainer(
             server,
             transport=transport,
+            directory=directory,
             topic=topic,
         )
         app_session.add_app_container("default_session", app_container)
-        await app_session.start_all_sessions(keep_alive=block)
+        await app_session.start_session(
+            "default_session",
+            keep_alive=True,
+            push_to_directory_on_startup=publish_record,
+        )
 
 
 if __name__ == "__main__":
@@ -168,10 +178,10 @@ if __name__ == "__main__":
         help="Version of the agent (default: 1.0.0)",
     )
     parser.add_argument(
-        "--non-blocking",
-        action="store_false",
-        dest="block",
-        help="Run the server in non-blocking mode (default: blocking)",
+        "--publish_record",
+        action="store_true",
+        default=False,
+        help="Publish the agent record (default: False)",
     )
 
     args = parser.parse_args()
@@ -183,6 +193,6 @@ if __name__ == "__main__":
             args.topic,
             args.endpoint,
             args.version,
-            args.block,
+            args.publish_record,
         )
     )
