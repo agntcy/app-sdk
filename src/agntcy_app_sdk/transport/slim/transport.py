@@ -9,10 +9,10 @@ import datetime
 import slim_bindings
 from identityservice.sdk import IdentityServiceSdk
 from slim_bindings import (
-    PyName,
-    PySession
+    Name,
+    Session
 )
-from slim_bindings._slim_bindings import PyMessageContext
+from slim_bindings._slim_bindings import MessageContext
 
 from .common import (
     get_or_create_slim_instance,
@@ -47,7 +47,7 @@ class SLIMTransport(BaseTransport):
         endpoint: Optional[str] = None,
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         message_retries: int = 2,
-        shared_secret_identity: str = "slim-mls-secret",
+        shared_secret_identity: str = "slim-mls-secret-ddsadasdadasdasdsadsadasdasdasdaddadasdadsd",
         tls_insecure: bool = True,
         jwt: str = None,
         bundle: str | None = None,
@@ -64,12 +64,12 @@ class SLIMTransport(BaseTransport):
 
         try:
             org, namespace, local_name = routable_name.split("/", 2)
-            self.pyname = self.build_pyname(routable_name)
+            self.name = self.build_name(routable_name)
         except ValueError:
             raise ValueError(
                 "routable_name must be in the form 'org/namespace/local_name'"
             )
-        # PyName encrypts the components so we need to store the original values separately
+        # Name encrypts the components so we need to store the original values separately
         self.org = org
         self.namespace = namespace
         self.local_name = local_name
@@ -121,7 +121,7 @@ class SLIMTransport(BaseTransport):
         Send a message to a recipient and await a single response.
         """
         topic = self.sanitize_topic(recipient)
-        remote_name = self.build_pyname(topic)
+        remote_name = self.build_name(topic)
 
         if not self._slim:
             logger.warning("SLIM client is not initialized, calling setup() ...")
@@ -132,27 +132,29 @@ class SLIMTransport(BaseTransport):
         await self._slim.set_route(remote_name)
 
         # create a point-to-point session
-        _, session = await self._session_manager.point_to_point_session(
+        p2p_session, handle = await self._session_manager.point_to_point_session(
             remote_name, timeout=datetime.timedelta(seconds=timeout)
         )
+
+        await handle
 
         if not message.headers:
             message.headers = {}
         message.headers["x-respond-to-source"] = "true"
 
         try:
-            await session.publish(message.serialize())
+            await p2p_session.publish(message.serialize())
             # Wait for reply from remote peer
-            _, reply = await session.get_message()
+            _, reply = await p2p_session.get_message()
         except asyncio.TimeoutError:
             logger.warning(f"Request timed out after {timeout} seconds")
             return None
         except Exception as e:
-            logger.warning(f"Failed to publish message: {e}")
+            logger.warning(f"Failed to publish message in p2p session: {e}")
             return None
         finally:
-            logger.debug(f"Closing point-to-point session: {session.id} ")
-            await self._session_manager.close_session(session)
+            logger.debug(f"Closing point-to-point session: {p2p_session.id} ")
+            await self._session_manager.close_session(p2p_session)
 
         reply = Message.deserialize(reply)
         return reply
@@ -218,15 +220,15 @@ class SLIMTransport(BaseTransport):
             raise ValueError("SLIM client is not set, please call setup() first.")
 
         topic = self.sanitize_topic(topic)
-        remote_name = self.build_pyname(topic)
+        remote_name = self.build_name(topic)
 
         if not recipients:
             raise ValueError(
                 "recipients list must be provided for SLIM COLLECT_ALL mode."
             )
 
-        # convert recipients to PyName objects
-        invitees = [self.build_pyname(recipient) for recipient in recipients]
+        # convert recipients to Name objects
+        invitees = [self.build_name(recipient) for recipient in recipients]
 
         if message_limit is None:
             message_limit = float("inf")
@@ -317,7 +319,7 @@ class SLIMTransport(BaseTransport):
             logger.warning("SLIM client is not initialized, calling setup() ...")
             await self.setup()
 
-        remote_name = self.build_pyname(group_channel)
+        remote_name = self.build_name(group_channel)
 
         if not participants:
             raise ValueError(
@@ -326,8 +328,8 @@ class SLIMTransport(BaseTransport):
 
         logger.debug(f"Requesting group response from topic: {remote_name}")
 
-        # Convert recipients to PyName objects
-        invitees = [self.build_pyname(recipient) for recipient in participants]
+        # Convert recipients to Name objects
+        invitees = [self.build_name(recipient) for recipient in participants]
 
         if not init_message.headers:
             init_message.headers = {}
@@ -336,7 +338,7 @@ class SLIMTransport(BaseTransport):
         init_message.headers["x-respond-to-group"] = "true"
         # Optionally include an end message to signal to receivers they can close the session
         end_signal = uuid4().hex
-        init_message.headers["x-session-end-message"] = end_signal
+        # init_message.headers["x-session-end-message"] = end_signal
         group_session = None
         try:
             async with asyncio.timeout(timeout):
@@ -375,8 +377,7 @@ class SLIMTransport(BaseTransport):
         finally:
             if group_session:
                 try:
-                    await self._session_manager.close_session(group_session,
-                                                              end_signal=end_signal)
+                    await self._session_manager.close_session(group_session)
                 except Exception as e:
                     logger.error(f"Failed to close session {group_session.id}: {e}")
 
@@ -458,11 +459,11 @@ class SLIMTransport(BaseTransport):
 
         await self._slim_connect()
 
-    def build_pyname(
+    def build_name(
         self, topic: str, org: Optional[str] = None, namespace: Optional[str] = None
-    ) -> PyName:
+    ) -> Name:
         """
-        Build a PyName object from a topic string, optionally using provided org and namespace.
+        Build a Name object from a topic string, optionally using provided org and namespace.
         If org or namespace are not provided, use the transport's local org and namespace.
         """
         topic = self.sanitize_topic(topic)
@@ -470,14 +471,14 @@ class SLIMTransport(BaseTransport):
         if org and namespace:
             org = self.sanitize_topic(org)
             namespace = self.sanitize_topic(namespace)
-            return PyName(org, namespace, topic)
+            return Name(org, namespace, topic)
 
         try:
             return split_id(topic)
         except ValueError:
-            return PyName(self.org, self.namespace, topic)
+            return Name(self.org, self.namespace, topic)
         except Exception as e:
-            logger.error(f"Error building PyName from topic '{topic}': {e}")
+            logger.error(f"Error building Name from topic '{topic}': {e}")
             raise
 
     async def subscribe(self, topic: str, org=None, namespace=None) -> None:
@@ -515,7 +516,7 @@ class SLIMTransport(BaseTransport):
             logger.info("Listener cancelled")
             raise
 
-    async def _handle_session_receive(self, session: PySession) -> None:
+    async def _handle_session_receive(self, session: Session) -> None:
         """Handle message receiving for a specific session."""
         consecutive_errors = 0
         max_retries = 3
@@ -551,7 +552,7 @@ class SLIMTransport(BaseTransport):
             logger.info(f"Session {session.id} handler cancelled")
             raise
 
-    async def _process_received_message(self, session: PySession, msg_ctx: PyMessageContext, msg: bytes) -> bool:
+    async def _process_received_message(self, session: Session, msg_ctx: MessageContext, msg: bytes) -> bool:
         """Process a single received message and handle response logic."""
         # Deserialize the message
         try:
@@ -580,7 +581,7 @@ class SLIMTransport(BaseTransport):
         await self._handle_response(session, msg_ctx, deserialized_msg, output)
         return False
 
-    async def _handle_response(self, session: PySession, msg_ctx: PyMessageContext, original_msg, output: Message) -> None:
+    async def _handle_response(self, session: Session, msg_ctx: MessageContext, original_msg, output: Message) -> None:
         """Handle response publishing based on message headers."""
         try:
             respond_to_source = (
@@ -638,7 +639,7 @@ class SLIMTransport(BaseTransport):
             return  # Already connected
 
         self._slim: slim_bindings.Slim = await get_or_create_slim_instance(
-            self.pyname,
+            self.name,
             slim={
                 "endpoint": self._endpoint,
                 "tls": {"insecure": self._tls_insecure},

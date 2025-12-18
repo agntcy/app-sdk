@@ -16,7 +16,7 @@ dependencies = [
     "httpx>=0.28.1",
     "ioa-observe-sdk==1.0.24",
     "asgi-lifespan>=2.1.0",
-    "slim-bindings==0.6.3",
+    "slim-bindings==0.7.1",
     "agntcy-identity-service-sdk==0.0.7",
 ]
 

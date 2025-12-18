@@ -8,9 +8,9 @@ import random
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 import slim_bindings
 from slim_bindings import (
-    PyName,
-    PySession,
-    PySessionConfiguration,
+    Name,
+    Session,
+    SessionConfiguration,
 )
 from agntcy_app_sdk.semantic.message import Message
 
@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 class SessionManager:
     def __init__(self):
-        self._sessions: Dict[str, PySession] = {}
+        self._sessions: Dict[str, Session] = {}
         self._slim = None
         self._lock = asyncio.Lock()
 
@@ -32,7 +32,7 @@ class SessionManager:
 
     async def point_to_point_session(
         self,
-        remote_name: PyName,
+        remote_name: Name,
         max_retries: int = 5,
         timeout: datetime.timedelta = datetime.timedelta(seconds=5),
         mls_enabled: bool = True,
@@ -44,21 +44,21 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         async with self._lock:
-            session = await self._slim.create_session(
-                PySessionConfiguration.PointToPoint(
-                    peer_name=remote_name,
+            session, handle = await self._slim.create_session(
+                remote_name,
+                SessionConfiguration.PointToPoint(
                     max_retries=max_retries,
                     timeout=timeout,
                     mls_enabled=mls_enabled,
                 )
             )
 
-            return session.id, session
+            return session, handle
 
     async def group_broadcast_session(
         self,
-        channel: PyName,
-        invitees: list[PyName],
+        channel: Name,
+        invitees: list[Name],
         max_retries: int = 20,
         timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         mls_enabled: bool = True,
@@ -82,8 +82,8 @@ class SessionManager:
 
             logger.debug(f"Creating new group broadcast session: {session_key}")
             group_session = await self._slim.create_session(
-                PySessionConfiguration.Group(
-                    channel_name=channel,
+                channel,
+                SessionConfiguration.Group(
                     max_retries=max_retries,
                     timeout=timeout,
                     mls_enabled=mls_enabled,
@@ -102,7 +102,7 @@ class SessionManager:
             self._sessions[session_key] = group_session
             return session_key, group_session
 
-    async def close_session(self, session: PySession, end_signal: str = None):
+    async def close_session(self, session: Session, end_signal: str = None):
         """
         Close and remove a session.
         Args:
@@ -113,43 +113,23 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         session_id = session.id
+
         try:
-            # send the end signal to the remote if provided
-            if end_signal is not None:
-                logger.info(f"Sending end signal '{end_signal}' to remote {session.dst}")
+            # Removing session from local cache must be done before the actual session deletion from SLIM,
+            # otherwise it would result in "session already closed" error since SLIM doesn't allow accessing
+            # properties on a closed session.
+            logger.debug(f"Attempting to remove session {session_id} from local cache.")
+            await self._local_cache_cleanup(session_id)
 
-                end_msg = Message(
-                    type="text/plain",
-                    headers={"x-session-end-message": end_signal},
-                    payload=end_signal,
-                )
-                await session.publish(end_msg.serialize())
+            logger.debug(f"Attempting to delete session {session_id} from SLIM server.")
+            await self._slim.delete_session(session)
 
-                logger.debug(f"Waiting before attempting to delete session "
-                             f"{session_id} to ensure all recipients receive "
-                             f"the end signal")
-                # TODO: Remove this temporary sleep once SLIM's group session termination is fully implemented and reliably signals session closure.
-                await asyncio.sleep(5)
-
-            try:
-                # Removing session from local cache must be done before the actual session deletion from SLIM,
-                # otherwise it would result in "session already closed" error since SLIM doesn't allow accessing
-                # properties on a closed session.
-                logger.debug(f"Attempting to remove session {session_id} from local cache.")
-                await self._local_cache_cleanup(session_id)
-
-                logger.debug(f"Attempting to delete session {session_id} from SLIM server.")
-                await self._slim.delete_session(session)
-
-                logger.info(f"Session {session_id} deleted successfully.")
-            except asyncio.TimeoutError:
-                logger.warning(f"Timed out while trying to delete session {session_id}. "
-                               f"It might still have been deleted on SLIM server, but no confirmation was received.")
-            except Exception as e:
-                logger.error(f"Error deleting session {session.id}: {e}")
+            logger.info(f"Session {session_id} deleted successfully.")
+        except asyncio.TimeoutError:
+            logger.warning(f"Timed out while trying to delete session {session_id}. "
+                           f"It might still have been deleted on SLIM server, but no confirmation was received.")
         except Exception as e:
-            logger.warning(f"Error closing SLIM session {session.id}: {e}")
-            return
+            logger.error(f"Error deleting session {session.id}: {e}")
 
     async def _local_cache_cleanup(self, session_id: int):
         """
