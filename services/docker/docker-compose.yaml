@@ -16,7 +16,7 @@ services:
     logging: *logging
 
   slim:
-    image: ghcr.io/agntcy/slim:0.6.1
+    image: ghcr.io/agntcy/slim:0.7.1
     container_name: slim-dataplane
     ports:
       - "46357:46357"
