@@ -10,14 +10,14 @@ import slim_bindings
 # Split an ID into its components
 # Expected format: organization/namespace/application
 # Raises ValueError if the format is incorrect
-# Returns a PyName with the 3 components
+# Returns a Name with the 3 components
 def split_id(id):
     try:
         organization, namespace, app = id.split("/")
     except ValueError as e:
         raise e
 
-    return slim_bindings.PyName(organization, namespace, app)
+    return slim_bindings.Name(organization, namespace, app)
 
 
 # Create a shared secret identity provider and verifier
@@ -29,10 +29,10 @@ def shared_secret_identity(identity, secret):
     """
     Create a provider and verifier using a shared secret.
     """
-    provider = slim_bindings.PyIdentityProvider.SharedSecret(
+    provider = slim_bindings.IdentityProvider.SharedSecret(
         identity=identity, shared_secret=secret
     )
-    verifier = slim_bindings.PyIdentityVerifier.SharedSecret(
+    verifier = slim_bindings.IdentityVerifier.SharedSecret(
         identity=identity, shared_secret=secret
     )
 
@@ -65,17 +65,17 @@ def jwt_identity(
         spire_jwks = base64.b64decode(v)
         break
 
-    provider = slim_bindings.PyIdentityProvider.StaticJwt(
+    provider = slim_bindings.IdentityProvider.StaticJwt(
         path=jwt_path,
     )
 
-    pykey = slim_bindings.PyKey(
-        algorithm=slim_bindings.PyAlgorithm.RS256,
-        format=slim_bindings.PyKeyFormat.Jwks,
-        key=slim_bindings.PyKeyData.Content(content=spire_jwks.decode("utf-8")),
+    pykey = slim_bindings.Key(
+        algorithm=slim_bindings.Algorithm.RS256,
+        format=slim_bindings.KeyFormat.Jwks,
+        key=slim_bindings.KeyData.Content(content=spire_jwks.decode("utf-8")),
     )
 
-    verifier = slim_bindings.PyIdentityVerifier.Jwt(
+    verifier = slim_bindings.IdentityVerifier.Jwt(
         public_key=pykey,
         issuer=iss,
         audience=aud,
@@ -104,7 +104,7 @@ class DictParamType(click.ParamType):
 global_slim = None
 
 async def get_or_create_slim_instance(
-    local: slim_bindings.PyName,
+    local: slim_bindings.Name,
     slim: dict,
     remote: str | None = None,
     enable_opentelemetry: bool = False,
@@ -152,8 +152,7 @@ async def get_or_create_slim_instance(
             secret=shared_secret,
         )
 
-    slim_instance = await slim_bindings.Slim.new(local, provider, verifier,
-                                             local_service=local_slim)
+    slim_instance = slim_bindings.Slim(local, provider, verifier, local_service=local_slim)
 
     # Connect to slim server
     _ = await slim_instance.connect(slim)
