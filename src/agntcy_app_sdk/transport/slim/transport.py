@@ -47,7 +47,8 @@ class SLIMTransport(BaseTransport):
         endpoint: Optional[str] = None,
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         message_retries: int = 2,
-        shared_secret_identity: str = "slim-mls-secret-ddsadasdadasdasdsadsadasdasdasdaddadasdadsd",
+        # SLIM v0.7 requires shared secret to be at lease 32 chars
+        shared_secret_identity: str = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS",
         tls_insecure: bool = True,
         jwt: str = None,
         bundle: str | None = None,
