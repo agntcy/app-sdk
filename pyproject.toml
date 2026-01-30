@@ -1,6 +1,6 @@
 [project]
 name = "agntcy-app-sdk"
-version = "0.4.6"
+version = "0.4.6-dev.0"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = ">=3.12,<4.0"
@@ -14,9 +14,9 @@ dependencies = [
     "uvicorn>=0.29.0",
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
-    "ioa-observe-sdk==1.0.24",
+    "ioa-observe-sdk==1.0.28",
     "asgi-lifespan>=2.1.0",
-    "slim-bindings==0.6.3",
+    "slim-bindings==0.7.1",
     "agntcy-identity-service-sdk==0.0.7",
 ]
 
