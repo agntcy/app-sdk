@@ -16,7 +16,7 @@ The following table summarizes the current MCP and transport support in the Agnt
 
 ### ⚡️ Connecting an MCP client to an MCP server over an abstract transport (SLIM | NATS)
 
-A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such Agntcy's SLIM or as NATS. Below is an example of how to create an MCP client and server that communicate over SLIM's dataplane server.
+A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such SLIM or as NATS. Below is an example of how to create an MCP client and server that communicate over SLIM's dataplane server.
 
 We will use `uv` for package management and virtual environments. If you don't have it installed, you can install it via:
 

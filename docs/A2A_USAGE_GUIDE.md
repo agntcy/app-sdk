@@ -16,7 +16,7 @@ The following table summarizes the current A2A and transport support in the Agnt
 
 ### ⚡️ Connecting two Agents over an an abstract transport (SLIM | NATS)
 
-A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or Agntcy's SLIM. Below is an example of how to create two A2A agents that communicate over SLIM's gateway.
+A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such as NATS or SLIM. Below is an example of how to create two A2A agents that communicate over SLIM's gateway.
 
 We will use `uv` for package management and virtual environments. If you don't have it installed, you can install it via:
 
