@@ -37,7 +37,7 @@ Install the Agntcy Application SDK and Langgraph:
 uv add agntcy-app-sdk
 ```
 
-Next we will create a simple weather agent that responds to weather queries. Create a file named `weather_agent.py` and implement the A2A agent, then serve it via an app session over a SLIM transport:
+Next we will create a simple weather agent that responds to weather queries. Create a file named `weather_agent.py` and implement the A2A agent and add a message bridge to a SLIM transport:
 
 ```python
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -51,9 +51,7 @@ from a2a.types import (
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from agntcy_app_sdk.semantic.a2a.protocol import A2AProtocol
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.app_sessions import AppContainer
 
 """
 Create the AgentSkill and AgentCard for a simple weather report agent.
@@ -100,16 +98,17 @@ class WeatherAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         result = await self.agent.invoke()
-        await event_queue.enqueue_event(new_agent_text_message(result))
+        event_queue.enqueue_event(new_agent_text_message(result))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("cancel not supported")
 
 """
-Create the A2A server and serve the Weather Agent via an app session.
+Create the A2A server and transport bridge to server the Weather Agent.
 """
 
 async def main():
+    # create an app-sdk factory to create the transport and bridge
     factory = AgntcyFactory()
 
     request_handler = DefaultRequestHandler(
@@ -121,14 +120,9 @@ async def main():
         agent_card=agent_card, http_handler=request_handler
     )
 
-    name = f"default/default/{A2AProtocol.create_agent_topic(agent_card)}"
-    transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name=name)
-
-    app_session = factory.create_app_session(max_sessions=1)
-    app_container = AppContainer(server, transport=transport)
-    app_session.add_app_container("default_session", app_container)
-
-    await app_session.start_all_sessions(keep_alive=True)
+    transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
+    bridge = factory.create_bridge(server, transport=transport)
+    await bridge.start(blocking=True)
 
 if __name__ == "__main__":
     import asyncio
@@ -149,11 +143,11 @@ from a2a.types import (
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.factory import ProtocolTypes
-from agntcy_app_sdk.semantic.a2a.protocol import A2AProtocol
+from agntcy_app_sdk.protocols.a2a.protocol import A2AProtocol
 from weather_agent import agent_card
 
 factory = AgntcyFactory()
-transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name="default/default/weather_client")
+transport = factory.create_transport("SLIM", endpoint="http://localhost:46357")
 
 async def main():
     # create an app-sdk factory to create the transport and bridge
@@ -166,7 +160,6 @@ async def main():
 
     message = "Hello, Weather Agent, how is the weather?"
     request = SendMessageRequest(
-        id="request-001",
         params=MessageSendParams(
             message=Message(
                 messageId="0",
@@ -200,11 +193,11 @@ Now we can run the weather agent server:
 uv run python weather_agent.py
 ```
 
-You should see a log message indicating that the app session is running:
+You should see a log message indicating that the message bridge is running:
 
 ```
 ...
-[agntcy_app_sdk.app_sessions] [INFO] [loop_forever:146] App started. Waiting for shutdown signal (Ctrl+C)...
+2025-07-08 13:32:40 [agntcy_app_sdk.bridge] [INFO] [loop_forever:57] Message bridge is running. Waiting for messages...
 ```
 
 Next, we can run the weather client:
