@@ -14,7 +14,7 @@ dependencies = [
     "uvicorn>=0.29.0",
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
-    "ioa-observe-sdk==1.0.28",
+    "ioa-observe-sdk==1.0.31",
     "asgi-lifespan>=2.1.0",
     "slim-bindings==1.0.0",
     "agntcy-identity-service-sdk==0.0.7",

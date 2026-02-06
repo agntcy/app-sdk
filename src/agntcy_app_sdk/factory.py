@@ -81,17 +81,16 @@ class AgntcyFactory:
         self._register_wellknown_transports()
         self._register_wellknown_protocols()
 
-        # TODO: uncomment this block when observe-sdk supports SLIM v1.0.0+
-        # if self.enable_tracing:
-        #     os.environ["TRACING_ENABLED"] = "true"
-        #     from ioa_observe.sdk import Observe
-        #
-        #     Observe.init(
-        #         self.name,
-        #         api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
-        #     )
-        #
-        #     logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
+        if self.enable_tracing:
+            os.environ["TRACING_ENABLED"] = "true"
+            from ioa_observe.sdk import Observe
+
+            Observe.init(
+                self.name,
+                api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
+            )
+
+            logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
 
     def registered_protocols(self):
         """
