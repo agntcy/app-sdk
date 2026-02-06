@@ -46,7 +46,7 @@ class SessionManager:
             raise ValueError("SLIM client is not set")
 
         async with self._lock:
-            p2p_session_ctx = await self._slim.create_session_async(
+            point_to_point_session_ctx = await self._slim.create_session_async(
                 SessionConfig(
                     session_type=SessionType.POINT_TO_POINT,
                     max_retries=max_retries,
@@ -57,9 +57,9 @@ class SessionManager:
                 remote_name,
             )
             # Wait for session to be established
-            await p2p_session_ctx.completion.wait_async()
+            await point_to_point_session_ctx.completion.wait_async()
 
-            return  p2p_session_ctx.session
+            return  point_to_point_session_ctx.session
 
     async def group_broadcast_session(
         self,

@@ -135,7 +135,7 @@ class SLIMTransport(BaseTransport):
         await self._slim_app.set_route_async(remote_name, self._slim_connection_id)
 
         # create a point-to-point session
-        p2p_session = await self._session_manager.point_to_point_session(
+        point_to_point_session = await self._session_manager.point_to_point_session(
             remote_name, timeout=datetime.timedelta(seconds=timeout)
         )
 
@@ -144,10 +144,10 @@ class SLIMTransport(BaseTransport):
         message.headers["x-respond-to-source"] = "true"
 
         try:
-            await p2p_session.publish_async(message.serialize(), None, None)
+            await point_to_point_session.publish_async(message.serialize(), None, None)
             logger.debug(f"Published message to {remote_name}, now waiting for response.")
             # Wait for reply from remote peer
-            reply = await p2p_session.get_message_async(timeout=datetime.timedelta(seconds=timeout))
+            reply = await point_to_point_session.get_message_async(timeout=datetime.timedelta(seconds=timeout))
             logger.debug(f"Received message back from {remote_name}")
         except asyncio.TimeoutError:
             logger.warning(f"Request timed out after {timeout} seconds")
@@ -156,8 +156,8 @@ class SLIMTransport(BaseTransport):
             logger.exception(f"Failed to publish message in p2p session")
             return None
         finally:
-            logger.debug(f"Closing point-to-point session: {p2p_session.session_id()} ")
-            await self._session_manager.close_session(p2p_session)
+            logger.debug(f"Closing point-to-point session: {point_to_point_session.session_id()} ")
+            await self._session_manager.close_session(point_to_point_session)
 
         reply = Message.deserialize(reply.payload)
         return reply
@@ -498,7 +498,7 @@ class SLIMTransport(BaseTransport):
         try:
             while not self._shutdown_event.is_set():
                 try:
-                    received_session = await self._slim_app.listen_for_session_async(None)
+                    received_session = await self._slim_app.listen_for_session_async(timeout=None)
                     logger.info(
                         f"Received new session with id: {received_session.session_id()}, "
                         f"type: {received_session.session_type()}, "
