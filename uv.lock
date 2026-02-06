@@ -66,7 +66,7 @@ requires-dist = [
     { name = "langchain-community", specifier = ">=0.3.24" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.10.1" },
     { name = "nats-py", specifier = ">=2.10.0,<3" },
-    { name = "slim-bindings", specifier = "==1.0.0" },
+    { name = "slim-bindings", specifier = "~=1.0" },
     { name = "uvicorn", specifier = ">=0.29.0" },
 ]
 
