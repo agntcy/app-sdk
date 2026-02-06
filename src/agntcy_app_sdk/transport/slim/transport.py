@@ -498,7 +498,7 @@ class SLIMTransport(BaseTransport):
         try:
             while not self._shutdown_event.is_set():
                 try:
-                    received_session = await self._slim_app.listen_for_session_async(timeout=None)
+                    received_session = await self._slim_app.listen_for_session_async(timeout=self.message_timeout)
                     logger.info(
                         f"Received new session with id: {received_session.session_id()}, "
                         f"type: {received_session.session_type()}, "
