@@ -30,7 +30,9 @@
 
 ## Overview
 
-The Agntcy Application SDK provides a unified factory interface for building interoperable, multi-agent components. It defines standard abstractions and interoperability layers that connect Agntcy and open-source transports, protocols, and directories—enabling agents to communicate and coordinate seamlessly.
+The Agntcy Application SDK provides a unified factory interface for building interoperable, multi-agent components. It defines standard abstractions and interoperability layers that connect Agntcy and open-source transports, protocols, and directories—enabling agents to communicate and coordinate seamlessly. 
+
+It is intended as an integration and learning surface primarily used in [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy), not as a canonical or prescriptive SDK for AGNTCY subsystems. Standards and reference guidance remain the responsibility of the working groups.  Please see the respective components for their latest SDK or interfaces.
 
 ### Features
 
