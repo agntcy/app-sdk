@@ -26,7 +26,7 @@ wheels = [
 
 [[package]]
 name = "agntcy-app-sdk"
-version = "0.4.7.dev0"
+version = "0.4.7"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },
@@ -62,7 +62,7 @@ requires-dist = [
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "coloredlogs", specifier = ">=15.0.1,<16" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "ioa-observe-sdk", specifier = "==1.0.31" },
+    { name = "ioa-observe-sdk", specifier = "==1.0.33" },
     { name = "langchain-community", specifier = ">=0.3.24" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.10.1" },
     { name = "nats-py", specifier = ">=2.10.0,<3" },
@@ -1103,7 +1103,7 @@ wheels = [
 
 [[package]]
 name = "ioa-observe-sdk"
-version = "1.0.31"
+version = "1.0.33"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -1146,9 +1146,9 @@ dependencies = [
     { name = "pytest-vcr" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/23/d4322c9a96985aa8d2b764ee1e1d58602f74b35badc7e359d5ff7d76edef/ioa_observe_sdk-1.0.31.tar.gz", hash = "sha256:b7d91216f3236ef8d3ff274856d69238454a87c3a1f41ef759ceda9b8452d28e", size = 70887, upload-time = "2026-02-06T12:53:16.405Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/9e/e87bcff327d663a9be375b96540264837c09b2deb370e63514fbc66b6545/ioa_observe_sdk-1.0.33.tar.gz", hash = "sha256:955c9d8bc8e8095f83a21ae20e422743af19b55037ad64ed302d20349db01b8f", size = 70843, upload-time = "2026-02-10T07:04:16.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/e5/9e9dc17e8014455cfb63c73f047bf9fde2ba7ed1735a2954455502fd839c/ioa_observe_sdk-1.0.31-py3-none-any.whl", hash = "sha256:bd706a7f8be8d85cb46eadb91d5714887b86c165a84e8fa658ae4509d7b888a4", size = 78836, upload-time = "2026-02-06T12:53:15.345Z" },
+    { url = "https://files.pythonhosted.org/packages/57/d4/d831fa9bd00a0d9296c154208ef24b341d94d297307b2df8f56f11ed5301/ioa_observe_sdk-1.0.33-py3-none-any.whl", hash = "sha256:a28b0caf2a36d7f9cb6881cd0076ca946cedb10316f80f71e80f31d654f4ef74", size = 78833, upload-time = "2026-02-10T07:04:15.45Z" },
 ]
 
 [[package]]
