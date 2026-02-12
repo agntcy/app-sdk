@@ -504,7 +504,6 @@ class SLIMTransport(BaseTransport):
                         f"type: {received_session.session_type()}, "
                         f"destination: {received_session.destination()},"
                     )
-
                     task = asyncio.create_task(
                         self._handle_session_receive(received_session)
                     )
@@ -512,6 +511,13 @@ class SLIMTransport(BaseTransport):
                     task.add_done_callback(self._tasks.discard)
                 except asyncio.CancelledError:
                     raise
+                except slim_bindings.SlimError.ReceiveError as e:
+                    if "timed out" in str(e).lower():
+                        logger.debug("listen_for_session timed out (no new sessions)")
+                        continue
+                    else:
+                        logger.error(f"ReceiveError while listening for session: {e}")
+                        await asyncio.sleep(1)
                 except Exception as e:
                     logger.error(f"Error receiving session info: {e}")
                     await asyncio.sleep(1)  # prevent busy loop
