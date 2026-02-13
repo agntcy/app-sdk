@@ -1,11 +1,19 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from agntcy_app_sdk.factory import AgntcyFactory
-from tests.e2e.conftest import TRANSPORT_CONFIGS
+import asyncio
+
 import pytest
 
+from agntcy_app_sdk.factory import AgntcyFactory
+from tests.e2e.conftest import TRANSPORT_CONFIGS
+
 pytest_plugins = "pytest_asyncio"
+
+
+# ---------------------------------------------------------------------------
+# test_client — basic MCP tool call over each transport
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -13,72 +21,42 @@ pytest_plugins = "pytest_asyncio"
 )
 @pytest.mark.asyncio
 async def test_client(run_mcp_server, transport):
-    """
-    End-to-end test for the A2A factory client over different transports.
-    """
-
-    # Get the endpoint inside the test using the transport name as a key
+    """Point-to-point MCP tool call over each transport."""
     endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_client | {transport} | {endpoint} ---")
 
-    print(
-        f"\n--- Starting test: test_client | Transport: {transport} | Endpoint: {endpoint} ---"
-    )
-
-    # Start the mock/test server
-    print("[setup] Launching test server...")
     run_mcp_server(transport, endpoint)
+    await asyncio.sleep(1)
 
-    # Create factory and transport
-    print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory()
     transport_instance = factory.create_transport(
         transport=transport, endpoint=endpoint, name="default/default/mcp_client"
     )
 
-    # Create a MCP client
-    print("[test] Creating MCP client...")
-    mcp_client = factory.create_client(
+    mcp_client = await factory.create_client(
         "MCP",
         agent_topic="mcp",
         transport=transport_instance,
     )
+
     async with mcp_client as client:
-        # Build message request
-        print("[test] Sending test message...")
-        try:
-            tools = await client.list_tools()
-            print("[test] Tools available:", tools)
-            assert tools is not None, "Tools list was None"
-            assert len(list(tools)) > 0, "No tools available in the list"
+        tools = await client.list_tools()
+        assert tools is not None, "Tools list was None"
+        assert len(list(tools)) > 0, "No tools available"
+        print(f"Tools: {tools}")
 
-            result = await client.call_tool(
-                name="get_forecast",
-                arguments={"location": "Colombia"},
-            )
-            print(f"Tool call result: {result}")
+        result = await client.call_tool(
+            name="get_forecast",
+            arguments={"location": "Colombia"},
+        )
 
-            response = ""
-            if hasattr(result, "__aiter__"):
-                # gather streamed chunks
-                async for chunk in result:
-                    delta = chunk.choices[0].delta
-                    response += delta.content or ""
-            else:
-                content_list = result.content
-                if isinstance(content_list, list) and len(content_list) > 0:
-                    response = content_list[0].text
-                else:
-                    response = "No content returned from tool."
+        content_list = result.content
+        assert isinstance(content_list, list) and len(content_list) > 0
+        response = content_list[0].text
+        assert response is not None, "Response was None"
+        print(f"Tool result: {response}")
 
-            assert response is not None, "Response was None"
+    if transport_instance:
+        await transport_instance.close()
 
-            print(f"[debug] Raw response: {response}")
-        except Exception as e:
-            print(f"[error] Failed to send message: {e}")
-            raise
-        finally:
-            if transport_instance:
-                print("[teardown] Closing transport...")
-                await transport_instance.close()
-
-        print(f"=== ✅ Test passed for transport: {transport} ===\n")
+    print(f"=== ✅ test_client passed for {transport} ===\n")

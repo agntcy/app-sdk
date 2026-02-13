@@ -66,18 +66,14 @@ async def _query_server(topic: str, transport_type: str, endpoint: str):
             # Call one representative host tool if available
             if "get_system_summary" in tool_names:
                 print("--- get_system_summary ---")
-                result = await client.call_tool(
-                    name="get_system_summary", arguments={}
-                )
+                result = await client.call_tool(name="get_system_summary", arguments={})
                 print(_extract_text(result))
                 print()
 
             # Call one representative container tool if available
             if "list_containers" in tool_names:
                 print("--- list_containers ---")
-                result = await client.call_tool(
-                    name="list_containers", arguments={}
-                )
+                result = await client.call_tool(name="list_containers", arguments={})
                 print(_extract_text(result))
                 print()
 

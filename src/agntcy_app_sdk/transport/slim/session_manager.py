@@ -12,7 +12,6 @@ from slim_bindings import (
     SessionConfig,
     SessionType,
 )
-from agntcy_app_sdk.semantic.message import Message
 
 configure_logging()
 logger = get_logger(__name__)
@@ -59,7 +58,7 @@ class SessionManager:
             # Wait for session to be established
             await point_to_point_session_ctx.completion.wait_async()
 
-            return  point_to_point_session_ctx.session
+            return point_to_point_session_ctx.session
 
     async def group_broadcast_session(
         self,
@@ -87,7 +86,7 @@ class SessionManager:
                 return session_key, self._sessions[session_key]
 
             logger.debug(f"Creating new group broadcast session: {session_key}")
-            group_session_ctx= await self._slim.create_session_async(
+            group_session_ctx = await self._slim.create_session_async(
                 SessionConfig(
                     session_type=SessionType.GROUP,
                     max_retries=max_retries,
@@ -104,11 +103,17 @@ class SessionManager:
             group_session = group_session_ctx.session
             for invitee in invitees:
                 try:
-                    logger.debug(f"Inviting {invitee} to session {group_session.session_id()}")
+                    logger.debug(
+                        f"Inviting {invitee} to session {group_session.session_id()}"
+                    )
                     await self._slim.set_route_async(invitee, self._slim_connection_id)
                     invite_handle = await group_session.invite_async(invitee)
-                    await invite_handle.wait_async()  # guarantee that the invitee is invited to the group successfully
-                    logger.debug(f"Invited {invitee} to session {group_session.session_id()}")
+                    await (
+                        invite_handle.wait_async()
+                    )  # guarantee that the invitee is invited to the group successfully
+                    logger.debug(
+                        f"Invited {invitee} to session {group_session.session_id()}"
+                    )
                 except Exception as e:
                     logger.error(f"Failed to invite {invitee}: {e}")
 
@@ -140,8 +145,10 @@ class SessionManager:
 
             logger.info(f"Session {session_id} deleted successfully.")
         except asyncio.TimeoutError:
-            logger.warning(f"Timed out while trying to delete session {session_id}. "
-                           f"It might still have been deleted on SLIM server, but no confirmation was received.")
+            logger.warning(
+                f"Timed out while trying to delete session {session_id}. "
+                f"It might still have been deleted on SLIM server, but no confirmation was received."
+            )
         except Exception as e:
             logger.error(f"Error deleting session {session_id}: {e}")
 
@@ -160,8 +167,10 @@ class SessionManager:
                 del self._sessions[session_key]
                 logger.info(f"Locally cleaned up session: {session_id}")
             else:
-                logger.warning(f"Session {session_id} cannot be removed from "
-                               f"local cache since this session was not found.")
+                logger.warning(
+                    f"Session {session_id} cannot be removed from "
+                    f"local cache since this session was not found."
+                )
 
     def session_details(self, session_key: str):
         """

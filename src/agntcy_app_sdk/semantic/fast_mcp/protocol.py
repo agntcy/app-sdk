@@ -23,6 +23,7 @@ from identityservice.auth.starlette import IdentityServiceMCPMiddleware
 configure_logging()
 logger = get_logger(__name__)
 
+
 class FastMCPProtocol(MCPProtocol):
     """
     Protocol implementation for FastMCP.
@@ -218,12 +219,16 @@ class FastMCPProtocol(MCPProtocol):
                 (b"content-type", b"application/json"),
                 (
                     b"mcp-session-id",
-                    message.headers.get("Mcp-Session-Id", "default_session_id").encode("utf-8"),
+                    message.headers.get("Mcp-Session-Id", "default_session_id").encode(
+                        "utf-8"
+                    ),
                 ),
             ]
 
             # Check for Authorization (case-insensitive)
-            auth_value = message.headers.get("Authorization") or message.headers.get("authorization")
+            auth_value = message.headers.get("Authorization") or message.headers.get(
+                "authorization"
+            )
             if auth_value:
                 headers.append((b"authorization", auth_value.encode("utf-8")))
 
@@ -278,8 +283,14 @@ class FastMCPProtocol(MCPProtocol):
             # Extract the payload from the response body
             body = bytes(response_data["body"]).decode("utf-8").strip()
 
-            if any(keyword in body.lower() for keyword in ["authentication failed", "unauthorized"]):
-                error_message = {"error": "Authentication failed or unauthorized access detected", "response_body": body}
+            if any(
+                keyword in body.lower()
+                for keyword in ["authentication failed", "unauthorized"]
+            ):
+                error_message = {
+                    "error": "Authentication failed or unauthorized access detected",
+                    "response_body": body,
+                }
                 return Message(
                     type="MCPResponse",
                     payload=json.dumps(error_message).encode("utf-8"),
@@ -294,8 +305,11 @@ class FastMCPProtocol(MCPProtocol):
             else:
                 # This will only execute if no "data: " line is found in the entire body
                 return Message(
-                    type="MCPResponse", payload=json.dumps({"error": f"Invalid response format, body: {body}"}).encode("utf-8"),
-                    reply_to=message.reply_to
+                    type="MCPResponse",
+                    payload=json.dumps(
+                        {"error": f"Invalid response format, body: {body}"}
+                    ).encode("utf-8"),
+                    reply_to=message.reply_to,
                 )
 
             return Message(

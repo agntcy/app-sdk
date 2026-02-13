@@ -1,19 +1,40 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from agntcy_app_sdk.factory import AgntcyFactory
-from a2a.types import (
-    MessageSendParams,
-    SendMessageRequest,
-)
-from typing import Any
-import uuid
-import pytest
 import asyncio
+import uuid
+from typing import Any
+
+import pytest
+from a2a.types import MessageSendParams, SendMessageRequest
 from ioa_observe.sdk.tracing import session_start
+
+from agntcy_app_sdk.factory import AgntcyFactory
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageRequest:
+    """Build a simple A2A SendMessageRequest."""
+    payload: dict[str, Any] = {
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": text}],
+            "messageId": str(uuid.uuid4()),
+        },
+    }
+    return SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
+
+
+# ---------------------------------------------------------------------------
+# test_client — basic point-to-point A2A request
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -21,24 +42,13 @@ pytest_plugins = "pytest_asyncio"
 )
 @pytest.mark.asyncio
 async def test_client(run_a2a_server, transport):
-    """
-    End-to-end test for the A2A factory client over different transports.
-    """
-    # Get the endpoint inside the test using the transport name as a key
+    """Point-to-point A2A request over each transport."""
     endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_client | {transport} | {endpoint} ---")
 
-    print(
-        f"\n--- Starting test: test_client | Transport: {transport} | Endpoint: {endpoint} ---"
-    )
-
-    # Start the mock/test server
-    print("[setup] Launching test server...")
     run_a2a_server(transport, endpoint)
+    await asyncio.sleep(1)
 
-    await asyncio.sleep(1)  # Give the server a moment to start
-
-    # Create factory and transport
-    print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
         transport, endpoint=endpoint, name="default/default/default"
@@ -46,8 +56,6 @@ async def test_client(run_a2a_server, transport):
 
     session_start()
 
-    # Create A2A client
-    print("[test] Creating A2A client...")
     client = await factory.create_client(
         "A2A",
         agent_url=endpoint,
@@ -55,45 +63,30 @@ async def test_client(run_a2a_server, transport):
         transport=transport_instance,
     )
     assert client is not None, "Client was not created"
+    print(f"Agent: {client.agent_card.name}")
 
-    print("\n=== Agent Information ===")
-    print(f"Name: {client.agent_card.name}")
-
-    # Build message request
-    print("[test] Sending test message...")
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
-            "messageId": "1234",
-        },
-    }
-    request = SendMessageRequest(
-        id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
-    # Send and validate response
+    request = _make_send_request()
     response = await client.send_message(request)
     assert response is not None, "Response was None"
 
-    response = response.model_dump(mode="json", exclude_none=True)
+    result = response.model_dump(mode="json", exclude_none=True)
+    assert result["result"]["role"] == "agent"
 
-    print(f"[debug] Raw response: {response}")
-
-    assert response["result"]["role"] == "agent"
-
-    parts = response["result"]["parts"]
+    parts = result["result"]["parts"]
     assert isinstance(parts, list)
     assert parts[0]["kind"] == "text"
     assert "Hello from" in parts[0]["text"]
-
-    print(f"[result] Agent responded with: {parts[0]['text']}")
+    print(f"Agent responded: {parts[0]['text']}")
 
     if transport_instance:
-        print("[teardown] Closing transport...")
         await transport_instance.close()
 
-    print(f"=== ✅ Test passed for transport: {transport} ===\n")
+    print(f"=== ✅ test_client passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_broadcast — fan-out A2A request
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -101,94 +94,56 @@ async def test_client(run_a2a_server, transport):
 )
 @pytest.mark.asyncio
 async def test_broadcast(run_a2a_server, transport):
-    """
-    End-to-end test for the A2A factory client broadcast over different transports.
-    """
+    """Fan-out A2A broadcast to multiple agents."""
     if transport == "A2A":
-        pytest.skip(
-            "Skipping A2A transport test as it is not applicable for broadcast."
-        )
+        pytest.skip("Broadcast not applicable for raw A2A transport.")
 
-    # Get the endpoint inside the test using the transport name as a key
     endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_broadcast | {transport} | {endpoint} ---")
 
-    print(
-        f"\n--- Starting test: test_broadcast | Transport: {transport} | Endpoint: {endpoint} ---"
-    )
-
-    # Create factory and transport
-    print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
         transport, endpoint=endpoint, name="default/default/default"
     )
 
-    # Start the mock/test server
-    print("[setup] Launching test server...")
-    for name in [
+    agent_names = [
         "default/default/agent1",
         "default/default/agent2",
         "default/default/agent3",
-    ]:
+    ]
+    for name in agent_names:
         run_a2a_server(transport, endpoint, name=name, topic="broadcast")
 
-    await asyncio.sleep(4)  # Give the server a moment to start
+    await asyncio.sleep(4)
 
-    if transport_instance.type() == "SLIM":
-        client_handshake_topic = "default/default/agent1"
-    else:
-        client_handshake_topic = "broadcast"
+    handshake_topic = (
+        "default/default/agent1" if transport_instance.type() == "SLIM" else "broadcast"
+    )
 
-    # Create A2A client
-    print("[test] Creating A2A client...")
     client = await factory.create_client(
-        "A2A",
-        agent_topic=client_handshake_topic,
-        transport=transport_instance,
+        "A2A", agent_topic=handshake_topic, transport=transport_instance
     )
     assert client is not None, "Client was not created"
 
-    # Build message request
-    print("[test] Sending test message...")
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
-            "messageId": "1234",
-        },
-    }
-    request = SendMessageRequest(
-        id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
+    request = _make_send_request()
     responses = await client.broadcast_message(
         request,
         broadcast_topic="broadcast",
-        recipients=[
-            "default/default/agent1",
-            "default/default/agent2",
-            "default/default/agent3",
-        ],
+        recipients=agent_names,
     )
 
-    print(f"[debug] Received {len(responses)} responses from broadcast")
-    print(f"[debug] Broadcast responses: {responses}")
+    print(f"Received {len(responses)} broadcast responses")
     assert len(responses) == 3, "Did not receive expected number of broadcast responses"
 
-    # test a broadcast timeout
-    '''responses = await client.broadcast_message(
-        request,
-        recipients=["agent1", "agent2", "agent3"],
-        timeout=0.001,  # Set a short timeout to test timeout handling
-    )
-
-    assert len(responses) == 0, "Broadcast should have timed out"'''
-
     if transport_instance:
-        print("[teardown] Closing transport...")
         await transport_instance.close()
 
-    print(f"=== ✅ Test passed for transport: {transport} ===\n")
+    print(f"=== ✅ test_broadcast passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_broadcast_streaming — fan-out with streaming responses
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -196,98 +151,60 @@ async def test_broadcast(run_a2a_server, transport):
 )
 @pytest.mark.asyncio
 async def test_broadcast_streaming(run_a2a_server, transport):
-    """
-    End-to-end test for the A2A factory client broadcast over different transports.
-    """
+    """Fan-out A2A broadcast with streaming responses."""
     if transport == "A2A":
-        pytest.skip(
-            "Skipping A2A transport test as it is not applicable for broadcast."
-        )
+        pytest.skip("Broadcast not applicable for raw A2A transport.")
 
-    # Get the endpoint inside the test using the transport name as a key
     endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_broadcast_streaming | {transport} | {endpoint} ---")
 
-    print(
-        f"\n--- Starting test: test_broadcast | Transport: {transport} | Endpoint: {endpoint} ---"
-    )
-
-    # Create factory and transport
-    print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
         transport, endpoint=endpoint, name="default/default/default"
     )
 
-    # Start the mock/test server
-    print("[setup] Launching test server...")
-    for name in [
+    agent_names = [
         "default/default/agent1",
         "default/default/agent2",
         "default/default/agent3",
-    ]:
+    ]
+    for name in agent_names:
         run_a2a_server(transport, endpoint, name=name, topic="broadcast")
 
-    await asyncio.sleep(3)  # Give the server a moment to start
+    await asyncio.sleep(3)
 
-    if transport_instance.type() == "SLIM":
-        client_handshake_topic = "default/default/agent1"
-    else:
-        client_handshake_topic = "broadcast"
+    handshake_topic = (
+        "default/default/agent1" if transport_instance.type() == "SLIM" else "broadcast"
+    )
 
-    # Create A2A client
-    print("[test] Creating A2A client...")
     client = await factory.create_client(
-        "A2A",
-        agent_topic=client_handshake_topic,
-        transport=transport_instance,
+        "A2A", agent_topic=handshake_topic, transport=transport_instance
     )
     assert client is not None, "Client was not created"
 
-    # Build message request
-    print("[test] Sending test message...")
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "how much is 10 USD in INR?"}],
-            "messageId": "1234",
-        },
-    }
-    request = SendMessageRequest(
-        id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
-    """responses = await client.broadcast_message_streaming(
-        request,
-        broadcast_topic="broadcast",
-        recipients=[
-            "default/default/agent1",
-            "default/default/agent2",
-            "default/default/agent3",
-        ],
-    )"""
-
+    request = _make_send_request()
     responses = []
     async for resp in client.broadcast_message_streaming(
         request,
         message_limit=3,
         broadcast_topic="broadcast",
-        recipients=[
-            "default/default/agent1",
-            "default/default/agent2",
-            "default/default/agent3",
-        ],
+        recipients=agent_names,
     ):
-        print(f"[debug] Received streaming response: {resp}")
+        print(f"Streaming response: {resp}")
         responses.append(resp)
 
-    print(f"[debug] Received {len(responses)} responses from broadcast")
+    print(f"Received {len(responses)} streaming responses")
     assert len(responses) == 3, "Did not receive expected number of broadcast responses"
 
     if transport_instance:
-        print("[teardown] Closing transport...")
         await transport_instance.close()
 
-    print(f"=== ✅ Test passed for transport: {transport} ===\n")
+    print(f"=== ✅ test_broadcast_streaming passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_groupchat — multi-party conversation
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -295,88 +212,53 @@ async def test_broadcast_streaming(run_a2a_server, transport):
 )
 @pytest.mark.asyncio
 async def test_groupchat(run_a2a_server, transport):
-    """
-    End-to-end test for the A2A factory client group chat over different transports.
-    """
+    """Multi-party group chat over SLIM transport."""
     if transport == "A2A":
-        pytest.skip(
-            "Skipping A2A transport test as it is not applicable for group chat."
-        )
+        pytest.skip("Group chat not applicable for raw A2A transport.")
     if transport == "NATS":
-        pytest.skip(
-            "Skipping NATS transport test as it is not applicable for group chat."
-        )
+        pytest.skip("Group chat not applicable for NATS transport.")
 
-    # Get the endpoint inside the test using the transport name as a key
     endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_groupchat | {transport} | {endpoint} ---")
 
-    print(
-        f"\n--- Starting test: test_groupchat | Transport: {transport} | Endpoint: {endpoint} ---"
-    )
-
-    # Run the groupchat member servers
-    for name in [
-        "default/default/foo",
-        "default/default/bar",
-    ]:
+    participants = ["default/default/foo", "default/default/bar"]
+    for name in participants:
         run_a2a_server(transport, endpoint, name=name)
 
-    # Create factory and transport
-    print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
         transport, endpoint=endpoint, name="default/default/default"
     )
 
-    # Start the mock/test server
-    print("[setup] Launching test server...")
+    handshake_topic = (
+        "default/default/foo" if transport_instance.type() == "SLIM" else "broadcast"
+    )
 
-    if transport_instance.type() == "SLIM":
-        client_handshake_topic = "default/default/foo"
-    else:
-        client_handshake_topic = "broadcast"
-
-    # Create A2A client
-    print("[test] Creating A2A client...")
     client = await factory.create_client(
-        "A2A",
-        agent_topic=client_handshake_topic,
-        transport=transport_instance,
+        "A2A", agent_topic=handshake_topic, transport=transport_instance
     )
     assert client is not None, "Client was not created"
 
-    # Build message request
-    print("[test] Sending test message...")
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "This is a groupchat message"}],
-            "messageId": "1234",
-        },
-    }
-    request = SendMessageRequest(
-        id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
+    request = _make_send_request("This is a groupchat message")
     responses = await client.start_groupchat(
         init_message=request,
         group_channel="zoo",
-        participants=[
-            "default/default/foo",
-            "default/default/bar",
-        ],
+        participants=participants,
         end_message="DELIVERED",
         timeout=30,
     )
 
-    print(f"[debug] Received {len(responses)} responses from group chat")
-    print(f"[debug] Group chat responses: {responses}")
+    print(f"Received {len(responses)} group chat responses")
 
     if transport_instance:
-        print("[teardown] Closing transport...")
         await transport_instance.close()
 
-    print(f"=== ✅ Test passed for transport: {transport} ===\n")
+    print(f"=== ✅ test_groupchat passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_groupchat_streaming — multi-party with streaming
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -384,82 +266,46 @@ async def test_groupchat(run_a2a_server, transport):
 )
 @pytest.mark.asyncio
 async def test_groupchat_streaming(run_a2a_server, transport):
-    """
-    End-to-end test for the A2A factory client group chat over different transports.
-    """
+    """Multi-party streaming group chat over SLIM transport."""
     if transport == "A2A":
-        pytest.skip(
-            "Skipping A2A transport test as it is not applicable for group chat."
-        )
+        pytest.skip("Group chat not applicable for raw A2A transport.")
     if transport == "NATS":
-        pytest.skip(
-            "Skipping NATS transport test as it is not applicable for group chat."
-        )
+        pytest.skip("Group chat not applicable for NATS transport.")
 
-    # Get the endpoint inside the test using the transport name as a key
     endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_groupchat_streaming | {transport} | {endpoint} ---")
 
-    print(
-        f"\n--- Starting test: test_groupchat | Transport: {transport} | Endpoint: {endpoint} ---"
-    )
-
-    for name in [
-        "default/default/foo",
-        "default/default/bar",
-    ]:
+    participants = ["default/default/foo", "default/default/bar"]
+    for name in participants:
         run_a2a_server(transport, endpoint, name=name, topic="zoo")
 
-    # Create factory and transport
-    print("[setup] Initializing client factory and transport...")
     factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
         transport, endpoint=endpoint, name="default/default/default"
     )
 
-    # Start the mock/test server
-    print("[setup] Launching test server...")
+    handshake_topic = (
+        "default/default/foo" if transport_instance.type() == "SLIM" else "broadcast"
+    )
 
-    if transport_instance.type() == "SLIM":
-        client_handshake_topic = "default/default/foo"
-    else:
-        client_handshake_topic = "broadcast"
-
-    # Create A2A client
-    print("[test] Creating A2A client...")
     client = await factory.create_client(
-        "A2A",
-        agent_topic=client_handshake_topic,
-        transport=transport_instance,
+        "A2A", agent_topic=handshake_topic, transport=transport_instance
     )
     assert client is not None, "Client was not created"
 
-    # Build message request
-    print("[test] Sending test message...")
-    send_message_payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": "This is a groupchat message"}],
-            "messageId": "1234",
-        },
-    }
-    request = SendMessageRequest(
-        id=str(uuid.uuid4()), params=MessageSendParams(**send_message_payload)
-    )
-
+    request = _make_send_request("This is a groupchat message")
+    messages = []
     async for message in client.start_streaming_groupchat(
         init_message=request,
         group_channel="zoo",
-        participants=[
-            "default/default/foo",
-            "default/default/bar",
-        ],
+        participants=participants,
         end_message="DELIVERED",
         timeout=30,
     ):
-        print("streaming a message:", message)
+        print(f"Streaming message: {message}")
+        messages.append(message)
 
     if transport_instance:
-        print("[teardown] Closing transport...")
         await transport_instance.close()
 
-    print(f"=== ✅ Test passed for transport: {transport} ===\n")
+    print(f"=== ✅ test_groupchat_streaming passed for {transport} ===\n")

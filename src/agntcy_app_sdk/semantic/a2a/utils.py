@@ -20,7 +20,6 @@ configure_logging()
 logger = get_logger(__name__)
 
 
-
 def message_translator(
     request: dict[str, Any], headers: dict[str, Any] | None = None
 ) -> Message:
@@ -87,6 +86,7 @@ async def get_client_from_agent_card_url(
 
     return A2AClient(httpx_client=httpx_client, agent_card=agent_card)
 
+
 def get_identity_auth_error() -> dict[str, Any]:
     """
     Generate a standard identity authentication error response.
@@ -98,7 +98,9 @@ def get_identity_auth_error() -> dict[str, Any]:
             "kind": "message",
             "messageId": str(uuid4()),
             "metadata": {"name": "None"},
-            "parts": [{"kind": "text", "text": "Access Forbidden. Please check permissions."}],
-            "role": "agent"
-        }
+            "parts": [
+                {"kind": "text", "text": "Access Forbidden. Please check permissions."}
+            ],
+            "role": "agent",
+        },
     }

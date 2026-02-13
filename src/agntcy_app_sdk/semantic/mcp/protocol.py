@@ -8,7 +8,6 @@ import json
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
-from agntcy_app_sdk.semantic.base import BaseAgentProtocol
 
 from mcp import ClientSession
 import mcp.types as types
@@ -25,7 +24,7 @@ configure_logging()
 logger = get_logger(__name__)
 
 
-class MCPProtocol(BaseAgentProtocol):
+class MCPProtocol:
     """
     MCPProtocol implements the BaseAgentProtocol to bridge MCP client and server sessions
     with a generic transport layer.

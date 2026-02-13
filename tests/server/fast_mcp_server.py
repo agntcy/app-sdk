@@ -3,67 +3,35 @@
 
 import argparse
 import asyncio
-from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
-from agntcy_app_sdk.app_sessions import AppContainer
+
 from mcp.server.fastmcp import FastMCP
 
-# Initialize the factory with tracing disabled
+from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
+
 factory = AgntcyFactory(enable_tracing=False)
 
 
 async def main(transport_type: str, endpoint: str, name: str, block: bool = True):
-    """
-    Main function to start the MCP server with the specified transport type and endpoint.
+    """Start a FastMCP server bridged over the given transport."""
+    mcp = FastMCP()
 
-    **Parameters:**
-    - `transport_type` (str): The transport type to use (e.g., NATS, HTTP).
-    - `endpoint` (str): The endpoint for the transport (e.g., localhost:4222).
-    - `block` (bool): Whether to run the server in blocking mode (default: True).
+    @mcp.tool()
+    async def get_forecast(location: str) -> str:
+        """Fetch the weather forecast for a given location."""
+        return "Temperature: 30°C\nHumidity: 50%\nCondition: Sunny\n"
 
-    **Raises:**
-    - `Exception`: If an error occurs during server setup or execution.
-    """
-    try:
-        # Create the MCP server instance
-        mcp = FastMCP()
+    transport = factory.create_transport(transport_type, endpoint=endpoint, name=name)
 
-        @mcp.tool()
-        async def get_forecast(location: str) -> str:
-            """
-            Tool to fetch the weather forecast for a given location.
-
-            **Parameters:**
-            - `location` (str): The location for which the forecast is requested.
-
-            **Returns:**
-            - `str`: A string containing the weather forecast.
-            """
-            return "Temperature: 30°C\nHumidity: 50%\nCondition: Sunny\n"
-
-        # Create the transport instance
-        transport = factory.create_transport(
-            transport_type, endpoint=endpoint, name=name
-        )
-        print(
-            f"[setup] Transport created: {transport_type} | Endpoint: {endpoint} | Name: {name}"
-        )
-
-        app_session = factory.create_app_session(max_sessions=1)
-        app_container = AppContainer(mcp, transport=transport, topic="fastmcp")
-        app_session.add_app_container("default_session", app_container)
-        await app_session.start_all_sessions(keep_alive=block)
-
-        print("[start] App session started.")
-
-    except Exception as e:
-        print(f"[error] Failed to start the MCP server: {e}")
-        raise
+    app_session = factory.create_app_session(max_sessions=1)
+    app_session.add(mcp).with_transport(transport).with_topic(
+        "fastmcp"
+    ).with_session_id("default_session").build()
+    await app_session.start_all_sessions(keep_alive=block)
 
 
 if __name__ == "__main__":
-    # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description="Run the A2A server with a specified transport type."
+        description="Run the FastMCP server with a specified transport type."
     )
     parser.add_argument(
         "--transport",
@@ -81,8 +49,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--name",
         type=str,
-        default="test_server",
-        help="Name of the server instance (default: test_server)",
+        default="default/default/fastmcp",
+        help="Routable name for the transport (default: default/default/fastmcp)",
     )
     parser.add_argument(
         "--non-blocking",
@@ -92,6 +60,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
-    # Run the main function with parsed arguments
     asyncio.run(main(args.transport, args.endpoint, args.name, args.block))

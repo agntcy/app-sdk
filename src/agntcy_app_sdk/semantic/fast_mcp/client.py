@@ -12,6 +12,7 @@ from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 configure_logging()
 logger = get_logger(__name__)
 
+
 class MCPClient:
     def __init__(self, transport, session_id: str, topic: str, route_path: str = "/"):
         self.transport = transport
@@ -71,10 +72,10 @@ class MCPClient:
 
     # Specific wrappers
     async def call_tool(
-            self,
-            name: str,
-            arguments: Dict[str, Any],
-            request_id: int = 1,
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        request_id: int = 1,
     ) -> dict:
         headers: Dict[str, Any] = {}
 

@@ -9,25 +9,25 @@ except ImportError:
     from agent_executor import (
         HelloWorldAgentExecutor,  # type: ignore[import-untyped]
     )
+
+import argparse
+import asyncio
+
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import (
-    AgentCapabilities,
-    AgentCard,
-    AgentSkill,
-)
-import asyncio
-import argparse
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from uvicorn import Config, Server
 
-from agntcy_app_sdk.factory import TransportTypes
-from agntcy_app_sdk.app_sessions import AppContainer
-from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
 
 factory = AgntcyFactory(enable_tracing=True)
 
-skill = AgentSkill(
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+DEFAULT_SKILL = AgentSkill(
     id="hello_world",
     name="Returns hello world",
     description="just returns hello world",
@@ -35,48 +35,12 @@ skill = AgentSkill(
     examples=["hi", "hello world"],
 )
 
-agent_card = AgentCard(
-    name="Hello World Agent",
-    description="Just a hello world agent",
-    url="http://localhost:9999/",
-    version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
-    capabilities=AgentCapabilities(streaming=True),
-    skills=[skill],  # Only the basic skill for the public card
-    supportsAuthenticatedExtendedCard=False,
-)
 
-request_handler = DefaultRequestHandler(
-    agent_executor=HelloWorldAgentExecutor("Default_Hello_World_Agent"),
-    task_store=InMemoryTaskStore(),
-)
-
-default_a2a_server = A2AStarletteApplication(
-    agent_card=agent_card, http_handler=request_handler
-)
-
-
-async def main(
-    transport_type: str,
-    name: str,
-    topic: str,
-    endpoint: str,
-    version="1.0.0",
-    block: bool = True,
-):
-    """
-    This is a simple example of how to create a bridge between an A2A server and a transport.
-    It creates a Hello World agent and sets up the transport to communicate with it.
-    """
-    skill = AgentSkill(
-        id="hello_world",
-        name="Returns hello world",
-        description="just returns hello world",
-        tags=["hello world"],
-        examples=["hi", "hello world"],
-    )
-
+def _build_a2a_server(
+    name: str = "Default_Hello_World_Agent",
+    version: str = "1.0.0",
+) -> A2AStarletteApplication:
+    """Build an A2A server with a HelloWorld agent."""
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
@@ -85,24 +49,38 @@ async def main(
         defaultInputModes=["text"],
         defaultOutputModes=["text"],
         capabilities=AgentCapabilities(streaming=True),
-        skills=[skill],  # Only the basic skill for the public card
+        skills=[DEFAULT_SKILL],
         supportsAuthenticatedExtendedCard=False,
     )
-
     request_handler = DefaultRequestHandler(
         agent_executor=HelloWorldAgentExecutor(name),
         task_store=InMemoryTaskStore(),
     )
+    return A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler)
 
-    server = A2AStarletteApplication(
-        agent_card=agent_card, http_handler=request_handler
-    )
+
+# Module-level instance used by unit tests
+default_a2a_server = _build_a2a_server()
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+async def main(
+    transport_type: str,
+    name: str,
+    topic: str,
+    endpoint: str,
+    version: str = "1.0.0",
+    block: bool = True,
+):
+    """Create a bridge between an A2A server and a transport."""
+    server = _build_a2a_server(name=name, version=version)
 
     if transport_type == "A2A":
-        # Run the A2A server directly without a transport
         config = Config(app=server.build(), host="0.0.0.0", port=9999, loop="asyncio")
-        userver = Server(config)
-        await userver.serve()
+        await Server(config).serve()
     else:
         print(f"Creating transport for {transport_type} at {endpoint} with name {name}")
         transport = factory.create_transport(
@@ -110,17 +88,13 @@ async def main(
         )
 
         app_session = factory.create_app_session(max_sessions=1)
-        app_container = AppContainer(
-            server,
-            transport=transport,
-            topic=topic,
-        )
-        app_session.add_app_container("default_session", app_container)
+        app_session.add(server).with_transport(transport).with_topic(
+            topic
+        ).with_session_id("default_session").build()
         await app_session.start_all_sessions(keep_alive=block)
 
 
 if __name__ == "__main__":
-    # get transport type from command line argument
     parser = argparse.ArgumentParser(
         description="Run the A2A server with a specified transport type."
     )
@@ -135,13 +109,13 @@ if __name__ == "__main__":
         "--name",
         type=str,
         default="default/default/Hello_World_Agent_1.0.0",
-        help="Routable name for the transport in the form 'org/namespace/local_name' (default: default/default/Hello_World_Agent_1.0.0)",
+        help="Routable name for the transport (default: default/default/Hello_World_Agent_1.0.0)",
     )
     parser.add_argument(
         "--topic",
         type=str,
         default=None,
-        help="Topic for the A2A communication (default: None, which uses the agent's default topic)",
+        help="Topic for A2A communication (default: auto-derived from agent card)",
     )
     parser.add_argument(
         "--endpoint",
@@ -163,7 +137,6 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
     asyncio.run(
         main(
             args.transport,

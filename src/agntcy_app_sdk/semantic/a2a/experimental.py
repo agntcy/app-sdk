@@ -11,7 +11,10 @@ from a2a.types import (
     SendMessageResponse,
 )
 
-from agntcy_app_sdk.semantic.a2a.utils import message_translator, get_identity_auth_error
+from agntcy_app_sdk.semantic.a2a.utils import (
+    message_translator,
+    get_identity_auth_error,
+)
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 

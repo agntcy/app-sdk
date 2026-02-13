@@ -16,15 +16,17 @@ from a2a.types import (
     AgentCard,
     SendMessageRequest,
     JSONRPCSuccessResponse,
-    MessageSendParams, HTTPAuthSecurityScheme, SecurityScheme,
+    MessageSendParams,
+    HTTPAuthSecurityScheme,
+    SecurityScheme,
 )
-from agntcy_app_sdk.semantic.base import BaseAgentProtocol
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.semantic.a2a.utils import (
     get_client_from_agent_card_url,
     get_client_from_agent_card_topic,
-    message_translator, get_identity_auth_error,
+    message_translator,
+    get_identity_auth_error,
 )
 from agntcy_app_sdk.semantic.a2a.experimental import (
     experimental_a2a_transport_methods,
@@ -40,7 +42,7 @@ configure_logging()
 logger = get_logger(__name__)
 
 
-class A2AProtocol(BaseAgentProtocol):
+class A2AProtocol:
     def type(self):
         return "A2A"
 
@@ -181,8 +183,8 @@ class A2AProtocol(BaseAgentProtocol):
         """
 
         async def _send_request(
-                rpc_request_payload: dict[str, Any],
-                http_kwargs: dict[str, Any] | None = None,
+            rpc_request_payload: dict[str, Any],
+            http_kwargs: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
             """
             Send a request using the provided transport.
@@ -209,8 +211,13 @@ class A2AProtocol(BaseAgentProtocol):
                 response.payload = json.loads(response.payload.decode("utf-8"))
 
                 # Handle Identity Middleware AuthN error messages
-                if response.payload.get("error") == "forbidden" or response.status_code == 403:
-                    logger.error("Received forbidden error in A2A response due to identity auth")
+                if (
+                    response.payload.get("error") == "forbidden"
+                    or response.status_code == 403
+                ):
+                    logger.error(
+                        "Received forbidden error in A2A response due to identity auth"
+                    )
                     return get_identity_auth_error()
 
                 return response.payload
@@ -247,7 +254,6 @@ class A2AProtocol(BaseAgentProtocol):
         else:
             self._app = self._server.build()
 
-
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
             from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
@@ -260,12 +266,14 @@ class A2AProtocol(BaseAgentProtocol):
             scheme="bearer",
             bearerFormat="JWT",
         )
-        self._server.agent_card.security_schemes = {AUTH_SCHEME: SecurityScheme(root=auth_scheme)}
+        self._server.agent_card.security_schemes = {
+            AUTH_SCHEME: SecurityScheme(root=auth_scheme)
+        }
         self._server.agent_card.security = [{AUTH_SCHEME: ["*"]}]
 
         self._app = self._server.build()
         self._app.add_middleware(
-            IdentityServiceA2AMiddleware, # Define the middleware
+            IdentityServiceA2AMiddleware,  # Define the middleware
             agent_card=self._server.agent_card,
             public_paths=[AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH],
         )
@@ -309,7 +317,9 @@ class A2AProtocol(BaseAgentProtocol):
                 raise ValueError(f"Unsupported header value type: {type(value)}")
 
         # Check for Authorization (case-insensitive)
-        auth_value = message.headers.get("Authorization") or message.headers.get("authorization")
+        auth_value = message.headers.get("Authorization") or message.headers.get(
+            "authorization"
+        )
         if auth_value:
             headers.append((b"authorization", auth_value.encode("utf-8")))
         else:
@@ -345,7 +355,6 @@ class A2AProtocol(BaseAgentProtocol):
             "headers": None,
             "body": bytearray(),
         }
-
 
         async def send(message: Dict[str, Any]) -> None:
             message_type = message["type"]

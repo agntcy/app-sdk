@@ -30,9 +30,9 @@
 
 ## Overview
 
-The Agntcy Application SDK provides a unified factory interface for building interoperable, multi-agent components. It defines standard abstractions and interoperability layers that connect Agntcy and open-source transports, protocols, and directories—enabling agents to communicate and coordinate seamlessly. 
+The Agntcy Application SDK provides a unified factory interface for building interoperable, multi-agent components. It defines standard abstractions and interoperability layers that connect Agntcy and open-source transports, protocols, and directories—enabling agents to communicate and coordinate seamlessly.
 
-It is intended as an integration and learning surface primarily used in [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy), not as a canonical or prescriptive SDK for AGNTCY subsystems. Standards and reference guidance remain the responsibility of the working groups.  Please see the respective components for their latest SDK or interfaces.
+It is intended as an integration and learning surface primarily used in [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy), not as a canonical or prescriptive SDK for AGNTCY subsystems. Standards and reference guidance remain the responsibility of the working groups. Please see the respective components for their latest SDK or interfaces.
 
 ### Features
 
@@ -191,7 +191,7 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
 </a>
 
 | Component       | Version       | Description                                                                                                                                                                                | Repo                                                 |
-| --------------- |---------------| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | **SLIM**        | `1.0.0`       | Secure Low-Latency Interactive Messaging (SLIM) facilitates communication between AI agents using request-reply and moderated group-chat patterns.                                         | [Repo](https://github.com/agntcy/slim)               |
 | **Observe SDK** | `1.0.34`      | Enables multi-agent observability by setting `enable_tracing=True` when initializing the `AgntcyFactory`. This automatically configures tracing and auto-instrumentation for SLIM and A2A. | [Repo](https://github.com/agntcy/observe/tree/main)  |
 | **Directory**   | _Coming soon_ | Component for service discovery and directory-based agent lookups.                                                                                                                         | [Repo](https://github.com/agntcy/dir)                |

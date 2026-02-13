@@ -98,7 +98,6 @@ def jwt_identity(
         key=slim_bindings.JwtKeyData.DATA(value=spire_jwks),
     )
 
-
     # Create verifier config
     verifier_config = slim_bindings.IdentityVerifierConfig.JWT(
         config=slim_bindings.JwtAuth(
@@ -133,6 +132,7 @@ global_slim = None
 global_connection_id = None
 global_slim_service = None
 
+
 async def get_or_create_slim_instance(
     local: slim_bindings.Name,
     slim_endpoint: str,
@@ -159,7 +159,7 @@ async def get_or_create_slim_instance(
     slim_bindings.initialize_with_configs(
         tracing_config=tracing_config,
         runtime_config=runtime_config,
-        service_config=[service_config]
+        service_config=[service_config],
     )
 
     if not jwt and not bundle:
