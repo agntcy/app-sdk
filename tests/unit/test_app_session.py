@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from tests.server.a2a_server import default_a2a_server
+from tests.server.a2a_starlette_server import default_a2a_server
 import pytest
 
 pytest_plugins = "pytest_asyncio"

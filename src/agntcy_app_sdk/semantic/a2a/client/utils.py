@@ -1,16 +1,13 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-import httpx
 import json
 from uuid import uuid4
 from typing import Any
 
-from a2a.client import A2AClient, A2ACardResolver
+from a2a.client import A2AClient
 from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH
-from a2a.types import (
-    AgentCard,
-)
+from a2a.types import AgentCard
 
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
@@ -67,24 +64,6 @@ async def get_client_from_agent_card_topic(
     )
     cl.agent_card = card
     return cl
-
-
-async def get_client_from_agent_card_url(
-    httpx_client: httpx.AsyncClient,
-    base_url: str,
-    http_kwargs: dict[str, Any] | None = None,
-) -> A2AClient:
-    """
-    Replacement for removed get_client_from_agent_card_url().
-    Tries both agent-card.json (v0.3.0) and legacy agent.json.
-    """
-    agent_card: AgentCard = await A2ACardResolver(
-        httpx_client,
-        base_url=base_url,
-        agent_card_path=AGENT_CARD_WELL_KNOWN_PATH,
-    ).get_agent_card(http_kwargs=http_kwargs)
-
-    return A2AClient(httpx_client=httpx_client, agent_card=agent_card)
 
 
 def get_identity_auth_error() -> dict[str, Any]:

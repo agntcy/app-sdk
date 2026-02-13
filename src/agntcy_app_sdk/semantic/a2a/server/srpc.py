@@ -124,6 +124,9 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
                 self._config.agent_card
             )
 
+        # --- Register the event loop so Rust→Python callbacks work ---
+        slim_bindings.uniffi_set_event_loop(asyncio.get_running_loop())
+
         # --- Build the SLIM App ---
         srpc_cfg = self._config.slimrpc_server_config
         identity_str: str = srpc_cfg["identity"]
@@ -155,8 +158,8 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
 
         # --- Register the A2A servicer (from slima2a) ---
         try:
-            from slima2a.server import SRPCHandler
-            from slima2a.gen.a2a_grpc import add_A2AServiceServicer_to_server
+            from slima2a.handler import SRPCHandler
+            from slima2a.types.a2a_pb2_slimrpc import add_A2AServiceServicer_to_server
         except ImportError as exc:
             raise ImportError(
                 "The 'slima2a' package is required for A2ASRPCServerHandler. "
@@ -184,9 +187,7 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
             self._slim_rpc_server.serve_async(),
             name="slimrpc-server",
         )
-        logger.info(
-            f"slimrpc A2A handler started for identity '{identity_str}'"
-        )
+        logger.info(f"slimrpc A2A handler started for identity '{identity_str}'")
 
     async def teardown(self) -> None:
         """Stop the slimrpc server."""

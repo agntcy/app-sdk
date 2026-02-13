@@ -4,10 +4,8 @@
 from typing import Dict, Any
 import json
 from uuid import uuid4
-import httpx
 import os
 
-from a2a.client import A2AClient, A2ACardResolver
 from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH, PREV_AGENT_CARD_WELL_KNOWN_PATH
 from a2a.server.apps import A2AStarletteApplication
 
@@ -20,29 +18,25 @@ from a2a.types import (
     HTTPAuthSecurityScheme,
     SecurityScheme,
 )
-from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
-from agntcy_app_sdk.semantic.a2a.utils import (
-    get_client_from_agent_card_url,
-    get_client_from_agent_card_topic,
-    message_translator,
-    get_identity_auth_error,
-)
-from agntcy_app_sdk.semantic.a2a.client.experimental import (
-    experimental_a2a_transport_methods,
-)
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
 from identityservice.auth.starlette import IdentityServiceA2AMiddleware
-from identityservice.sdk import IdentityServiceSdk
 
 configure_logging()
 logger = get_logger(__name__)
 
 
-class A2AProtocol:
+class A2APatternsServer:
+    """Server-side ASGI bridge for A2A over pattern transports (SLIM/NATS).
+
+    Translates between the internal ``Message`` wire format and ASGI HTTP
+    scopes so that an ``A2AStarletteApplication`` can serve requests
+    arriving over non-HTTP transports.
+    """
+
     def type(self):
         return "A2A"
 
@@ -50,192 +44,15 @@ class A2AProtocol:
     def create_agent_topic(agent_card: AgentCard) -> str:
         """
         A standard way to create a topic for the agent card metadata.
+        Spaces are replaced with underscores to ensure transport compatibility.
         """
-        return f"{agent_card.name}_{agent_card.version}"
-
-    async def create_client(
-        self,
-        url: str = None,
-        topic: str = None,
-        transport: BaseTransport = None,
-        add_experimental_patterns: bool = True,
-        **kwargs,
-    ) -> A2AClient:
-        """
-        Create an A2A client with optional custom transport.
-
-        Args:
-            url: Agent card URL (required if topic not provided)
-            topic: Agent topic (required if url not provided)
-            transport: Custom transport implementation
-            add_experimental_patterns: Whether to add experimental transport methods
-            **kwargs: Additional arguments (currently unused)
-
-        Returns:
-            Configured A2AClient instance
-
-        Raises:
-            ValueError: If neither url nor topic is provided
-        """
-        self._initialize_tracing_if_enabled()
-        self._validate_inputs(url, topic)
-
-        if transport:
-            await transport.setup()
-
-        client = await self._create_base_client(url, topic, transport)
-
-        if transport:
-            effective_topic = topic or self.create_agent_topic(client.agent_card)
-            self._configure_transport(client, transport, effective_topic)
-
-        if add_experimental_patterns:
-            self._add_experimental_patterns(client, transport, topic)
-
-        return client
-
-    def _initialize_tracing_if_enabled(self) -> None:
-        """Initialize OpenTelemetry tracing if enabled via environment variable."""
-        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
-
-            A2AInstrumentor().instrument()
-            logger.info("A2A Instrumentor enabled for tracing")
-
-    def _validate_inputs(self, url: str, topic: str) -> None:
-        """Ensure at least one of url or topic is provided."""
-        if url is None and topic is None:
-            raise ValueError("Either url or topic must be provided")
-
-    async def _create_base_client(
-        self,
-        url: str,
-        topic: str,
-        transport: BaseTransport,
-    ) -> A2AClient:
-        """
-        Create the base A2A client from either topic or URL.
-
-        Args:
-            url: Agent card URL
-            topic: Agent topic
-            transport: Custom transport (used with topic-based creation)
-
-        Returns:
-            A2AClient instance with agent card attached
-        """
-        if topic and transport:
-            return await get_client_from_agent_card_topic(topic, transport)
-
-        return await self._create_client_from_url(url)
-
-    async def _create_client_from_url(self, url: str) -> A2AClient:
-        """Create client from agent card URL and ensure agent card is attached."""
-        httpx_client = httpx.AsyncClient()
-
-        try:
-            client = await get_client_from_agent_card_url(httpx_client, url)
-        except Exception as e:
-            logger.error(f"Failed to retrieve A2A client from URL '{url}': {e}")
-            raise
-
-        # Ensure agent card is attached
-        if not hasattr(client, "agent_card"):
-            agent_card = await A2ACardResolver(
-                httpx_client,
-                base_url=url,
-            ).get_agent_card()
-            client.agent_card = agent_card
-
-        return client
-
-    def _configure_transport(
-        self,
-        client: A2AClient,
-        transport: BaseTransport,
-        topic: str,
-    ) -> None:
-        """Configure client to use custom transport for requests."""
-        logger.info(
-            f"Using transport {transport.type()} for A2A client "
-            f"'{topic or client.agent_card.name}'"
-        )
-        self._register_transport(client, transport, topic)
-
-    def _add_experimental_patterns(
-        self,
-        client: A2AClient,
-        transport: BaseTransport,
-        topic: str,
-    ) -> None:
-        """Dynamically add experimental transport methods to client."""
-        logger.info("Adding experimental A2A transport patterns to client")
-
-        experimental_methods = experimental_a2a_transport_methods(transport, topic)
-        for method_name, method in experimental_methods.items():
-            setattr(client, method_name, method)
-
-    def _register_transport(
-        self, client: A2AClient, transport: BaseTransport, topic: str
-    ) -> None:
-        """
-        Register the send methods for the A2A client.
-        """
-
-        async def _send_request(
-            rpc_request_payload: dict[str, Any],
-            http_kwargs: dict[str, Any] | None = None,
-        ) -> dict[str, Any]:
-            """
-            Send a request using the provided transport.
-            """
-
-            if http_kwargs is None:
-                http_kwargs = {}
-            headers = http_kwargs.get("headers", {})
-
-            if is_identity_auth_enabled():
-                try:
-                    access_token = IdentityServiceSdk().access_token()
-                    if access_token:
-                        headers["Authorization"] = f"Bearer {access_token}"
-                except Exception as e:
-                    logger.error(f"Failed to get access token for agent: {e}")
-
-            try:
-                response = await transport.request(
-                    topic,
-                    message_translator(request=rpc_request_payload, headers=headers),
-                )
-
-                response.payload = json.loads(response.payload.decode("utf-8"))
-
-                # Handle Identity Middleware AuthN error messages
-                if (
-                    response.payload.get("error") == "forbidden"
-                    or response.status_code == 403
-                ):
-                    logger.error(
-                        "Received forbidden error in A2A response due to identity auth"
-                    )
-                    return get_identity_auth_error()
-
-                return response.payload
-
-            except Exception as e:
-                logger.error(
-                    f"Error sending A2A request with transport {transport.type()}: {e}"
-                )
-                raise
-
-        # override the _send_request method to use the provided transport
-        client._transport._send_request = _send_request
+        return f"{agent_card.name}_{agent_card.version}".replace(" ", "_")
 
     def bind_server(self, server: A2AStarletteApplication) -> None:
         """Bind the protocol to a server."""
         self._server = server
 
-    async def setup(self, *args, **kwargs) -> None:
+    async def setup(self) -> None:
         """
         Create a bridge between the A2A server/ASGI app and our internal message type.
         """

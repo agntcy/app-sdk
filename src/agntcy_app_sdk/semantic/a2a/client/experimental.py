@@ -11,7 +11,7 @@ from a2a.types import (
     SendMessageResponse,
 )
 
-from agntcy_app_sdk.semantic.a2a.utils import (
+from agntcy_app_sdk.semantic.a2a.client.utils import (
     message_translator,
     get_identity_auth_error,
 )
