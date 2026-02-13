@@ -1,20 +1,32 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+from a2a.server.apps import A2AStarletteApplication
+from a2a.types import AgentCard
+from typing import Optional
+
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.semantic.a2a.protocol import A2AProtocol
-from agntcy_app_sdk.semantic.base import ServerHandler
+from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.transport.base import BaseTransport
-
-from a2a.server.apps import A2AStarletteApplication
-from typing import Optional
 
 logger = get_logger(__name__)
 
+# Maps BaseTransport.type() → preferred_transport name
+_TRANSPORT_NAME_MAP: dict[str, str] = {
+    "SLIM": "slimpatterns",
+    "NATS": "natspatterns",
+}
 
-class A2AServerHandler(ServerHandler):
-    """Server-side handler for the A2A protocol. Requires a transport."""
+
+class A2APatternsServerHandler(BaseA2AServerHandler):
+    """A2A handler that bridges an ``A2AStarletteApplication`` over a
+    ``BaseTransport`` (SLIM or NATS pub-sub patterns).
+
+    Sets ``preferred_transport`` to ``"slimpatterns"`` or
+    ``"natspatterns"`` depending on the transport type.
+    """
 
     def __init__(
         self,
@@ -31,13 +43,29 @@ class A2AServerHandler(ServerHandler):
         super().__init__(server, transport=transport, topic=topic, directory=directory)
         self._protocol = A2AProtocol()
 
-    def protocol_type(self) -> str:
-        return "A2A"
+    # -- agent_card property (required by BaseA2AServerHandler) -----------
+
+    @property
+    def agent_card(self) -> AgentCard:
+        return self._managed_object.agent_card
+
+    # -- Lifecycle --------------------------------------------------------
 
     async def setup(self) -> None:
         """Full lifecycle: transport.setup() → set_callback() → subscribe() → directory → protocol.setup()."""
         if self._transport is None:
             raise ValueError("Transport must be set before running A2A handler.")
+
+        # Stamp preferred_transport before anything else
+        transport_type = self._transport.type()
+        transport_name = _TRANSPORT_NAME_MAP.get(transport_type)
+        if transport_name:
+            self._set_preferred_transport(transport_name)
+        else:
+            logger.warning(
+                f"Unknown transport type '{transport_type}'; "
+                "preferred_transport not set."
+            )
 
         # Transport setup
         await self._transport.setup()
@@ -47,7 +75,7 @@ class A2AServerHandler(ServerHandler):
             await self._directory.setup()
 
         # Bind server and create the protocol bridge
-        self._protocol.bind_server(self._server)
+        self._protocol.bind_server(self._managed_object)
 
         # Set callback for incoming messages
         self._transport.set_callback(self._protocol.handle_message)
@@ -57,12 +85,12 @@ class A2AServerHandler(ServerHandler):
 
         # Push to directory if available
         if self._directory:
-            await self._directory.push_agent_record(self._protocol.agent_record())
+            await self._directory.push_agent_record(self._managed_object.agent_card)
 
         # Protocol-level setup (ASGI bridge, tracing, etc.)
         await self._protocol.setup()
 
-        logger.info(f"A2A handler started on topic: {self._topic}")
+        logger.info(f"A2A patterns handler started on topic: {self._topic}")
 
     async def teardown(self) -> None:
         """Close transport and clean up."""

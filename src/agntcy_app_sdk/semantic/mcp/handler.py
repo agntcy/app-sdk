@@ -46,7 +46,7 @@ class MCPServerHandler(ServerHandler):
             await self._directory.setup()
 
         # Bind server to protocol
-        self._protocol.bind_server(self._server)
+        self._protocol.bind_server(self._managed_object)
 
         # Set callback for incoming messages
         self._transport.set_callback(self._protocol.handle_message)

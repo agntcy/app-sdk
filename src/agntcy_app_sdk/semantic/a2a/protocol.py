@@ -28,7 +28,7 @@ from agntcy_app_sdk.semantic.a2a.utils import (
     message_translator,
     get_identity_auth_error,
 )
-from agntcy_app_sdk.semantic.a2a.experimental import (
+from agntcy_app_sdk.semantic.a2a.client.experimental import (
     experimental_a2a_transport_methods,
 )
 

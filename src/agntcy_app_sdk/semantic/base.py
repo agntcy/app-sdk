@@ -9,17 +9,17 @@ from agntcy_app_sdk.directory.base import BaseAgentDirectory
 
 
 class ServerHandler(ABC):
-    """Server-side handler. Owns server, optionally transport. Owns all transport wiring."""
+    """Server-side handler. Owns managed object, optionally transport. Owns all transport wiring."""
 
     def __init__(
         self,
-        server: Any,
+        managed_object: Any,
         *,
         transport: Optional[BaseTransport] = None,
         topic: Optional[str] = None,
         directory: Optional[BaseAgentDirectory] = None,
     ):
-        self._server = server
+        self._managed_object = managed_object
         self._transport = transport
         self._topic = topic
         self._directory = directory

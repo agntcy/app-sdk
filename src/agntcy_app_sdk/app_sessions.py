@@ -28,24 +28,29 @@ def _get_handler_map() -> dict[type, type]:
         from mcp.server.fastmcp import FastMCP
         from mcp.server.lowlevel import Server as MCPServer
 
-        from agntcy_app_sdk.semantic.a2a.handler import A2AServerHandler
+        from agntcy_app_sdk.semantic.a2a.server.patterns import A2APatternsServerHandler
+        from agntcy_app_sdk.semantic.a2a.server.srpc import (
+            A2ASRPCConfig,
+            A2ASRPCServerHandler,
+        )
         from agntcy_app_sdk.semantic.fast_mcp.handler import FastMCPServerHandler
         from agntcy_app_sdk.semantic.mcp.handler import MCPServerHandler
 
         _HANDLER_MAP = {
-            A2AStarletteApplication: A2AServerHandler,
+            A2AStarletteApplication: A2APatternsServerHandler,
+            A2ASRPCConfig: A2ASRPCServerHandler,
             MCPServer: MCPServerHandler,
             FastMCP: FastMCPServerHandler,
         }
     return _HANDLER_MAP
 
 
-def _resolve_handler_class(server: Any) -> type:
-    """Return the handler class for the given server instance."""
-    for server_type, handler_class in _get_handler_map().items():
-        if isinstance(server, server_type):
+def _resolve_handler_class(target: Any) -> type:
+    """Return the handler class for the given target instance."""
+    for target_type, handler_class in _get_handler_map().items():
+        if isinstance(target, target_type):
             return handler_class
-    raise ValueError(f"Unsupported server type: {type(server).__name__}")
+    raise ValueError(f"Unsupported target type: {type(target).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -56,9 +61,9 @@ def _resolve_handler_class(server: Any) -> type:
 class ContainerBuilder:
     """Fluent builder for creating and registering an AppContainer."""
 
-    def __init__(self, session: AppSession, server: Any):
+    def __init__(self, session: AppSession, target: Any):
         self._session = session
-        self._server = server
+        self._target = target
         self._transport: Optional[BaseTransport] = None
         self._topic: Optional[str] = None
         self._directory: Optional[BaseAgentDirectory] = None
@@ -81,14 +86,30 @@ class ContainerBuilder:
         return self
 
     def build(self) -> AppContainer:
-        """Resolve handler from server type, construct AppContainer, register it."""
-        handler_class = _resolve_handler_class(self._server)
-        handler = handler_class(
-            self._server,
-            transport=self._transport,
-            topic=self._topic,
-            directory=self._directory,
-        )
+        """Resolve handler from target type, construct AppContainer, register it."""
+        handler_class = _resolve_handler_class(self._target)
+
+        # A2ASRPCServerHandler takes (config, directory=) — no transport or topic
+        from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCServerHandler
+
+        if handler_class is A2ASRPCServerHandler:
+            if self._transport is not None or self._topic is not None:
+                logger.warning(
+                    "transport and topic are ignored for A2ASRPCConfig; "
+                    "slimrpc manages its own transport."
+                )
+            handler = handler_class(
+                self._target,
+                directory=self._directory,
+            )
+        else:
+            handler = handler_class(
+                self._target,
+                transport=self._transport,
+                topic=self._topic,
+                directory=self._directory,
+            )
+
         container = AppContainer(handler)
 
         if self._session_id is not None:
@@ -193,9 +214,9 @@ class AppSession:
 
     # -- Fluent entry point -------------------------------------------------
 
-    def add(self, server: Any) -> ContainerBuilder:
-        """Begin building an AppContainer for the given server."""
-        return ContainerBuilder(self, server)
+    def add(self, target: Any) -> ContainerBuilder:
+        """Begin building an AppContainer for the given target (server or config)."""
+        return ContainerBuilder(self, target)
 
     # -- Internal registration (called by ContainerBuilder.build()) ---------
 

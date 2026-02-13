@@ -37,7 +37,7 @@ class FastMCPServerHandler(ServerHandler):
     async def setup(self) -> None:
         """Optionally wire transport, then run protocol.setup() (Uvicorn)."""
         # Bind server to protocol
-        self._protocol.bind_server(self._server)
+        self._protocol.bind_server(self._managed_object)
 
         if self._transport is not None:
             # Transport setup

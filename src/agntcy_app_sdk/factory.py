@@ -14,7 +14,7 @@ from agntcy_app_sdk.transport.nats.transport import NatsTransport
 from agntcy_app_sdk.transport.slim.transport import SLIMTransport
 from agntcy_app_sdk.transport.streamable_http.transport import StreamableHTTPTransport
 
-from agntcy_app_sdk.semantic.a2a.client_factory import A2AClientFactory
+from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from agntcy_app_sdk.semantic.fast_mcp.client_factory import FastMCPClientFactory
 from agntcy_app_sdk.semantic.mcp.client_factory import MCPClientFactory
 
