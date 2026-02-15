@@ -16,6 +16,8 @@ from a2a.types import (
 from ioa_observe.sdk.tracing import session_start
 
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
@@ -26,8 +28,17 @@ pytest_plugins = "pytest_asyncio"
 # ---------------------------------------------------------------------------
 
 
+def _make_message(text: str = "how much is 10 USD in INR?") -> Message:
+    """Build a simple A2A Message for ``client.send_message()``."""
+    return Message(
+        role="user",
+        parts=[{"type": "text", "text": text}],
+        messageId=str(uuid.uuid4()),
+    )
+
+
 def _make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageRequest:
-    """Build a simple A2A SendMessageRequest."""
+    """Build a simple A2A SendMessageRequest (for broadcast/groupchat)."""
     payload: dict[str, Any] = {
         "message": {
             "role": "user",
@@ -58,13 +69,14 @@ async def test_client(run_a2a_server, transport):
     factory = AgntcyFactory(enable_tracing=True)
 
     if transport == "JSONRPC":
-        # Native HTTP JSONRPC — no transport instance needed
+        # Native HTTP JSONRPC — no transport instance needed.
+        # Use streaming=False because the test server uses a non-streaming
+        # executor (HelloWorldAgentExecutor) which is incompatible with the
+        # upstream BaseClient streaming protocol.
         session_start()
 
-        client = await factory.create_client(
-            "A2A",
-            agent_url=endpoint,
-        )
+        a2a_factory = A2AClientFactory(ClientConfig(streaming=False))
+        client = await a2a_factory.create_client(url=endpoint)
     else:
         transport_instance = factory.create_transport(
             transport, endpoint=endpoint, name="default/default/default"
@@ -80,9 +92,9 @@ async def test_client(run_a2a_server, transport):
         )
 
     assert client is not None, "Client was not created"
-    print(f"Agent: {client.agent_card.name}")
+    print(f"Agent: {(await client.get_card()).name}")
 
-    request = _make_send_request()
+    request = _make_message()
     output = ""
     async for event in client.send_message(request):
         if isinstance(event, Message):

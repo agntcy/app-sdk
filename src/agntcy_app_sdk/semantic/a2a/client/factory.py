@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 from a2a.client import A2ACardResolver
 from a2a.client.base_client import BaseClient
+from a2a.client.client import Client
 from a2a.client.client_factory import ClientFactory as UpstreamClientFactory
 from a2a.client.middleware import ClientCallInterceptor
 from a2a.types import AgentCapabilities, AgentCard
@@ -19,18 +20,21 @@ from slima2a.client_transport import SRPCTransport
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-from agntcy_app_sdk.semantic.a2a.client.enhanced_client import A2AEnhancedClient
+from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+    A2AExperimentalClient,
+)
 from agntcy_app_sdk.semantic.a2a.client.transports import (
     PatternsClientTransport,
     _parse_topic_from_url,
 )
+from agntcy_app_sdk.semantic.base import ClientFactory
 from agntcy_app_sdk.transport.base import BaseTransport
 
 configure_logging()
 logger = get_logger(__name__)
 
 
-class A2AClientFactory:
+class A2AClientFactory(ClientFactory):
     """Card-driven A2A client factory.
 
     Constructed with a :class:`ClientConfig` declaring the transports
@@ -68,6 +72,14 @@ class A2AClientFactory:
         self._register_transports()
 
     # ------------------------------------------------------------------
+    # ClientFactory ABC
+    # ------------------------------------------------------------------
+
+    def protocol_type(self) -> str:
+        """Return the protocol type identifier."""
+        return "A2A"
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -76,7 +88,7 @@ class A2AClientFactory:
         card: AgentCard,
         consumers: list[Any] | None = None,
         interceptors: list[ClientCallInterceptor] | None = None,
-    ) -> A2AEnhancedClient:
+    ) -> Client:
         """Create a client for the given AgentCard.
 
         Negotiates the best transport match between the card's declared
@@ -92,7 +104,9 @@ class A2AClientFactory:
             interceptors: Optional list of request interceptors.
 
         Returns:
-            An ``A2AEnhancedClient`` instance.
+            A ``Client`` instance.  For patterns transports this is an
+            ``A2AExperimentalClient``; for sync transports (JSONRPC,
+            slimrpc) it is the upstream ``Client`` (``BaseClient``).
         """
         self._initialize_tracing_if_enabled()
 
@@ -112,7 +126,7 @@ class A2AClientFactory:
                 consumers or [],
                 interceptors or [],
             )
-            return A2AEnhancedClient(
+            return A2AExperimentalClient(
                 client=upstream_client,
                 agent_card=card,
                 transport=base_transport,
@@ -120,11 +134,7 @@ class A2AClientFactory:
             )
         else:
             # Sync path — delegate to upstream for JSONRPC, slimrpc, etc.
-            upstream_client = self._upstream.create(card, consumers, interceptors)
-            return A2AEnhancedClient(
-                client=upstream_client,
-                agent_card=card,
-            )
+            return self._upstream.create(card, consumers, interceptors)
 
     async def create_client(
         self,
@@ -133,8 +143,8 @@ class A2AClientFactory:
         topic: str | None = None,
         transport: BaseTransport | None = None,
         **kwargs: Any,
-    ) -> A2AEnhancedClient:
-        """Backward-compatible bridge for ``AgntcyFactory.create_client()``.
+    ) -> Client:
+        """Bridge for ``AgntcyFactory.create_client()``.
 
         Translates the legacy ``(url, topic, transport)`` calling convention
         into the card-driven ``create(card)`` API:
@@ -221,7 +231,7 @@ class A2AClientFactory:
         config: ClientConfig | None = None,
         consumers: list[Any] | None = None,
         interceptors: list[ClientCallInterceptor] | None = None,
-    ) -> A2AEnhancedClient:
+    ) -> Client:
         """Convenience: resolve a card from a URL and create a client.
 
         If ``agent`` is a string, it is treated as the base URL of the
@@ -235,7 +245,7 @@ class A2AClientFactory:
             interceptors: Optional list of request interceptors.
 
         Returns:
-            An ``A2AEnhancedClient`` instance.
+            A ``Client`` instance.
         """
         if isinstance(agent, str):
             async with httpx.AsyncClient() as http_client:

@@ -23,6 +23,20 @@ logger = get_logger(__name__)
 
 
 @dataclasses.dataclass
+class SlimRpcConfig:
+    """Minimal fields needed to lazily construct SLIM-RPC infrastructure.
+
+    When set on :class:`ClientConfig`, the factory will call
+    ``setup_slim_client(namespace, group, name)`` only if the AgentCard
+    negotiation selects ``slimrpc`` as the winning transport.
+    """
+
+    namespace: str
+    group: str
+    name: str
+
+
+@dataclasses.dataclass
 class SlimTransportConfig:
     """Everything needed to lazily construct a SLIMTransport.
 
@@ -89,20 +103,6 @@ class NatsTransportConfig:
 
     drain_timeout: int = 2
     """Timeout (in seconds) for draining the connection on close."""
-
-
-@dataclasses.dataclass
-class SlimRpcConfig:
-    """Everything needed to lazily construct SLIM-RPC infrastructure.
-
-    When set on :class:`ClientConfig`, the factory will call
-    ``setup_slim_client(namespace, group, name)`` only if the AgentCard
-    negotiation selects ``slimrpc`` as the winning transport.
-    """
-
-    namespace: str
-    group: str
-    name: str
 
 
 # ---------------------------------------------------------------------------

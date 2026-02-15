@@ -28,7 +28,9 @@ def _get_handler_map() -> dict[type, type]:
         from mcp.server.fastmcp import FastMCP
         from mcp.server.lowlevel import Server as MCPServer
 
-        from agntcy_app_sdk.semantic.a2a.server.patterns import A2APatternsServerHandler
+        from agntcy_app_sdk.semantic.a2a.server.additional_patterns import (
+            A2AExperimentalServerHandler,
+        )
         from agntcy_app_sdk.semantic.a2a.server.srpc import (
             A2ASRPCConfig,
             A2ASRPCServerHandler,
@@ -37,7 +39,7 @@ def _get_handler_map() -> dict[type, type]:
         from agntcy_app_sdk.semantic.mcp.handler import MCPServerHandler
 
         _HANDLER_MAP = {
-            A2AStarletteApplication: A2APatternsServerHandler,
+            A2AStarletteApplication: A2AExperimentalServerHandler,
             A2ASRPCConfig: A2ASRPCServerHandler,
             MCPServer: MCPServerHandler,
             FastMCP: FastMCPServerHandler,
@@ -68,6 +70,8 @@ class ContainerBuilder:
         self._topic: Optional[str] = None
         self._directory: Optional[BaseAgentDirectory] = None
         self._session_id: Optional[str] = None
+        self._host: str = "0.0.0.0"
+        self._port: int = 9000
 
     def with_transport(self, transport: BaseTransport) -> ContainerBuilder:
         self._transport = transport
@@ -85,6 +89,14 @@ class ContainerBuilder:
         self._session_id = session_id
         return self
 
+    def with_host(self, host: str) -> ContainerBuilder:
+        self._host = host
+        return self
+
+    def with_port(self, port: int) -> ContainerBuilder:
+        self._port = port
+        return self
+
     def build(self) -> AppContainer:
         """Resolve handler from target type, construct AppContainer, register it."""
         handler_class = _resolve_handler_class(self._target)
@@ -96,11 +108,15 @@ class ContainerBuilder:
         # provided, serve it over native HTTP JSONRPC instead of going through
         # the patterns handler (which requires a transport).
         from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
-        from agntcy_app_sdk.semantic.a2a.server.patterns import A2APatternsServerHandler
+        from agntcy_app_sdk.semantic.a2a.server.additional_patterns import (
+            A2AExperimentalServerHandler,
+        )
 
-        if handler_class is A2APatternsServerHandler and self._transport is None:
+        if handler_class is A2AExperimentalServerHandler and self._transport is None:
             handler = A2AJsonRpcServerHandler(
                 self._target,
+                host=self._host,
+                port=self._port,
                 directory=self._directory,
             )
         elif handler_class is A2ASRPCServerHandler:

@@ -2,15 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Unit tests for the AgentCard-centric A2A client stack:
-ClientConfig, PatternsClientTransport, A2AEnhancedClient, A2AClientFactory.
+ClientConfig, PatternsClientTransport, A2AExperimentalClient, A2AClientFactory.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from a2a.client.client import Client
 from a2a.types import (
     AgentCard,
     AgentInterface,
@@ -408,103 +409,104 @@ class TestPatternsClientTransport:
 
 
 # ---------------------------------------------------------------------------
-# A2AEnhancedClient tests
+# A2AExperimentalClient tests
 # ---------------------------------------------------------------------------
 
 
-class TestA2AEnhancedClient:
+class TestA2AExperimentalClient:
     def test_properties(self):
-        """Enhanced client should expose agent_card, transport, topic properties."""
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
+        """Experimental client should expose agent_card, transport, topic properties."""
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
         )
 
         mock_client = MagicMock()
+        mock_client._consumers = []
+        mock_client._middleware = []
         card = _make_agent_card()
         mock_transport = _make_mock_transport()
 
-        enhanced = A2AEnhancedClient(
+        experimental = A2AExperimentalClient(
             client=mock_client,
             agent_card=card,
             transport=mock_transport,
             topic="test_topic",
         )
 
-        assert enhanced.agent_card is card
-        assert enhanced.upstream_client is mock_client
-        assert enhanced.transport is mock_transport
-        assert enhanced.topic == "test_topic"
+        assert experimental.agent_card is card
+        assert experimental.upstream_client is mock_client
+        assert experimental.transport is mock_transport
+        assert experimental.topic == "test_topic"
 
-    def test_experimental_methods_wired(self):
-        """With transport + topic, experimental methods should be available."""
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
+    def test_is_client_subclass(self):
+        """A2AExperimentalClient should be a subclass of Client."""
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
         )
 
         mock_client = MagicMock()
+        mock_client._consumers = []
+        mock_client._middleware = []
         card = _make_agent_card()
         mock_transport = _make_mock_transport()
 
-        enhanced = A2AEnhancedClient(
+        experimental = A2AExperimentalClient(
             client=mock_client,
             agent_card=card,
             transport=mock_transport,
             topic="test_topic",
         )
 
-        assert len(enhanced._experimental) == 4
-        assert "broadcast_message" in enhanced._experimental
-        assert "broadcast_message_streaming" in enhanced._experimental
-        assert "start_groupchat" in enhanced._experimental
-        assert "start_streaming_groupchat" in enhanced._experimental
+        assert isinstance(experimental, Client)
 
-    def test_no_experimental_without_transport(self):
-        """Without transport, experimental methods should not be wired."""
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
+    def test_experimental_methods_available(self):
+        """Experimental client should have broadcast and groupchat methods."""
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
         )
 
         mock_client = MagicMock()
+        mock_client._consumers = []
+        mock_client._middleware = []
         card = _make_agent_card()
+        mock_transport = _make_mock_transport()
 
-        enhanced = A2AEnhancedClient(
+        experimental = A2AExperimentalClient(
             client=mock_client,
             agent_card=card,
+            transport=mock_transport,
+            topic="test_topic",
         )
 
-        assert len(enhanced._experimental) == 0
+        assert hasattr(experimental, "broadcast_message")
+        assert hasattr(experimental, "broadcast_message_streaming")
+        assert hasattr(experimental, "start_groupchat")
+        assert hasattr(experimental, "start_streaming_groupchat")
+        assert callable(experimental.broadcast_message)
+        assert callable(experimental.start_groupchat)
 
     @pytest.mark.asyncio
-    async def test_broadcast_without_transport_raises(self):
-        """broadcast_message without transport should raise RuntimeError."""
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
+    async def test_get_card(self):
+        """get_card should return the cached agent card."""
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
         )
 
         mock_client = MagicMock()
+        mock_client._consumers = []
+        mock_client._middleware = []
         card = _make_agent_card()
+        mock_transport = _make_mock_transport()
 
-        enhanced = A2AEnhancedClient(client=mock_client, agent_card=card)
-
-        with pytest.raises(RuntimeError, match="requires a transport"):
-            await enhanced.broadcast_message(MagicMock(), recipients=["a"])
-
-    @pytest.mark.asyncio
-    async def test_groupchat_without_transport_raises(self):
-        """start_groupchat without transport should raise RuntimeError."""
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
+        experimental = A2AExperimentalClient(
+            client=mock_client,
+            agent_card=card,
+            transport=mock_transport,
+            topic="test_topic",
         )
 
-        mock_client = MagicMock()
-        card = _make_agent_card()
-
-        enhanced = A2AEnhancedClient(client=mock_client, agent_card=card)
-
-        with pytest.raises(RuntimeError, match="requires a transport"):
-            await enhanced.start_groupchat(
-                MagicMock(), group_channel="ch", participants=["a"]
-            )
+        result = await experimental.get_card()
+        assert result is card
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +538,13 @@ class TestA2AClientFactory:
         factory = A2AClientFactory(config)
         assert factory._config is config
         assert "slimpatterns" in factory._config.supported_transports
+
+    def test_protocol_type(self):
+        """protocol_type() should return 'A2A'."""
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        factory = A2AClientFactory()
+        assert factory.protocol_type() == "A2A"
 
     # -- Negotiation tests --------------------------------------------------
 
@@ -619,10 +628,10 @@ class TestA2AClientFactory:
 
     @pytest.mark.asyncio
     async def test_create_with_eager_slim_transport(self):
-        """create() with eager slim_transport should return A2AEnhancedClient."""
+        """create() with eager slim_transport should return A2AExperimentalClient."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
         )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 
@@ -636,17 +645,18 @@ class TestA2AClientFactory:
         )
         result = await factory.create(card)
 
-        assert isinstance(result, A2AEnhancedClient)
+        assert isinstance(result, A2AExperimentalClient)
+        assert isinstance(result, Client)
         assert result.agent_card is card
         assert result.transport is mock_transport
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
     async def test_create_with_eager_nats_transport(self):
-        """create() with eager nats_transport should return A2AEnhancedClient."""
+        """create() with eager nats_transport should return A2AExperimentalClient."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
         )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 
@@ -660,17 +670,18 @@ class TestA2AClientFactory:
         )
         result = await factory.create(card)
 
-        assert isinstance(result, A2AEnhancedClient)
+        assert isinstance(result, A2AExperimentalClient)
+        assert isinstance(result, Client)
         assert result.agent_card is card
         assert result.transport is mock_transport
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
-    async def test_create_jsonrpc_fallback(self):
-        """create() for JSONRPC should delegate to upstream and return enhanced client."""
+    async def test_create_jsonrpc_returns_upstream_client(self):
+        """create() for JSONRPC should return upstream Client, not A2AExperimentalClient."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
         )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 
@@ -680,10 +691,8 @@ class TestA2AClientFactory:
         card = _make_agent_card()  # defaults to JSONRPC
         result = await factory.create(card)
 
-        assert isinstance(result, A2AEnhancedClient)
-        assert result.agent_card is card
-        # No patterns transport for JSONRPC
-        assert result.transport is None
+        assert isinstance(result, Client)
+        assert not isinstance(result, A2AExperimentalClient)
 
     @pytest.mark.asyncio
     async def test_create_deferred_slim_missing_config_raises(self):
@@ -708,14 +717,81 @@ class TestA2AClientFactory:
     async def test_connect_with_card(self):
         """connect() with an AgentCard should skip HTTP resolution."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
-            A2AEnhancedClient,
-        )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 
         card = _make_agent_card()  # JSONRPC default
         config = ClientConfig()
 
         result = await A2AClientFactory.connect(card, config=config)
-        assert isinstance(result, A2AEnhancedClient)
-        assert result.agent_card is card
+        assert isinstance(result, Client)
+
+    # -- create_client() bridge tests ---------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_create_client_with_transport_injects_and_creates(self):
+        """create_client() should inject transport and return a client."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
+        )
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        mock_transport = _make_mock_transport("SLIM")
+        config = ClientConfig()
+        factory = A2AClientFactory(config)
+
+        result = await factory.create_client(
+            topic="my_agent",
+            transport=mock_transport,
+        )
+
+        # Transport was injected and set up
+        mock_transport.setup.assert_called_once()
+        # Should get an experimental client (patterns path)
+        assert isinstance(result, A2AExperimentalClient)
+        assert isinstance(result, Client)
+
+    @pytest.mark.asyncio
+    async def test_create_client_synthesises_card_for_topic_transport(self):
+        """create_client() with topic+transport should synthesise a card."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
+        )
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        mock_transport = _make_mock_transport("NATS")
+        config = ClientConfig()
+        factory = A2AClientFactory(config)
+
+        result = await factory.create_client(
+            topic="my_nats_agent",
+            transport=mock_transport,
+        )
+
+        assert isinstance(result, A2AExperimentalClient)
+        assert isinstance(result, Client)
+
+    @pytest.mark.asyncio
+    async def test_create_client_http_url_resolves_card(self):
+        """create_client() with HTTP URL should try to resolve a card."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig()
+        factory = A2AClientFactory(config)
+
+        # Mock the card resolver to return a card
+        mock_card = _make_agent_card(url="http://localhost:8080")
+
+        with patch(
+            "agntcy_app_sdk.semantic.a2a.client.factory.A2ACardResolver"
+        ) as mock_resolver_cls:
+            mock_resolver = MagicMock()
+            mock_resolver.get_agent_card = AsyncMock(return_value=mock_card)
+            mock_resolver_cls.return_value = mock_resolver
+
+            result = await factory.create_client(url="http://localhost:8080")
+
+            assert isinstance(result, Client)
+            mock_resolver.get_agent_card.assert_called_once()

@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 class A2AJsonRpcServerHandler(BaseA2AServerHandler):
     """A2A handler that serves the application over native HTTP JSONRPC.
 
-    Unlike ``A2APatternsServerHandler``, this handler does **not** use a
+    Unlike ``A2AExperimentalServerHandler``, this handler does **not** use a
     ``BaseTransport``.  Instead it builds the ASGI application from the
     ``A2AStarletteApplication`` and runs it with Uvicorn as a background
     task.
@@ -38,8 +38,8 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         self,
         server: A2AStarletteApplication,
         *,
-        host: str = "0.0.0.0",
-        port: int = 9999,
+        host: str,
+        port: int,
         directory: Optional[BaseAgentDirectory] = None,
     ):
         # BaseA2AServerHandler -> ServerHandler expects (managed_object, ...)

@@ -73,7 +73,7 @@ class A2ASRPCConfig:
 class A2ASRPCServerHandler(BaseA2AServerHandler):
     """A2A handler that uses native SLIM RPC (slimrpc).
 
-    Unlike ``A2APatternsServerHandler``, this handler does **not** use a
+    Unlike ``A2AExperimentalServerHandler``, this handler does **not** use a
     ``BaseTransport``.  Instead it creates a ``slim_bindings.Server``
     internally, registers the A2A servicer, and runs it as a background
     task.

@@ -78,8 +78,17 @@ async def main(
 
     if transport_type == "JSONRPC":
         # No transport — AppSession will use A2AJsonRpcServerHandler
+        # Parse host/port from the endpoint URL
+        from urllib.parse import urlparse
+
+        parsed = urlparse(endpoint)
+        host = parsed.hostname or "0.0.0.0"
+        port = parsed.port or 9999
+
         app_session = factory.create_app_session(max_sessions=1)
-        app_session.add(server).with_session_id("default_session").build()
+        app_session.add(server).with_host(host).with_port(port).with_session_id(
+            "default_session"
+        ).build()
         await app_session.start_all_sessions(keep_alive=block)
     else:
         print(f"Creating transport for {transport_type} at {endpoint} with name {name}")
