@@ -1,6 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
 from typing import Any, List, AsyncIterator, Dict, Callable
 from uuid import uuid4
@@ -60,6 +61,8 @@ def experimental_a2a_transport_methods(
                     continue
 
             return groupchat_messages
+        except (TimeoutError, asyncio.CancelledError):
+            raise
         except Exception as e:
             logger.error(
                 f"Error starting group chat A2A request with transport {transport.type()}: {e}"
@@ -136,6 +139,8 @@ def experimental_a2a_transport_methods(
                 except Exception as e:
                     logger.error(f"Error decoding JSON response: {e}")
                     continue
+        except (TimeoutError, asyncio.CancelledError):
+            raise
         except Exception as e:
             logger.error(
                 f"Error gathering streaming A2A request with transport {transport.type()}: {e}"
@@ -168,6 +173,8 @@ def experimental_a2a_transport_methods(
                 recipients=recipients,
                 timeout=timeout,
             )
+        except (TimeoutError, asyncio.CancelledError):
+            raise
         except Exception as e:
             logger.error(
                 f"Error gathering A2A request with transport {transport.type()}: {e}"

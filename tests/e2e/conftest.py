@@ -11,6 +11,7 @@ import pytest
 TRANSPORT_CONFIGS = {
     "NATS": "localhost:4222",
     "SLIM": "http://localhost:46357",
+    "JSONRPC": "http://localhost:9999",
 }
 
 

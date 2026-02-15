@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Type
 
 from agntcy_app_sdk.app_sessions import AppSession
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
-from agntcy_app_sdk.semantic.base import ClientFactory
 from agntcy_app_sdk.transport.base import BaseTransport
 
 from agntcy_app_sdk.transport.nats.transport import NatsTransport
@@ -31,6 +30,7 @@ class ProtocolTypes(Enum):
 # a utility enum class to define transport types as constants
 class TransportTypes(Enum):
     A2A = "A2A"
+    JSONRPC = "JSONRPC"
     SLIM = "SLIM"
     NATS = "NATS"
     MQTT = "MQTT"
@@ -71,7 +71,7 @@ class AgntcyFactory:
             logger.setLevel(self.log_level)
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
-        self._client_factory_registry: Dict[str, ClientFactory] = {}
+        self._client_factory_registry: Dict[str, Any] = {}
 
         self._clients: Dict[str, Any] = {}
         self._bridges: Dict[str, Any] = {}

@@ -6,7 +6,7 @@ ClientConfig, PatternsClientTransport, A2AEnhancedClient, A2AClientFactory.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -61,80 +61,169 @@ def _make_mock_transport(transport_type: str = "SLIM") -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
+# Transport config dataclass tests
+# ---------------------------------------------------------------------------
+
+
+class TestTransportConfigs:
+    def test_slim_transport_config_requires_fields(self):
+        """SlimTransportConfig should require endpoint and name."""
+        from agntcy_app_sdk.semantic.a2a.client.config import SlimTransportConfig
+
+        cfg = SlimTransportConfig(endpoint="http://localhost:46357", name="a/b/c")
+        assert cfg.endpoint == "http://localhost:46357"
+        assert cfg.name == "a/b/c"
+
+    def test_slim_transport_config_missing_name_raises(self):
+        """SlimTransportConfig without name should raise TypeError."""
+        from agntcy_app_sdk.semantic.a2a.client.config import SlimTransportConfig
+
+        with pytest.raises(TypeError):
+            SlimTransportConfig(endpoint="http://localhost:46357")  # type: ignore[call-arg]
+
+    def test_nats_transport_config_requires_endpoint(self):
+        """NatsTransportConfig should require endpoint."""
+        from agntcy_app_sdk.semantic.a2a.client.config import NatsTransportConfig
+
+        cfg = NatsTransportConfig(endpoint="nats://localhost:4222")
+        assert cfg.endpoint == "nats://localhost:4222"
+
+    def test_nats_transport_config_missing_endpoint_raises(self):
+        """NatsTransportConfig without endpoint should raise TypeError."""
+        from agntcy_app_sdk.semantic.a2a.client.config import NatsTransportConfig
+
+        with pytest.raises(TypeError):
+            NatsTransportConfig()  # type: ignore[call-arg]
+
+    def test_slim_rpc_config_requires_all_fields(self):
+        """SlimRpcConfig should require namespace, group, name."""
+        from agntcy_app_sdk.semantic.a2a.client.config import SlimRpcConfig
+
+        cfg = SlimRpcConfig(namespace="agntcy", group="demo", name="client")
+        assert cfg.namespace == "agntcy"
+        assert cfg.group == "demo"
+        assert cfg.name == "client"
+
+
+# ---------------------------------------------------------------------------
 # ClientConfig tests
 # ---------------------------------------------------------------------------
 
 
 class TestClientConfig:
     def test_extends_upstream_config(self):
-        """ClientConfig should extend A2AClientConfig with extra fields."""
+        """ClientConfig should extend A2AClientConfig with new fields."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 
         config = ClientConfig()
+        assert config.slim_config is None
+        assert config.slim_transport is None
+        assert config.nats_config is None
+        assert config.nats_transport is None
+        assert config.slimrpc_config is None
         assert config.slimrpc_channel_factory is None
-        assert config.slim_patterns_transport_factory is None
-        assert config.nats_transport_factory is None
         # Upstream fields should be present
         assert config.streaming is True
-        assert config.supported_transports == []
 
-    def test_from_card_preferred_transport(self):
-        """from_card should include preferred_transport in supported_transports."""
+    def test_post_init_default_jsonrpc(self):
+        """Empty config should auto-derive supported_transports with JSONRPC."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 
-        card = _make_agent_card(preferred_transport="slimpatterns")
-        config = ClientConfig.from_card(card)
-        assert "slimpatterns" in config.supported_transports
-        assert "JSONRPC" in config.supported_transports
+        config = ClientConfig()
+        assert config.supported_transports == ["JSONRPC"]
 
-    def test_from_card_additional_interfaces(self):
-        """from_card should include additional_interfaces transports."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
-        card = _make_agent_card(
-            preferred_transport="slimpatterns",
-            additional_interfaces=[
-                AgentInterface(transport="natspatterns", url="nats://localhost:4222"),
-                AgentInterface(transport="slimrpc", url="slim://localhost:46357"),
-            ],
+    def test_post_init_slim_config(self):
+        """Setting slim_config should auto-add slimpatterns."""
+        from agntcy_app_sdk.semantic.a2a.client.config import (
+            ClientConfig,
+            SlimTransportConfig,
         )
-        config = ClientConfig.from_card(card)
+
+        config = ClientConfig(
+            slim_config=SlimTransportConfig(
+                endpoint="http://localhost:46357", name="a/b/c"
+            ),
+        )
+        assert "JSONRPC" in config.supported_transports
+        assert "slimpatterns" in config.supported_transports
+
+    def test_post_init_slim_transport(self):
+        """Setting slim_transport should auto-add slimpatterns."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+
+        config = ClientConfig(slim_transport=_make_mock_transport())
+        assert "slimpatterns" in config.supported_transports
+
+    def test_post_init_nats_config(self):
+        """Setting nats_config should auto-add natspatterns."""
+        from agntcy_app_sdk.semantic.a2a.client.config import (
+            ClientConfig,
+            NatsTransportConfig,
+        )
+
+        config = ClientConfig(
+            nats_config=NatsTransportConfig(endpoint="nats://localhost:4222"),
+        )
+        assert "natspatterns" in config.supported_transports
+
+    def test_post_init_nats_transport(self):
+        """Setting nats_transport should auto-add natspatterns."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+
+        config = ClientConfig(nats_transport=_make_mock_transport("NATS"))
+        assert "natspatterns" in config.supported_transports
+
+    def test_post_init_slimrpc_channel_factory(self):
+        """Setting slimrpc_channel_factory should auto-add slimrpc."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+
+        config = ClientConfig(slimrpc_channel_factory=MagicMock())
+        assert "slimrpc" in config.supported_transports
+
+    def test_post_init_slimrpc_config(self):
+        """Setting slimrpc_config should auto-add slimrpc."""
+        from agntcy_app_sdk.semantic.a2a.client.config import (
+            ClientConfig,
+            SlimRpcConfig,
+        )
+
+        config = ClientConfig(
+            slimrpc_config=SlimRpcConfig(
+                namespace="agntcy", group="demo", name="client"
+            ),
+        )
+        assert "slimrpc" in config.supported_transports
+
+    def test_post_init_multiple_transports(self):
+        """Multiple configs should all appear in supported_transports."""
+        from agntcy_app_sdk.semantic.a2a.client.config import (
+            ClientConfig,
+            NatsTransportConfig,
+            SlimTransportConfig,
+        )
+
+        config = ClientConfig(
+            slim_config=SlimTransportConfig(
+                endpoint="http://localhost:46357", name="a/b/c"
+            ),
+            nats_config=NatsTransportConfig(endpoint="nats://localhost:4222"),
+            slimrpc_channel_factory=MagicMock(),
+        )
+        assert "JSONRPC" in config.supported_transports
         assert "slimpatterns" in config.supported_transports
         assert "natspatterns" in config.supported_transports
         assert "slimrpc" in config.supported_transports
-        assert "JSONRPC" in config.supported_transports
 
-    def test_from_card_no_preferred_transport(self):
-        """from_card with no preferred_transport should still include JSONRPC."""
+    def test_explicit_supported_transports_not_overridden(self):
+        """If user explicitly sets supported_transports, __post_init__ should not override."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 
-        card = _make_agent_card()
-        config = ClientConfig.from_card(card)
-        assert "JSONRPC" in config.supported_transports
-
-    def test_from_card_kwargs_forwarded(self):
-        """from_card should forward kwargs to ClientConfig constructor."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
-        card = _make_agent_card(preferred_transport="slimpatterns")
-        config = ClientConfig.from_card(card, streaming=False)
-        assert config.streaming is False
-
-    def test_from_card_no_duplicate_jsonrpc(self):
-        """If preferred_transport is already JSONRPC, don't add it twice."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
-        card = _make_agent_card(preferred_transport="JSONRPC")
-        config = ClientConfig.from_card(card)
-        assert config.supported_transports.count("JSONRPC") == 1
-
-    def test_factory_callables_settable(self):
-        """Factory callables can be set after construction."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
-        factory = MagicMock()
-        config = ClientConfig(slim_patterns_transport_factory=factory)
-        assert config.slim_patterns_transport_factory is factory
+        config = ClientConfig(
+            supported_transports=["custom_transport"],
+            slim_transport=_make_mock_transport(),
+        )
+        # User's explicit list should be preserved
+        assert config.supported_transports == ["custom_transport"]
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +268,8 @@ class TestParseTopicFromUrl:
 
 
 class TestPatternsClientTransport:
-    def test_create_slim(self):
-        """create() should use slim_patterns_transport_factory for slim labels."""
+    def test_create_slim_eager(self):
+        """create() should use slim_transport from config for slim labels."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
         from agntcy_app_sdk.semantic.a2a.client.transports import (
             PatternsClientTransport,
@@ -188,8 +277,7 @@ class TestPatternsClientTransport:
 
         mock_transport = _make_mock_transport("SLIM")
         config = ClientConfig(
-            slim_patterns_transport_factory=lambda: mock_transport,
-            supported_transports=["slimpatterns"],
+            slim_transport=mock_transport,
         )
         card = _make_agent_card(preferred_transport="slimpatterns")
 
@@ -198,8 +286,8 @@ class TestPatternsClientTransport:
         assert transport._topic == "topic_1"
         assert transport._agent_card is card
 
-    def test_create_nats(self):
-        """create() should use nats_transport_factory for nats labels."""
+    def test_create_nats_eager(self):
+        """create() should use nats_transport from config for nats labels."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
         from agntcy_app_sdk.semantic.a2a.client.transports import (
             PatternsClientTransport,
@@ -207,8 +295,7 @@ class TestPatternsClientTransport:
 
         mock_transport = _make_mock_transport("NATS")
         config = ClientConfig(
-            nats_transport_factory=lambda: mock_transport,
-            supported_transports=["natspatterns"],
+            nats_transport=mock_transport,
         )
         card = _make_agent_card(preferred_transport="natspatterns")
 
@@ -216,18 +303,26 @@ class TestPatternsClientTransport:
         assert transport._transport is mock_transport
         assert transport._topic == "topic_1"
 
-    def test_create_missing_factory_raises(self):
-        """create() should raise if factory callable is None."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+    def test_create_no_transport_raises(self):
+        """create() should raise if no pre-built transport is on config."""
+        from agntcy_app_sdk.semantic.a2a.client.config import (
+            ClientConfig,
+            SlimTransportConfig,
+        )
         from agntcy_app_sdk.semantic.a2a.client.transports import (
             PatternsClientTransport,
         )
 
-        config = ClientConfig(supported_transports=["slimpatterns"])
+        # Only deferred config, no eager transport — sync create() can't handle it
+        config = ClientConfig(
+            slim_config=SlimTransportConfig(
+                endpoint="http://localhost:46357", name="a/b/c"
+            ),
+        )
         card = _make_agent_card(preferred_transport="slimpatterns")
 
-        with pytest.raises(ValueError, match="slim_patterns_transport_factory"):
-            PatternsClientTransport.create(card, "topic_1", config, [])
+        with pytest.raises(ValueError, match="No pre-built transport"):
+            PatternsClientTransport.create(card, "slim://topic_1", config, [])
 
     def test_create_unknown_transport_raises(self):
         """create() should raise for unknown transport labels."""
@@ -239,7 +334,7 @@ class TestPatternsClientTransport:
         config = ClientConfig(supported_transports=["unknown"])
         card = _make_agent_card(preferred_transport="unknown")
 
-        with pytest.raises(ValueError, match="cannot handle transport label"):
+        with pytest.raises(ValueError, match="No pre-built transport"):
             PatternsClientTransport.create(card, "topic_1", config, [])
 
     @pytest.mark.asyncio
@@ -280,7 +375,7 @@ class TestPatternsClientTransport:
             )
         )
 
-        result = await pct.send_message(params)
+        await pct.send_message(params)
         assert mock_transport.request.called
 
     @pytest.mark.asyncio
@@ -294,8 +389,8 @@ class TestPatternsClientTransport:
         card = _make_agent_card()
         pct = PatternsClientTransport(mock_transport, card, "test_topic")
 
-        result = await pct.get_card()
-        assert result is card
+        card_result = await pct.get_card()
+        assert card_result is card
 
     @pytest.mark.asyncio
     async def test_close(self):
@@ -418,47 +513,209 @@ class TestA2AEnhancedClient:
 
 
 class TestA2AClientFactory:
-    def test_protocol_type(self):
-        """Factory should report 'A2A' as protocol type."""
+    def test_constructor_default_config(self):
+        """Factory with no config should use defaults."""
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 
         factory = A2AClientFactory()
-        assert factory.protocol_type() == "A2A"
+        assert factory._config.supported_transports == ["JSONRPC"]
 
-    @pytest.mark.asyncio
-    async def test_create_client_no_url_no_topic_raises(self):
-        """create_client with neither url nor topic should raise ValueError."""
+    def test_constructor_with_config(self):
+        """Factory should accept and store a ClientConfig."""
+        from agntcy_app_sdk.semantic.a2a.client.config import (
+            ClientConfig,
+            SlimTransportConfig,
+        )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 
-        factory = A2AClientFactory()
-        with pytest.raises(ValueError, match="Either url or topic"):
-            await factory.create_client()
+        config = ClientConfig(
+            slim_config=SlimTransportConfig(
+                endpoint="http://localhost:46357", name="a/b/c"
+            ),
+        )
+        factory = A2AClientFactory(config)
+        assert factory._config is config
+        assert "slimpatterns" in factory._config.supported_transports
+
+    # -- Negotiation tests --------------------------------------------------
+
+    def test_negotiate_server_preference(self):
+        """Default negotiation should prefer server's transport."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig(
+            slim_transport=_make_mock_transport(),
+        )
+        factory = A2AClientFactory(config)
+
+        # Card prefers slimpatterns, client supports both
+        card = _make_agent_card(
+            preferred_transport="slimpatterns",
+            url="slim://my_agent",
+        )
+        label, url = factory._negotiate(card)
+        assert label == "slimpatterns"
+        assert url == "slim://my_agent"
+
+    def test_negotiate_fallback_to_jsonrpc(self):
+        """If server offers unknown transport + JSONRPC, should fall back."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig()  # only JSONRPC
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            preferred_transport="grpc",
+            url="grpc://my_agent",
+            additional_interfaces=[
+                AgentInterface(transport="JSONRPC", url="http://localhost:8080"),
+            ],
+        )
+        label, url = factory._negotiate(card)
+        assert label == "JSONRPC"
+        assert url == "http://localhost:8080"
+
+    def test_negotiate_no_match_raises(self):
+        """Negotiation should raise if no compatible transports."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig(supported_transports=["custom_only"])
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(preferred_transport="grpc", url="grpc://agent")
+        with pytest.raises(ValueError, match="No compatible transports"):
+            factory._negotiate(card)
+
+    def test_negotiate_client_preference(self):
+        """With use_client_preference, client's order should win."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig(
+            slim_transport=_make_mock_transport(),
+            nats_transport=_make_mock_transport("NATS"),
+            use_client_preference=True,
+        )
+        factory = A2AClientFactory(config)
+
+        # Server prefers natspatterns, but client's list has JSONRPC first
+        card = _make_agent_card(
+            preferred_transport="natspatterns",
+            url="nats://my_agent",
+            additional_interfaces=[
+                AgentInterface(transport="JSONRPC", url="http://localhost:8080"),
+            ],
+        )
+        label, url = factory._negotiate(card)
+        # Client's supported_transports is ["JSONRPC", "slimpatterns", "natspatterns"]
+        # JSONRPC appears first and server offers it
+        assert label == "JSONRPC"
+        assert url == "http://localhost:8080"
+
+    # -- create() async path tests ------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_create_client_with_transport(self):
-        """create_client with transport should return A2AEnhancedClient."""
+    async def test_create_with_eager_slim_transport(self):
+        """create() with eager slim_transport should return A2AEnhancedClient."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
         from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
             A2AEnhancedClient,
         )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 
-        factory = A2AClientFactory()
         mock_transport = _make_mock_transport("SLIM")
-        card = _make_agent_card(preferred_transport="slimpatterns")
+        config = ClientConfig(slim_transport=mock_transport)
+        factory = A2AClientFactory(config)
 
-        # Mock the card resolution
-        with patch.object(
-            factory,
-            "_resolve_agent_card",
-            new_callable=AsyncMock,
-            return_value=card,
-        ):
-            result = await factory.create_client(
-                topic="test_topic",
-                transport=mock_transport,
-            )
+        card = _make_agent_card(
+            preferred_transport="slimpatterns",
+            url="slim://my_agent",
+        )
+        result = await factory.create(card)
 
         assert isinstance(result, A2AEnhancedClient)
         assert result.agent_card is card
         assert result.transport is mock_transport
-        mock_transport.setup.assert_called_once()
+        assert result.topic == "my_agent"
+
+    @pytest.mark.asyncio
+    async def test_create_with_eager_nats_transport(self):
+        """create() with eager nats_transport should return A2AEnhancedClient."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
+            A2AEnhancedClient,
+        )
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        mock_transport = _make_mock_transport("NATS")
+        config = ClientConfig(nats_transport=mock_transport)
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            preferred_transport="natspatterns",
+            url="nats://my_agent",
+        )
+        result = await factory.create(card)
+
+        assert isinstance(result, A2AEnhancedClient)
+        assert result.agent_card is card
+        assert result.transport is mock_transport
+        assert result.topic == "my_agent"
+
+    @pytest.mark.asyncio
+    async def test_create_jsonrpc_fallback(self):
+        """create() for JSONRPC should delegate to upstream and return enhanced client."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
+            A2AEnhancedClient,
+        )
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig()
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card()  # defaults to JSONRPC
+        result = await factory.create(card)
+
+        assert isinstance(result, A2AEnhancedClient)
+        assert result.agent_card is card
+        # No patterns transport for JSONRPC
+        assert result.transport is None
+
+    @pytest.mark.asyncio
+    async def test_create_deferred_slim_missing_config_raises(self):
+        """create() with slimpatterns but no config or transport should raise."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        # Force slimpatterns in supported_transports but provide no config
+        config = ClientConfig(supported_transports=["slimpatterns", "JSONRPC"])
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            preferred_transport="slimpatterns",
+            url="slim://my_agent",
+        )
+        with pytest.raises(ValueError, match="neither slim_transport nor slim_config"):
+            await factory.create(card)
+
+    # -- connect() classmethod test -----------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_connect_with_card(self):
+        """connect() with an AgentCard should skip HTTP resolution."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.enhanced_client import (
+            A2AEnhancedClient,
+        )
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        card = _make_agent_card()  # JSONRPC default
+        config = ClientConfig()
+
+        result = await A2AClientFactory.connect(card, config=config)
+        assert isinstance(result, A2AEnhancedClient)
+        assert result.agent_card is card

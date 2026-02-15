@@ -6,7 +6,13 @@ import uuid
 from typing import Any
 
 import pytest
-from a2a.types import MessageSendParams, SendMessageRequest
+from a2a.types import (
+    Message,
+    MessageSendParams,
+    Role,
+    SendMessageRequest,
+    TextPart,
+)
 from ioa_observe.sdk.tracing import session_start
 
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -50,35 +56,53 @@ async def test_client(run_a2a_server, transport):
     await asyncio.sleep(1)
 
     factory = AgntcyFactory(enable_tracing=True)
-    transport_instance = factory.create_transport(
-        transport, endpoint=endpoint, name="default/default/default"
-    )
 
-    session_start()
+    if transport == "JSONRPC":
+        # Native HTTP JSONRPC — no transport instance needed
+        session_start()
 
-    client = await factory.create_client(
-        "A2A",
-        agent_url=endpoint,
-        agent_topic="Hello_World_Agent_1.0.0",
-        transport=transport_instance,
-    )
+        client = await factory.create_client(
+            "A2A",
+            agent_url=endpoint,
+        )
+    else:
+        transport_instance = factory.create_transport(
+            transport, endpoint=endpoint, name="default/default/default"
+        )
+
+        session_start()
+
+        client = await factory.create_client(
+            "A2A",
+            agent_url=endpoint,
+            agent_topic="Hello_World_Agent_1.0.0",
+            transport=transport_instance,
+        )
+
     assert client is not None, "Client was not created"
     print(f"Agent: {client.agent_card.name}")
 
     request = _make_send_request()
-    response = await client.send_message(request)
-    assert response is not None, "Response was None"
+    output = ""
+    async for event in client.send_message(request):
+        if isinstance(event, Message):
+            for part in event.parts:
+                if isinstance(part.root, TextPart):
+                    output += part.root.text
+        else:
+            task, _update = event
+            if task.history:
+                for msg in task.history:
+                    if msg.role == Role.agent:
+                        for part in msg.parts:
+                            if isinstance(part.root, TextPart):
+                                output += part.root.text
 
-    result = response.model_dump(mode="json", exclude_none=True)
-    assert result["result"]["role"] == "agent"
+    assert output, "Response was empty"
+    assert "Hello from" in output, f"Expected 'Hello from' in response, got: {output}"
+    print(f"Agent responded: {output}")
 
-    parts = result["result"]["parts"]
-    assert isinstance(parts, list)
-    assert parts[0]["kind"] == "text"
-    assert "Hello from" in parts[0]["text"]
-    print(f"Agent responded: {parts[0]['text']}")
-
-    if transport_instance:
+    if transport != "JSONRPC" and transport_instance:
         await transport_instance.close()
 
     print(f"=== ✅ test_client passed for {transport} ===\n")
@@ -97,6 +121,8 @@ async def test_broadcast(run_a2a_server, transport):
     """Fan-out A2A broadcast to multiple agents."""
     if transport == "A2A":
         pytest.skip("Broadcast not applicable for raw A2A transport.")
+    if transport == "JSONRPC":
+        pytest.skip("Broadcast not applicable for JSONRPC transport.")
 
     endpoint = TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_broadcast | {transport} | {endpoint} ---")
@@ -154,6 +180,8 @@ async def test_broadcast_streaming(run_a2a_server, transport):
     """Fan-out A2A broadcast with streaming responses."""
     if transport == "A2A":
         pytest.skip("Broadcast not applicable for raw A2A transport.")
+    if transport == "JSONRPC":
+        pytest.skip("Broadcast not applicable for JSONRPC transport.")
 
     endpoint = TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_broadcast_streaming | {transport} | {endpoint} ---")
@@ -215,6 +243,8 @@ async def test_groupchat(run_a2a_server, transport):
     """Multi-party group chat over SLIM transport."""
     if transport == "A2A":
         pytest.skip("Group chat not applicable for raw A2A transport.")
+    if transport == "JSONRPC":
+        pytest.skip("Group chat not applicable for JSONRPC transport.")
     if transport == "NATS":
         pytest.skip("Group chat not applicable for NATS transport.")
 
@@ -224,6 +254,8 @@ async def test_groupchat(run_a2a_server, transport):
     participants = ["default/default/foo", "default/default/bar"]
     for name in participants:
         run_a2a_server(transport, endpoint, name=name)
+
+    await asyncio.sleep(3)
 
     factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
@@ -249,6 +281,7 @@ async def test_groupchat(run_a2a_server, transport):
     )
 
     print(f"Received {len(responses)} group chat responses")
+    assert len(responses) > 0, "No group chat responses received (possible timeout)"
 
     if transport_instance:
         await transport_instance.close()
@@ -269,6 +302,8 @@ async def test_groupchat_streaming(run_a2a_server, transport):
     """Multi-party streaming group chat over SLIM transport."""
     if transport == "A2A":
         pytest.skip("Group chat not applicable for raw A2A transport.")
+    if transport == "JSONRPC":
+        pytest.skip("Group chat not applicable for JSONRPC transport.")
     if transport == "NATS":
         pytest.skip("Group chat not applicable for NATS transport.")
 
@@ -278,6 +313,8 @@ async def test_groupchat_streaming(run_a2a_server, transport):
     participants = ["default/default/foo", "default/default/bar"]
     for name in participants:
         run_a2a_server(transport, endpoint, name=name, topic="zoo")
+
+    await asyncio.sleep(3)
 
     factory = AgntcyFactory(enable_tracing=True)
     transport_instance = factory.create_transport(
@@ -304,6 +341,10 @@ async def test_groupchat_streaming(run_a2a_server, transport):
     ):
         print(f"Streaming message: {message}")
         messages.append(message)
+
+    assert (
+        len(messages) > 0
+    ), "No streaming group chat messages received (possible timeout)"
 
     if transport_instance:
         await transport_instance.close()

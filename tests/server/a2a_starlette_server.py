@@ -17,8 +17,6 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from uvicorn import Config, Server
-
 from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
 
 factory = AgntcyFactory(enable_tracing=True)
@@ -78,9 +76,11 @@ async def main(
     """Create a bridge between an A2A server and a transport."""
     server = _build_a2a_server(name=name, version=version)
 
-    if transport_type == "A2A":
-        config = Config(app=server.build(), host="0.0.0.0", port=9999, loop="asyncio")
-        await Server(config).serve()
+    if transport_type == "JSONRPC":
+        # No transport — AppSession will use A2AJsonRpcServerHandler
+        app_session = factory.create_app_session(max_sessions=1)
+        app_session.add(server).with_session_id("default_session").build()
+        await app_session.start_all_sessions(keep_alive=block)
     else:
         print(f"Creating transport for {transport_type} at {endpoint} with name {name}")
         transport = factory.create_transport(

@@ -17,19 +17,18 @@ async def test_app_session():
     factory = AgntcyFactory()
     app_session = factory.create_app_session(max_sessions=1)
 
-    # Create an app container via the fluent builder
-    app_session.add(default_a2a_server).with_topic("test/topic").with_session_id(
-        "test_session"
-    ).build()
+    # Create an app container via the fluent builder.
+    # When no transport is provided for an A2AStarletteApplication, the SDK
+    # falls back to the JSONRPC handler (native HTTP), so topic is not used.
+    app_session.add(default_a2a_server).with_session_id("test_session").build()
 
     retrieved_container = app_session.get_app_container("test_session")
 
     assert retrieved_container is not None, "Failed to retrieve the app container."
-    assert retrieved_container.topic == "test/topic", "Topic mismatch."
 
     # test adding > max_sessions
     try:
-        app_session.add(default_a2a_server).with_topic("test/topic2").with_session_id(
+        app_session.add(default_a2a_server).with_session_id(
             "invalid_test_session"
         ).build()
         assert False, "Max sessions should have been reached"

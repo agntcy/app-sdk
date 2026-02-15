@@ -4,9 +4,8 @@
 from __future__ import annotations
 
 from typing import Any, AsyncIterator, List
-from uuid import uuid4
 
-from a2a.client.client import Client
+from a2a.client.client import Client, ClientEvent
 from a2a.types import (
     AgentCard,
     SendMessageRequest,
@@ -82,32 +81,18 @@ class A2AEnhancedClient:
 
     async def send_message(
         self,
-        request: SendMessageRequest,
+        request: SendMessageRequest | A2AMessage,
         **kwargs: Any,
-    ) -> SendMessageResponse:
+    ) -> AsyncIterator[ClientEvent | A2AMessage]:
         """Send a message via the upstream client.
 
-        The upstream ``Client.send_message()`` returns an ``AsyncIterator``
-        of ``ClientEvent | Message``.  This shim collects the first result
-        and wraps it in a ``SendMessageResponse`` for backward compatibility.
+        Yields the same ``ClientEvent | Message`` events as the upstream
+        ``Client.send_message()``.  A ``ClientEvent`` is a
+        ``(Task, UpdateEvent | None)`` tuple.
         """
-        result: Task | A2AMessage | None = None
-        async for event in self._client.send_message(
-            request.params.message if hasattr(request, "params") else request,
-            **kwargs,
-        ):
-            # event is either (Task, UpdateEvent) tuple or a Message
-            if isinstance(event, tuple):
-                task, _update = event
-                result = task
-            else:
-                result = event
-            break  # first result only for non-streaming
-
-        if result is None:
-            raise RuntimeError("No response received from upstream client")
-
-        return self._wrap_response(request, result)
+        msg = request.params.message if hasattr(request, "params") else request
+        async for event in self._client.send_message(msg, **kwargs):
+            yield event
 
     async def get_task(self, request: Any, **kwargs: Any) -> Task:
         """Retrieve a task from the upstream client."""
@@ -210,24 +195,3 @@ class A2AEnhancedClient:
             end_message=end_message,
         ):
             yield resp
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _wrap_response(
-        request: SendMessageRequest,
-        result: Task | A2AMessage,
-    ) -> SendMessageResponse:
-        """Wrap a Task or Message in a SendMessageResponse."""
-        from a2a.types import SendMessageSuccessResponse
-
-        request_id = getattr(request, "id", None) or str(uuid4())
-        return SendMessageResponse(
-            root=SendMessageSuccessResponse(
-                id=request_id,
-                jsonrpc="2.0",
-                result=result,
-            )
-        )

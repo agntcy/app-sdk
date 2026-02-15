@@ -94,37 +94,31 @@ class PatternsClientTransport(ClientTransport):
         """``TransportProducer`` compatible factory for upstream
         ``ClientFactory.register()``.
 
+        This method is invoked **synchronously** by the upstream
+        ``ClientFactory.create()`` call.  It can only use pre-built
+        (eager) transports from the config.  For deferred transport
+        construction (which requires ``await``), use
+        ``A2AClientFactory.create()`` instead.
+
         The ``url`` parameter comes from the agent card (``card.url`` or
         an ``additional_interfaces`` entry) and is expected to be a
         scheme-encoded topic, e.g. ``slim://my_topic`` or
-        ``nats://my_topic``.  The scheme determines which transport
-        factory callable to use; the path is the topic.
+        ``nats://my_topic``.
         """
-        # Parse topic from scheme-encoded URL (e.g. "slim://my_topic")
         topic = _parse_topic_from_url(url)
         transport_label = card.preferred_transport or url
 
         base_transport: BaseTransport | None = None
         if "slim" in str(transport_label).lower():
-            if config.slim_patterns_transport_factory is not None:
-                base_transport = config.slim_patterns_transport_factory()
-            else:
-                raise ValueError(
-                    "slim_patterns_transport_factory is required in ClientConfig "
-                    "for slimpatterns transport"
-                )
+            base_transport = config.slim_transport
         elif "nats" in str(transport_label).lower():
-            if config.nats_transport_factory is not None:
-                base_transport = config.nats_transport_factory()
-            else:
-                raise ValueError(
-                    "nats_transport_factory is required in ClientConfig "
-                    "for natspatterns transport"
-                )
-        else:
+            base_transport = config.nats_transport
+
+        if base_transport is None:
             raise ValueError(
-                f"PatternsClientTransport cannot handle transport label "
-                f"'{transport_label}'; expected 'slimpatterns' or 'natspatterns'."
+                f"No pre-built transport for '{transport_label}' on ClientConfig. "
+                f"Set slim_transport or nats_transport for sync usage, "
+                f"or use A2AClientFactory.create() for deferred construction."
             )
 
         return cls(base_transport, card, topic)

@@ -92,7 +92,18 @@ class ContainerBuilder:
         # A2ASRPCServerHandler takes (config, directory=) — no transport or topic
         from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCServerHandler
 
-        if handler_class is A2ASRPCServerHandler:
+        # When the target is an A2AStarletteApplication but no transport was
+        # provided, serve it over native HTTP JSONRPC instead of going through
+        # the patterns handler (which requires a transport).
+        from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
+        from agntcy_app_sdk.semantic.a2a.server.patterns import A2APatternsServerHandler
+
+        if handler_class is A2APatternsServerHandler and self._transport is None:
+            handler = A2AJsonRpcServerHandler(
+                self._target,
+                directory=self._directory,
+            )
+        elif handler_class is A2ASRPCServerHandler:
             if self._transport is not None or self._topic is not None:
                 logger.warning(
                     "transport and topic are ignored for A2ASRPCConfig; "

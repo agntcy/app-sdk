@@ -290,6 +290,7 @@ class SLIMTransport(BaseTransport):
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
+            raise
         finally:
             if group_session:
                 logger.debug(
@@ -390,6 +391,7 @@ class SLIMTransport(BaseTransport):
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
+            raise
         finally:
             if group_session:
                 try:

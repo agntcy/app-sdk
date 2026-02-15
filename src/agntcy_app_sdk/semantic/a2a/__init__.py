@@ -3,6 +3,7 @@
 
 from agntcy_app_sdk.semantic.a2a.server import (
     BaseA2AServerHandler,
+    A2AJsonRpcServerHandler,
     A2APatternsServerHandler,
     A2APatternsServer,
     A2ASRPCConfig,
@@ -15,6 +16,7 @@ from agntcy_app_sdk.semantic.a2a.client.transports import PatternsClientTranspor
 
 __all__ = [
     "BaseA2AServerHandler",
+    "A2AJsonRpcServerHandler",
     "A2APatternsServerHandler",
     "A2APatternsServer",
     "A2ASRPCConfig",
