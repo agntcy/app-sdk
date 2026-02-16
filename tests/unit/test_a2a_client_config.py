@@ -717,3 +717,254 @@ class TestA2AClientFactory:
 
         result = await A2AClientFactory.connect(card, config=config)
         assert isinstance(result, Client)
+
+
+# ---------------------------------------------------------------------------
+# Multi-transport negotiation tests
+# ---------------------------------------------------------------------------
+
+
+class TestMultiTransportNegotiation:
+    """Tests for a ClientConfig with slimrpc, slimpatterns, and natspatterns
+    all configured simultaneously, verifying negotiation against various
+    server agent cards.
+
+    The factory is built once with all three transports (plus the implicit
+    JSONRPC fallback).  Each test constructs an agent card that a real server
+    would advertise and asserts the negotiation picks the correct transport.
+    """
+
+    # -- Fixture: factory with all three transports -------------------------
+
+    @staticmethod
+    def _make_multi_transport_factory():
+        """Build an A2AClientFactory whose ClientConfig supports all transports."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig(
+            # slimrpc (eager channel factory)
+            slimrpc_channel_factory=MagicMock(),
+            # slimpatterns (eager transport)
+            slim_transport=_make_mock_transport("SLIM"),
+            # natspatterns (eager transport)
+            nats_transport=_make_mock_transport("NATS"),
+        )
+        return A2AClientFactory(config), config
+
+    # -- Auto-derived supported_transports ----------------------------------
+
+    def test_supported_transports_contains_all(self):
+        """ClientConfig with all three should auto-derive all four transports."""
+        _factory, config = self._make_multi_transport_factory()
+        assert "JSONRPC" in config.supported_transports
+        assert "slimrpc" in config.supported_transports
+        assert "slimpatterns" in config.supported_transports
+        assert "natspatterns" in config.supported_transports
+        assert len(config.supported_transports) == 4
+
+    # -- Server prefers slimrpc ---------------------------------------------
+
+    def test_server_prefers_slimrpc(self):
+        """Card with preferred_transport=slimrpc should negotiate to slimrpc."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="slimrpc",
+            url="default/default/Hello_World_Agent_1.0.0",
+        )
+        label, url = factory._negotiate(card)
+        assert label == "slimrpc"
+        assert url == "default/default/Hello_World_Agent_1.0.0"
+
+    # -- Server prefers slimpatterns ----------------------------------------
+
+    def test_server_prefers_slimpatterns(self):
+        """Card with preferred_transport=slimpatterns should negotiate to slimpatterns."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="slimpatterns",
+            url="slim://my_agent_topic",
+        )
+        label, url = factory._negotiate(card)
+        assert label == "slimpatterns"
+        assert url == "slim://my_agent_topic"
+
+    # -- Server prefers natspatterns ----------------------------------------
+
+    def test_server_prefers_natspatterns(self):
+        """Card with preferred_transport=natspatterns should negotiate to natspatterns."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="natspatterns",
+            url="nats://my_agent_topic",
+        )
+        label, url = factory._negotiate(card)
+        assert label == "natspatterns"
+        assert url == "nats://my_agent_topic"
+
+    # -- Server prefers JSONRPC (explicit) ----------------------------------
+
+    def test_server_prefers_jsonrpc(self):
+        """Card with preferred_transport=JSONRPC should negotiate to JSONRPC."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="JSONRPC",
+            url="http://localhost:9999",
+        )
+        label, url = factory._negotiate(card)
+        assert label == "JSONRPC"
+        assert url == "http://localhost:9999"
+
+    # -- Server prefers JSONRPC (default / None) ----------------------------
+
+    def test_server_default_transport_is_jsonrpc(self):
+        """Card with no preferred_transport should default to JSONRPC."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(url="http://localhost:9999")
+        label, url = factory._negotiate(card)
+        assert label == "JSONRPC"
+        assert url == "http://localhost:9999"
+
+    # -- Server prefers unknown, fallback via additional_interfaces ---------
+
+    def test_server_unknown_preferred_falls_back_to_additional(self):
+        """Server prefers unsupported transport; client finds match in additional_interfaces."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="grpc",
+            url="grpc://agent",
+            additional_interfaces=[
+                AgentInterface(transport="natspatterns", url="nats://agent_topic"),
+                AgentInterface(transport="JSONRPC", url="http://localhost:9999"),
+            ],
+        )
+        label, url = factory._negotiate(card)
+        # Server's preferred "grpc" not supported → first match in server_set
+        # iteration: grpc (skip), natspatterns (match!)
+        assert label == "natspatterns"
+        assert url == "nats://agent_topic"
+
+    # -- Server offers multiple via additional_interfaces -------------------
+
+    def test_server_preferred_plus_additional(self):
+        """Server's preferred_transport wins even when additional_interfaces are present."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="slimrpc",
+            url="default/default/agent",
+            additional_interfaces=[
+                AgentInterface(transport="slimpatterns", url="slim://agent_topic"),
+                AgentInterface(transport="natspatterns", url="nats://agent_topic"),
+                AgentInterface(transport="JSONRPC", url="http://localhost:9999"),
+            ],
+        )
+        label, url = factory._negotiate(card)
+        assert label == "slimrpc"
+        assert url == "default/default/agent"
+
+    # -- Client preference mode overrides server ----------------------------
+
+    def test_client_preference_overrides_server(self):
+        """With use_client_preference=True, client's transport order wins."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig(
+            slimrpc_channel_factory=MagicMock(),
+            slim_transport=_make_mock_transport("SLIM"),
+            nats_transport=_make_mock_transport("NATS"),
+            use_client_preference=True,
+        )
+        factory = A2AClientFactory(config)
+
+        # Client's auto-derived order: ["JSONRPC", "slimpatterns", "natspatterns", "slimrpc"]
+        # Server prefers slimrpc and also offers JSONRPC
+        card = _make_agent_card(
+            preferred_transport="slimrpc",
+            url="default/default/agent",
+            additional_interfaces=[
+                AgentInterface(transport="JSONRPC", url="http://localhost:9999"),
+            ],
+        )
+        label, url = factory._negotiate(card)
+        # JSONRPC appears first in client's list and server offers it
+        assert label == "JSONRPC"
+        assert url == "http://localhost:9999"
+
+    # -- No match at all raises ValueError ---------------------------------
+
+    def test_no_match_raises(self):
+        """Server only offers transports the client doesn't support → ValueError."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="grpc",
+            url="grpc://agent",
+            additional_interfaces=[
+                AgentInterface(transport="websocket", url="ws://agent"),
+            ],
+        )
+        with pytest.raises(ValueError, match="No compatible transports"):
+            factory._negotiate(card)
+
+    # -- create() dispatches to correct path --------------------------------
+
+    @pytest.mark.asyncio
+    async def test_create_dispatches_slimrpc(self):
+        """create() with slimrpc card should return upstream Client (sync path)."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="slimrpc",
+            url="default/default/agent",
+        )
+        result = await factory.create(card)
+        # slimrpc goes through the upstream sync path → upstream Client
+        assert isinstance(result, Client)
+
+    @pytest.mark.asyncio
+    async def test_create_dispatches_slimpatterns(self):
+        """create() with slimpatterns card should return A2AExperimentalClient."""
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
+        )
+
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="slimpatterns",
+            url="slim://my_agent",
+        )
+        result = await factory.create(card)
+        assert isinstance(result, A2AExperimentalClient)
+        assert result.transport.type() == "SLIM"
+        assert result.topic == "my_agent"
+
+    @pytest.mark.asyncio
+    async def test_create_dispatches_natspatterns(self):
+        """create() with natspatterns card should return A2AExperimentalClient."""
+        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+            A2AExperimentalClient,
+        )
+
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="natspatterns",
+            url="nats://my_agent",
+        )
+        result = await factory.create(card)
+        assert isinstance(result, A2AExperimentalClient)
+        assert result.transport.type() == "NATS"
+        assert result.topic == "my_agent"
+
+    @pytest.mark.asyncio
+    async def test_create_dispatches_jsonrpc_from_additional(self):
+        """When server prefers unknown transport but offers JSONRPC in
+        additional_interfaces, create() should fall through to JSONRPC."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="grpc",
+            url="grpc://agent",
+            additional_interfaces=[
+                AgentInterface(transport="JSONRPC", url="http://localhost:9999"),
+            ],
+        )
+        result = await factory.create(card)
+        assert isinstance(result, Client)
