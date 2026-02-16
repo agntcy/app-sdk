@@ -50,24 +50,3 @@ class ServerHandler(ABC):
     async def teardown(self) -> None:
         """Close transport, cancel tasks."""
         ...
-
-
-class ClientFactory(ABC):
-    """Standalone client factory — one per protocol. Pure client creation."""
-
-    @abstractmethod
-    def protocol_type(self) -> str:
-        """Return the protocol type identifier."""
-        ...
-
-    @abstractmethod
-    async def create_client(
-        self,
-        *,
-        url: Optional[str] = None,
-        topic: Optional[str] = None,
-        transport: Optional[BaseTransport] = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Create a client for the protocol."""
-        ...

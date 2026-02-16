@@ -33,11 +33,10 @@ async def test_client(run_fast_mcp_server, transport):
         transport=transport, endpoint=endpoint, name="default/default/fastmcp_client"
     )
 
-    mcp_client = await factory.create_client(
-        "FastMCP",
-        agent_topic="fastmcp",
+    mcp_client = await factory.fast_mcp().create_client(
+        url="http://localhost:8081/mcp",
+        topic="fastmcp",
         transport=transport_instance,
-        agent_url="http://localhost:8081/mcp",
     )
 
     async with mcp_client as client:

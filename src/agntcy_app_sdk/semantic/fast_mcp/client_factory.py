@@ -3,13 +3,16 @@
 
 from typing import Any, Optional
 
-from agntcy_app_sdk.semantic.base import ClientFactory
+from agntcy_app_sdk.semantic.fast_mcp.client import MCPClient
 from agntcy_app_sdk.semantic.fast_mcp.protocol import FastMCPProtocol
 from agntcy_app_sdk.transport.base import BaseTransport
 
 
-class FastMCPClientFactory(ClientFactory):
+class FastMCPClientFactory:
     """Client factory for the FastMCP protocol."""
+
+    ACCESSOR_NAME: str = "fast_mcp"
+    """Method name attached to :class:`AgntcyFactory` for this protocol."""
 
     def protocol_type(self) -> str:
         return "FastMCP"
@@ -21,7 +24,7 @@ class FastMCPClientFactory(ClientFactory):
         topic: Optional[str] = None,
         transport: Optional[BaseTransport] = None,
         **kwargs: Any,
-    ) -> Any:
+    ) -> MCPClient:
         """Create a FastMCP client. Delegates to FastMCPProtocol.create_client()."""
         protocol = FastMCPProtocol()
         return await protocol.create_client(

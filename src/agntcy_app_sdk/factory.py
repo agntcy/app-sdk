@@ -1,12 +1,14 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import os
-from enum import Enum
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Protocol, Type
 
 from agntcy_app_sdk.app_sessions import AppSession
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.semantic.client_factory_base import BaseClientFactory
 from agntcy_app_sdk.transport.base import BaseTransport
 
 from agntcy_app_sdk.transport.nats.transport import NatsTransport
@@ -14,6 +16,7 @@ from agntcy_app_sdk.transport.slim.transport import SLIMTransport
 from agntcy_app_sdk.transport.streamable_http.transport import StreamableHTTPTransport
 
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.fast_mcp.client_factory import FastMCPClientFactory
 from agntcy_app_sdk.semantic.mcp.client_factory import MCPClientFactory
 
@@ -21,36 +24,81 @@ configure_logging()
 logger = get_logger(__name__)
 
 
-# a utility enum class to define transport types as constants
-class ProtocolTypes(Enum):
-    A2A = "A2A"
-    MCP = "MCP"
+# ---------------------------------------------------------------------------
+# Type stubs for the dynamically-attached accessors.
+# These are consumed by type checkers / IDE auto-complete only; at runtime
+# the real callables are bound by ``_register_wellknown_protocols``.
+# ---------------------------------------------------------------------------
 
 
-# a utility enum class to define transport types as constants
-class TransportTypes(Enum):
-    A2A = "A2A"
-    JSONRPC = "JSONRPC"
-    SLIM = "SLIM"
-    NATS = "NATS"
-    MQTT = "MQTT"
-    STREAMABLE_HTTP = "StreamableHTTP"
+class A2AAccessor(Protocol):
+    def __call__(self, config: ClientConfig | None = None) -> A2AClientFactory:
+        ...
 
 
-# a utility enum class to define observability providers as constants
-class ObservabilityProviders(Enum):
-    IOA_OBSERVE = "ioa_observe"
+class MCPAccessor(Protocol):
+    def __call__(self) -> MCPClientFactory:
+        ...
 
 
-# a utility enum class to define identity providers as constants
-class IdentityProviders(Enum):
-    AGNTCY = "agntcy_identity"
+class FastMCPAccessor(Protocol):
+    def __call__(self) -> FastMCPClientFactory:
+        ...
 
 
 class AgntcyFactory:
+    """Unified factory interface for building interoperable multi-agent systems.
+
+    Creates typed protocol clients (A2A, MCP, FastMCP), transports (SLIM, NATS, HTTP),
+    and app sessions. Protocol accessors are dynamically generated from the registry
+    during initialization, providing a clean typed API for agent communication.
+
+    **Quick Start**::
+
+        factory = AgntcyFactory()
+
+        # MCP client
+        async with await factory.mcp().create_client(
+            topic="mcp/agent",
+            transport=slim_transport
+        ) as session:
+            tools = await session.list_tools()
+
+        # A2A client
+        config = ClientConfig(slim_config=SlimTransportConfig(...))
+        client = await factory.a2a(config).create(agent_card)
+        response = await client.task("Hello, agent!")
+
+        # FastMCP client
+        client = await factory.fast_mcp().create_client(
+            topic="fast-mcp/agent",
+            transport=nats_transport
+        )
+
+    **Architecture**:
+
+    - **Transports** — Message delivery layer (SLIM, NATS, HTTP)
+    - **Protocols** — Semantic layer (A2A, MCP, FastMCP)
+    - **Observability** — Optional distributed tracing via ``enable_tracing=True``
+
+    The factory maintains registries of available transports and protocols,
+    enabling runtime introspection (``registered_protocols()``,
+    ``registered_transports()``).
+
+    Args:
+        name: Factory instance name (used for tracing service name).
+        enable_tracing: Enable OpenTelemetry tracing via ioa_observe.sdk.
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR).
     """
-    Factory class to create different types of agent gateway transports and protocols.
-    """
+
+    OBSERVABILITY_PROVIDERS: list[str] = ["ioa_observe"]
+    """Known observability provider identifiers."""
+
+    # Annotate the dynamically-attached accessors so type checkers and
+    # IDE auto-complete recognise them on ``AgntcyFactory`` instances.
+    a2a: A2AAccessor
+    mcp: MCPAccessor
+    fast_mcp: FastMCPAccessor
 
     def __init__(
         self,
@@ -71,28 +119,37 @@ class AgntcyFactory:
             logger.setLevel(self.log_level)
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
-        self._client_factory_registry: Dict[str, Any] = {}
-
-        self._clients: Dict[str, Any] = {}
-        self._bridges: Dict[str, Any] = {}
+        self._protocol_registry: Dict[str, type] = {}
 
         self._register_wellknown_transports()
-        self._register_wellknown_client_factories()
+        self._register_wellknown_protocols()
 
         if self.enable_tracing:
-            os.environ["TRACING_ENABLED"] = "true"
-            from ioa_observe.sdk import Observe
+            self._setup_tracing()
 
-            Observe.init(
-                self.name,
-                api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
-            )
+    # ------------------------------------------------------------------
+    # Tracing
+    # ------------------------------------------------------------------
 
-            logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
+    def _setup_tracing(self) -> None:
+        """Initialize distributed tracing via ioa_observe.sdk / OpenTelemetry."""
+        os.environ["TRACING_ENABLED"] = "true"
+        from ioa_observe.sdk import Observe
+
+        Observe.init(
+            self.name,
+            api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
+        )
+
+        logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
+
+    # ------------------------------------------------------------------
+    # Introspection
+    # ------------------------------------------------------------------
 
     def registered_protocols(self) -> list[str]:
         """Get the list of registered protocol types."""
-        return list(self._client_factory_registry.keys())
+        return list(self._protocol_registry.keys())
 
     def registered_transports(self) -> list[str]:
         """Get the list of registered transport types."""
@@ -100,31 +157,11 @@ class AgntcyFactory:
 
     def registered_observability_providers(self) -> list[str]:
         """Get the list of registered observability providers."""
-        return [provider.value for provider in ObservabilityProviders]
+        return list(self.OBSERVABILITY_PROVIDERS)
 
-    async def create_client(
-        self,
-        protocol: str,
-        agent_url: Optional[str] = None,
-        agent_topic: Optional[str] = None,
-        transport: Optional[BaseTransport] = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Create a client for the specified protocol."""
-        if agent_url is None and agent_topic is None:
-            raise ValueError("Either agent_url or agent_topic must be provided")
-
-        factory_instance = self._client_factory_registry.get(protocol)
-        if factory_instance is None:
-            raise ValueError(f"No client factory registered for protocol: {protocol}")
-
-        client = await factory_instance.create_client(
-            url=agent_url, topic=agent_topic, transport=transport, **kwargs
-        )
-
-        key = agent_url if agent_url else agent_topic
-        self._clients[key] = client
-        return client
+    # ------------------------------------------------------------------
+    # Transport & session creation
+    # ------------------------------------------------------------------
 
     def create_app_session(self, max_sessions: int = 10) -> AppSession:
         """Create an app session to manage multiple app containers."""
@@ -133,47 +170,74 @@ class AgntcyFactory:
     def create_transport(
         self,
         transport: str,
-        name: Optional[str] = None,
+        name: str | None = None,
         client: Any = None,
-        endpoint: Optional[str] = None,
+        endpoint: str | None = None,
         **kwargs: Any,
-    ) -> Optional[BaseTransport]:
-        """Get the transport class for the specified transport type."""
+    ) -> BaseTransport:
+        """Create and return a transport instance for the specified transport type.
+
+        Raises:
+            ValueError: If neither ``client`` nor ``endpoint`` is provided,
+                or if the requested transport type is not registered.
+        """
         if not client and not endpoint:
             raise ValueError("Either client or endpoint must be provided")
 
-        gateway_class = self._transport_registry.get(transport)
-        if gateway_class is None:
-            logger.warning(f"No transport registered for transport type: {transport}")
-            return None
+        transport_class = self._transport_registry.get(transport)
+        if transport_class is None:
+            raise ValueError(
+                f"No transport registered for transport type: {transport!r}. "
+                f"Available transports: {list(self._transport_registry.keys())}"
+            )
+
+        # Build optional kwargs — only pass ``name`` when the caller supplied one
+        # so that the transport's own default (``name: str = None``) is respected.
+        name_kwargs: dict[str, str] = {"name": name} if name is not None else {}
 
         if client:
-            transport_instance = gateway_class.from_client(client, name=name, **kwargs)
+            transport_instance = transport_class.from_client(
+                client, **name_kwargs, **kwargs
+            )
         else:
-            transport_instance = gateway_class.from_config(
-                endpoint, name=name, **kwargs
+            assert endpoint is not None  # guaranteed by the guard above
+            transport_instance = transport_class.from_config(
+                endpoint, **name_kwargs, **kwargs
             )
 
         return transport_instance
 
-    @classmethod
-    def register_transport(cls, transport_type: str):
-        """Decorator to register a new transport implementation."""
+    # ------------------------------------------------------------------
+    # Registration
+    # ------------------------------------------------------------------
 
-        def decorator(transport_class: Type[BaseTransport]):
-            cls.self._transport_registry[transport_type] = transport_class
-            return transport_class
+    def _register_wellknown_transports(self) -> None:
+        """Register well-known transports.
 
-        return decorator
+        Each entry derives its registry key from the transport class's
+        ``TRANSPORT_TYPE`` constant — the label lives on the class itself.
+        """
+        for transport_class in (SLIMTransport, NatsTransport, StreamableHTTPTransport):
+            self._transport_registry[transport_class.TRANSPORT_TYPE] = transport_class
 
-    def _register_wellknown_transports(self):
-        """Register well-known transports."""
-        self._transport_registry["SLIM"] = SLIMTransport
-        self._transport_registry["NATS"] = NatsTransport
-        self._transport_registry["STREAMABLE_HTTP"] = StreamableHTTPTransport
+    def _register_wellknown_protocols(self) -> None:
+        """Register well-known protocols and attach accessor methods.
 
-    def _register_wellknown_client_factories(self):
-        """Register well-known client factories."""
-        self._client_factory_registry["A2A"] = A2AClientFactory()
-        self._client_factory_registry["MCP"] = MCPClientFactory()
-        self._client_factory_registry["FastMCP"] = FastMCPClientFactory()
+        For each factory class, this method:
+        1. Reads ``protocol_type()`` to derive the registry key.
+        2. Stores ``protocol_type → factory_class`` in the registry.
+        3. Attaches a convenience accessor (e.g. ``self.a2a``) whose
+           name comes from the factory's ``ACCESSOR_NAME`` constant.
+        """
+        for factory_class in (A2AClientFactory, MCPClientFactory, FastMCPClientFactory):
+            proto_name = factory_class().protocol_type()
+            self._protocol_registry[proto_name] = factory_class
+
+            # Build a closure that captures the class for the accessor
+            def _make_accessor(cls: type):
+                def accessor(*args: Any, **kwargs: Any) -> BaseClientFactory:
+                    return cls(*args, **kwargs)
+
+                return accessor
+
+            setattr(self, factory_class.ACCESSOR_NAME, _make_accessor(factory_class))

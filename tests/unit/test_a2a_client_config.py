@@ -6,7 +6,7 @@ ClientConfig, PatternsClientTransport, A2AExperimentalClient, A2AClientFactory.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -539,13 +539,6 @@ class TestA2AClientFactory:
         assert factory._config is config
         assert "slimpatterns" in factory._config.supported_transports
 
-    def test_protocol_type(self):
-        """protocol_type() should return 'A2A'."""
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        factory = A2AClientFactory()
-        assert factory.protocol_type() == "A2A"
-
     # -- Negotiation tests --------------------------------------------------
 
     def test_negotiate_server_preference(self):
@@ -724,74 +717,3 @@ class TestA2AClientFactory:
 
         result = await A2AClientFactory.connect(card, config=config)
         assert isinstance(result, Client)
-
-    # -- create_client() bridge tests ---------------------------------------
-
-    @pytest.mark.asyncio
-    async def test_create_client_with_transport_injects_and_creates(self):
-        """create_client() should inject transport and return a client."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
-            A2AExperimentalClient,
-        )
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        mock_transport = _make_mock_transport("SLIM")
-        config = ClientConfig()
-        factory = A2AClientFactory(config)
-
-        result = await factory.create_client(
-            topic="my_agent",
-            transport=mock_transport,
-        )
-
-        # Transport was injected and set up
-        mock_transport.setup.assert_called_once()
-        # Should get an experimental client (patterns path)
-        assert isinstance(result, A2AExperimentalClient)
-        assert isinstance(result, Client)
-
-    @pytest.mark.asyncio
-    async def test_create_client_synthesises_card_for_topic_transport(self):
-        """create_client() with topic+transport should synthesise a card."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
-            A2AExperimentalClient,
-        )
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        mock_transport = _make_mock_transport("NATS")
-        config = ClientConfig()
-        factory = A2AClientFactory(config)
-
-        result = await factory.create_client(
-            topic="my_nats_agent",
-            transport=mock_transport,
-        )
-
-        assert isinstance(result, A2AExperimentalClient)
-        assert isinstance(result, Client)
-
-    @pytest.mark.asyncio
-    async def test_create_client_http_url_resolves_card(self):
-        """create_client() with HTTP URL should try to resolve a card."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        config = ClientConfig()
-        factory = A2AClientFactory(config)
-
-        # Mock the card resolver to return a card
-        mock_card = _make_agent_card(url="http://localhost:8080")
-
-        with patch(
-            "agntcy_app_sdk.semantic.a2a.client.factory.A2ACardResolver"
-        ) as mock_resolver_cls:
-            mock_resolver = MagicMock()
-            mock_resolver.get_agent_card = AsyncMock(return_value=mock_card)
-            mock_resolver_cls.return_value = mock_resolver
-
-            result = await factory.create_client(url="http://localhost:8080")
-
-            assert isinstance(result, Client)
-            mock_resolver.get_agent_card.assert_called_once()

@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
     Message,
     MessageSendParams,
     Role,
@@ -49,6 +51,26 @@ def _make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageR
     return SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
 
 
+def _make_transport_card(topic: str, transport_type: str) -> AgentCard:
+    """Synthesise a minimal AgentCard for transport-based tests."""
+    _scheme_map: dict[str, tuple[str, str]] = {
+        "SLIM": ("slimpatterns", "slim"),
+        "NATS": ("natspatterns", "nats"),
+    }
+    preferred, scheme = _scheme_map[transport_type]
+    return AgentCard(
+        name=topic,
+        url=f"{scheme}://{topic}",
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
+        capabilities=AgentCapabilities(),
+        skills=[],
+        preferredTransport=preferred,
+        description="Test agent",
+    )
+
+
 # ---------------------------------------------------------------------------
 # test_client — basic point-to-point A2A request
 # ---------------------------------------------------------------------------
@@ -75,8 +97,9 @@ async def test_client(run_a2a_server, transport):
         # upstream BaseClient streaming protocol.
         session_start()
 
-        a2a_factory = A2AClientFactory(ClientConfig(streaming=False))
-        client = await a2a_factory.create_client(url=endpoint)
+        client = await A2AClientFactory.connect(
+            endpoint, config=ClientConfig(streaming=False)
+        )
     else:
         transport_instance = factory.create_transport(
             transport, endpoint=endpoint, name="default/default/default"
@@ -84,12 +107,15 @@ async def test_client(run_a2a_server, transport):
 
         session_start()
 
-        client = await factory.create_client(
-            "A2A",
-            agent_url=endpoint,
-            agent_topic="Hello_World_Agent_1.0.0",
-            transport=transport_instance,
-        )
+        config_kwargs = {}
+        if transport == "SLIM":
+            config_kwargs["slim_transport"] = transport_instance
+        elif transport == "NATS":
+            config_kwargs["nats_transport"] = transport_instance
+
+        card = _make_transport_card("Hello_World_Agent_1.0.0", transport)
+        a2a = factory.a2a(ClientConfig(**config_kwargs))
+        client = await a2a.create(card)
 
     assert client is not None, "Client was not created"
     print(f"Agent: {(await client.get_card()).name}")
@@ -158,9 +184,15 @@ async def test_broadcast(run_a2a_server, transport):
         "default/default/agent1" if transport_instance.type() == "SLIM" else "broadcast"
     )
 
-    client = await factory.create_client(
-        "A2A", agent_topic=handshake_topic, transport=transport_instance
-    )
+    config_kwargs = {}
+    if transport == "SLIM":
+        config_kwargs["slim_transport"] = transport_instance
+    elif transport == "NATS":
+        config_kwargs["nats_transport"] = transport_instance
+
+    card = _make_transport_card(handshake_topic, transport)
+    a2a = factory.a2a(ClientConfig(**config_kwargs))
+    client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
     request = _make_send_request()
@@ -217,9 +249,15 @@ async def test_broadcast_streaming(run_a2a_server, transport):
         "default/default/agent1" if transport_instance.type() == "SLIM" else "broadcast"
     )
 
-    client = await factory.create_client(
-        "A2A", agent_topic=handshake_topic, transport=transport_instance
-    )
+    config_kwargs = {}
+    if transport == "SLIM":
+        config_kwargs["slim_transport"] = transport_instance
+    elif transport == "NATS":
+        config_kwargs["nats_transport"] = transport_instance
+
+    card = _make_transport_card(handshake_topic, transport)
+    a2a = factory.a2a(ClientConfig(**config_kwargs))
+    client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
     request = _make_send_request()
@@ -278,9 +316,15 @@ async def test_groupchat(run_a2a_server, transport):
         "default/default/foo" if transport_instance.type() == "SLIM" else "broadcast"
     )
 
-    client = await factory.create_client(
-        "A2A", agent_topic=handshake_topic, transport=transport_instance
-    )
+    config_kwargs = {}
+    if transport == "SLIM":
+        config_kwargs["slim_transport"] = transport_instance
+    elif transport == "NATS":
+        config_kwargs["nats_transport"] = transport_instance
+
+    card = _make_transport_card(handshake_topic, transport)
+    a2a = factory.a2a(ClientConfig(**config_kwargs))
+    client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
     request = _make_send_request("This is a groupchat message")
@@ -337,9 +381,15 @@ async def test_groupchat_streaming(run_a2a_server, transport):
         "default/default/foo" if transport_instance.type() == "SLIM" else "broadcast"
     )
 
-    client = await factory.create_client(
-        "A2A", agent_topic=handshake_topic, transport=transport_instance
-    )
+    config_kwargs = {}
+    if transport == "SLIM":
+        config_kwargs["slim_transport"] = transport_instance
+    elif transport == "NATS":
+        config_kwargs["nats_transport"] = transport_instance
+
+    card = _make_transport_card(handshake_topic, transport)
+    a2a = factory.a2a(ClientConfig(**config_kwargs))
+    client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
     request = _make_send_request("This is a groupchat message")

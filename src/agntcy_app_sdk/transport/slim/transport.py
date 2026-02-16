@@ -33,6 +33,9 @@ class SLIMTransport(BaseTransport):
     SLIM Transport implementation using the slim_bindings library.
     """
 
+    TRANSPORT_TYPE: str = "SLIM"
+    """Registry key used by :class:`AgntcyFactory`."""
+
     def __init__(
         self,
         routable_name: str = None,
@@ -439,7 +442,7 @@ class SLIMTransport(BaseTransport):
 
     def type(self) -> str:
         """Return the transport type."""
-        return "SLIM"
+        return self.TRANSPORT_TYPE
 
     async def close(self) -> None:
         if not self._slim_service:

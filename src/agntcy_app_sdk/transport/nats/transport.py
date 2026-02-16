@@ -24,6 +24,9 @@ Nats implementation of BaseTransport.
 
 
 class NatsTransport(BaseTransport):
+    TRANSPORT_TYPE: str = "NATS"
+    """Registry key used by :class:`AgntcyFactory`."""
+
     def __init__(
         self, client: Optional[NATS] = None, endpoint: Optional[str] = None, **kwargs
     ):
@@ -265,7 +268,7 @@ class NatsTransport(BaseTransport):
         return cls(endpoint=endpoint, **kwargs)
 
     def type(self) -> str:
-        return "NATS"
+        return self.TRANSPORT_TYPE
 
     def santize_topic(self, topic: str) -> str:
         """Sanitize the topic name to ensure it is valid for NATS."""

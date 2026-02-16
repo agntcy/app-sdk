@@ -6,7 +6,7 @@ import asyncio
 
 from mcp.server.fastmcp import FastMCP
 
-from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
+from agntcy_app_sdk.factory import AgntcyFactory
 
 factory = AgntcyFactory(enable_tracing=False)
 
@@ -35,8 +35,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--transport",
         type=str,
-        choices=[t.value for t in TransportTypes],
-        default=TransportTypes.NATS.value,
+        choices=AgntcyFactory().registered_transports(),
+        default="NATS",
         help="Transport type to use (default: NATS)",
     )
     parser.add_argument(

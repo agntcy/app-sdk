@@ -17,7 +17,7 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
+from agntcy_app_sdk.factory import AgntcyFactory
 
 factory = AgntcyFactory(enable_tracing=True)
 
@@ -110,8 +110,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--transport",
         type=str,
-        choices=[t.value for t in TransportTypes],
-        default=TransportTypes.NATS.value,
+        choices=[*AgntcyFactory().registered_transports(), "JSONRPC"],
+        default="NATS",
         help="Transport type to use (default: NATS)",
     )
     parser.add_argument(

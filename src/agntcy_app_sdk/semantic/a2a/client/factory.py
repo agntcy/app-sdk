@@ -14,7 +14,7 @@ from a2a.client.base_client import BaseClient
 from a2a.client.client import Client
 from a2a.client.client_factory import ClientFactory as UpstreamClientFactory
 from a2a.client.middleware import ClientCallInterceptor
-from a2a.types import AgentCapabilities, AgentCard
+from a2a.types import AgentCard
 
 from slima2a.client_transport import SRPCTransport
 
@@ -27,14 +27,13 @@ from agntcy_app_sdk.semantic.a2a.client.transports import (
     PatternsClientTransport,
     _parse_topic_from_url,
 )
-from agntcy_app_sdk.semantic.base import ClientFactory
 from agntcy_app_sdk.transport.base import BaseTransport
 
 configure_logging()
 logger = get_logger(__name__)
 
 
-class A2AClientFactory(ClientFactory):
+class A2AClientFactory:
     """Card-driven A2A client factory.
 
     Constructed with a :class:`ClientConfig` declaring the transports
@@ -71,12 +70,11 @@ class A2AClientFactory(ClientFactory):
         self._upstream = UpstreamClientFactory(self._config)
         self._register_transports()
 
-    # ------------------------------------------------------------------
-    # ClientFactory ABC
-    # ------------------------------------------------------------------
+    ACCESSOR_NAME: str = "a2a"
+    """Method name attached to :class:`AgntcyFactory` for this protocol."""
 
     def protocol_type(self) -> str:
-        """Return the protocol type identifier."""
+        """Return the protocol label for this factory."""
         return "A2A"
 
     # ------------------------------------------------------------------
@@ -136,94 +134,6 @@ class A2AClientFactory(ClientFactory):
             # Sync path — delegate to upstream for JSONRPC, slimrpc, etc.
             return self._upstream.create(card, consumers, interceptors)
 
-    async def create_client(
-        self,
-        *,
-        url: str | None = None,
-        topic: str | None = None,
-        transport: BaseTransport | None = None,
-        **kwargs: Any,
-    ) -> Client:
-        """Bridge for ``AgntcyFactory.create_client()``.
-
-        Translates the legacy ``(url, topic, transport)`` calling convention
-        into the card-driven ``create(card)`` API:
-
-        * If *url* points to an HTTP endpoint the AgentCard is fetched from
-          the well-known ``/.well-known/agent.json`` path.
-        * If only *topic* + *transport* are provided, a minimal AgentCard is
-          synthesised so that ``create()`` can select the correct transport.
-        * A pre-built *transport* is injected into the factory's config as an
-          eager transport so ``_build_patterns_transport()`` can return it.
-        """
-        # Inject eager transport into our config so create() can use it
-        if transport is not None:
-            ttype = transport.type()
-            if ttype == "SLIM" and self._config.slim_transport is None:
-                self._config.slim_transport = transport
-            elif ttype == "NATS" and self._config.nats_transport is None:
-                self._config.nats_transport = transport
-            # Re-derive supported_transports after injection
-            self._config.supported_transports = []
-            self._config.__post_init__()
-
-            # Ensure the transport is connected
-            await transport.setup()
-
-        # Resolve or synthesise an AgentCard
-        card: AgentCard
-        if url and url.startswith("http"):
-            try:
-                async with httpx.AsyncClient() as http_client:
-                    resolver = A2ACardResolver(http_client, base_url=url)
-                    card = await resolver.get_agent_card()
-                # If the card has an empty url, backfill with the fetch URL
-                if not card.url:
-                    card.url = url
-            except Exception:
-                logger.warning(
-                    "Could not resolve AgentCard from %s, synthesising one", url
-                )
-                card = self._synthesise_card(url, topic, transport)
-        else:
-            card = self._synthesise_card(url, topic, transport)
-
-        return await self.create(card, **kwargs)
-
-    @staticmethod
-    def _synthesise_card(
-        url: str | None,
-        topic: str | None,
-        transport: BaseTransport | None,
-    ) -> AgentCard:
-        """Build a minimal ``AgentCard`` from topic and transport info."""
-        # Map transport type → (preferred_transport, URI scheme)
-        _scheme_map: dict[str, tuple[str, str]] = {
-            "SLIM": ("slimpatterns", "slim"),
-            "NATS": ("natspatterns", "nats"),
-        }
-
-        preferred = "JSONRPC"
-        card_url = url or "http://localhost"
-
-        if transport is not None and topic:
-            entry = _scheme_map.get(transport.type())
-            if entry:
-                preferred, scheme = entry
-                card_url = f"{scheme}://{topic}"
-
-        return AgentCard(
-            name=topic or "unknown",
-            description="Auto-synthesised card",
-            url=card_url,
-            version="0.0.0",
-            defaultInputModes=["text"],
-            defaultOutputModes=["text"],
-            capabilities=AgentCapabilities(),
-            skills=[],
-            preferredTransport=preferred,
-        )
-
     @classmethod
     async def connect(
         cls,
@@ -251,6 +161,10 @@ class A2AClientFactory(ClientFactory):
             async with httpx.AsyncClient() as http_client:
                 resolver = A2ACardResolver(http_client, base_url=agent)
                 card = await resolver.get_agent_card()
+            # Backfill empty card.url with the URL used to fetch the card,
+            # so that transport negotiation can match against it.
+            if not card.url:
+                card.url = agent
         else:
             card = agent
 
@@ -314,14 +228,16 @@ class A2AClientFactory(ClientFactory):
     async def _build_patterns_transport(self, label: str) -> BaseTransport:
         """Lazily construct and set up a patterns transport.
 
-        Checks for a pre-built (eager) transport first.  Falls back to
-        constructing one from the typed config (deferred) and calling
-        ``await transport.setup()``.
+        Checks for a pre-built (eager) transport first — calling
+        ``await transport.setup()`` to ensure it is connected.  Falls
+        back to constructing one from the typed config (deferred) and
+        calling ``await transport.setup()``.
         """
         config = self._config
 
         if label == "slimpatterns":
             if config.slim_transport is not None:
+                await config.slim_transport.setup()
                 return config.slim_transport
 
             if config.slim_config is not None:
@@ -354,6 +270,7 @@ class A2AClientFactory(ClientFactory):
 
         if label == "natspatterns":
             if config.nats_transport is not None:
+                await config.nats_transport.setup()
                 return config.nats_transport
 
             if config.nats_config is not None:
