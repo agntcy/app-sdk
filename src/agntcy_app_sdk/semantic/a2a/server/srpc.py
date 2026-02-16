@@ -13,7 +13,6 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.types import AgentCard
 
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.transport.slim.common import (
     get_or_create_slim_instance,
@@ -88,12 +87,10 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
     def __init__(
         self,
         config: A2ASRPCConfig,
-        *,
-        directory: Optional[BaseAgentDirectory] = None,
     ):
         # BaseA2AServerHandler → ServerHandler expects (managed_object, ...)
         # We pass the config — each handler knows what its managed object is.
-        super().__init__(config, transport=None, topic=None, directory=directory)
+        super().__init__(config, transport=None, topic=None)
         self._config = config
         self._server_task: Optional[asyncio.Task] = None
         self._slim_rpc_server: Optional[slim_bindings.Server] = None
@@ -175,12 +172,6 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
 
         servicer = SRPCHandler(**srpc_handler_kwargs)
         add_A2AServiceServicer_to_server(servicer, self._slim_rpc_server)
-
-        # --- Directory push ---
-        if self._directory:
-            await self._directory.setup()
-            # Build a record compatible with the directory interface
-            await self._directory.push_agent_record(self._config.agent_card)
 
         # --- Serve in background ---
         self._server_task = asyncio.create_task(

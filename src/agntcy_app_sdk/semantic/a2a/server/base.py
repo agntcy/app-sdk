@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from abc import abstractmethod
+from typing import Any, Optional
 
 from a2a.types import AgentCard
 
@@ -16,6 +17,7 @@ class BaseA2AServerHandler(ServerHandler):
 
     Provides:
     - ``protocol_type()`` → ``"A2A"``
+    - ``get_agent_record()`` → the ``AgentCard``
     - ``_set_preferred_transport(name)`` — stamps the agent card
     """
 
@@ -27,6 +29,10 @@ class BaseA2AServerHandler(ServerHandler):
     def agent_card(self) -> AgentCard:
         """Return the AgentCard managed by this handler."""
         ...
+
+    def get_agent_record(self) -> Optional[Any]:
+        """Return the agent card as the directory record."""
+        return self.agent_card
 
     def _set_preferred_transport(self, name: str) -> None:
         """Set ``preferred_transport`` on the agent card.

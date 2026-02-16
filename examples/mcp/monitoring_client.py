@@ -20,7 +20,7 @@ import asyncio
 import argparse
 import json
 
-from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
+from agntcy_app_sdk.factory import AgntcyFactory
 
 factory = AgntcyFactory(enable_tracing=False)
 
@@ -47,9 +47,8 @@ async def _query_server(topic: str, transport_type: str, endpoint: str):
         name=f"default/default/client_{clean_name}",
     )
 
-    mcp_client = factory.create_client(
-        "MCP",
-        agent_topic=topic,
+    mcp_client = await factory.mcp().create_client(
+        topic=topic,
         transport=transport,
     )
 
@@ -96,8 +95,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--transport",
         type=str,
-        choices=[t.value for t in TransportTypes],
-        default=TransportTypes.NATS.value,
+        choices=factory.registered_transports(),
+        default="NATS",
         help="Transport type to use (default: NATS)",
     )
     parser.add_argument(

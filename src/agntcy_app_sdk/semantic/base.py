@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 from agntcy_app_sdk.transport.base import BaseTransport
-from agntcy_app_sdk.directory.base import BaseAgentDirectory
 
 
 class ServerHandler(ABC):
@@ -17,12 +16,10 @@ class ServerHandler(ABC):
         *,
         transport: Optional[BaseTransport] = None,
         topic: Optional[str] = None,
-        directory: Optional[BaseAgentDirectory] = None,
     ):
         self._managed_object = managed_object
         self._transport = transport
         self._topic = topic
-        self._directory = directory
 
     @property
     def transport(self) -> Optional[BaseTransport]:
@@ -32,9 +29,13 @@ class ServerHandler(ABC):
     def topic(self) -> Optional[str]:
         return self._topic
 
-    @property
-    def directory(self) -> Optional[BaseAgentDirectory]:
-        return self._directory
+    def get_agent_record(self) -> Optional[Any]:
+        """Return the record to push to the agent directory, or ``None``.
+
+        Subclasses that publish to a directory (e.g. A2A handlers with an
+        ``AgentCard``) should override this method.
+        """
+        return None
 
     @abstractmethod
     def protocol_type(self) -> str:

@@ -20,7 +20,6 @@ from starlette.types import Scope
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
-from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
@@ -240,13 +239,12 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
         *,
         transport: Optional[BaseTransport] = None,
         topic: Optional[str] = None,
-        directory: Optional[BaseAgentDirectory] = None,
     ):
         # Auto-derive topic from agent_card if not provided
         if topic is None or topic == "":
             topic = A2AExperimentalServer.create_agent_topic(server.agent_card)
 
-        super().__init__(server, transport=transport, topic=topic, directory=directory)
+        super().__init__(server, transport=transport, topic=topic)
         self._protocol = A2AExperimentalServer()
 
     # -- agent_card property (required by BaseA2AServerHandler) -----------
@@ -287,10 +285,6 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
         # Transport setup
         await self._transport.setup()
 
-        # Directory setup
-        if self._directory:
-            await self._directory.setup()
-
         # Bind server and create the protocol bridge
         self._protocol.bind_server(self._managed_object)
 
@@ -299,10 +293,6 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
 
         # Subscribe to topic
         await self._transport.subscribe(self._topic)
-
-        # Push to directory if available
-        if self._directory:
-            await self._directory.push_agent_record(self._managed_object.agent_card)
 
         # Protocol-level setup (ASGI bridge, tracing, etc.)
         await self._protocol.setup()

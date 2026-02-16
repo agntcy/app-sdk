@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.semantic.base import ServerHandler
 from agntcy_app_sdk.semantic.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.transport.base import BaseTransport
@@ -22,12 +21,11 @@ class MCPServerHandler(ServerHandler):
         *,
         transport: Optional[BaseTransport] = None,
         topic: Optional[str] = None,
-        directory: Optional[BaseAgentDirectory] = None,
     ):
         if topic is None or topic == "":
             raise ValueError("Topic must be provided for MCP server")
 
-        super().__init__(server, transport=transport, topic=topic, directory=directory)
+        super().__init__(server, transport=transport, topic=topic)
         self._protocol = MCPProtocol()
 
     def protocol_type(self) -> str:
@@ -40,10 +38,6 @@ class MCPServerHandler(ServerHandler):
 
         # Transport setup
         await self._transport.setup()
-
-        # Directory setup
-        if self._directory:
-            await self._directory.setup()
 
         # Bind server to protocol
         self._protocol.bind_server(self._managed_object)

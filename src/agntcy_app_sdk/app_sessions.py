@@ -101,7 +101,7 @@ class ContainerBuilder:
         """Resolve handler from target type, construct AppContainer, register it."""
         handler_class = _resolve_handler_class(self._target)
 
-        # A2ASRPCServerHandler takes (config, directory=) — no transport or topic
+        # A2ASRPCServerHandler takes (config) — no transport or topic
         from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCServerHandler
 
         # When the target is an A2AStarletteApplication but no transport was
@@ -117,7 +117,6 @@ class ContainerBuilder:
                 self._target,
                 host=self._host,
                 port=self._port,
-                directory=self._directory,
             )
         elif handler_class is A2ASRPCServerHandler:
             if self._transport is not None or self._topic is not None:
@@ -127,17 +126,15 @@ class ContainerBuilder:
                 )
             handler = handler_class(
                 self._target,
-                directory=self._directory,
             )
         else:
             handler = handler_class(
                 self._target,
                 transport=self._transport,
                 topic=self._topic,
-                directory=self._directory,
             )
 
-        container = AppContainer(handler)
+        container = AppContainer(handler, directory=self._directory)
 
         if self._session_id is not None:
             self._session._register_container(self._session_id, container)
@@ -153,8 +150,14 @@ class ContainerBuilder:
 class AppContainer:
     """Container for holding app session components."""
 
-    def __init__(self, handler: ServerHandler):
+    def __init__(
+        self,
+        handler: ServerHandler,
+        *,
+        directory: Optional[BaseAgentDirectory] = None,
+    ):
         self.handler = handler
+        self._directory = directory
         self._shutdown_event: Optional[asyncio.Event] = None
         self.is_running = False
 
@@ -167,17 +170,27 @@ class AppContainer:
     def transport(self) -> Optional[BaseTransport]:
         return self.handler.transport
 
+    @property
+    def directory(self) -> Optional[BaseAgentDirectory]:
+        return self._directory
+
     # -- Lifecycle ----------------------------------------------------------
 
-    async def run(
-        self, keep_alive: bool = False, push_to_directory_on_startup: bool = False
-    ):
+    async def run(self, keep_alive: bool = False):
         """Start all components of the app container."""
         if self.is_running:
             logger.warning("App session is already running.")
             return
 
         await self.handler.setup()
+
+        # Directory lifecycle: setup + push record (if configured)
+        if self._directory:
+            await self._directory.setup()
+            record = self.handler.get_agent_record()
+            if record is not None:
+                await self._directory.push_agent_record(record)
+
         self.is_running = True
 
         logger.info("App session started.")
@@ -275,7 +288,6 @@ class AppSession:
         self,
         session_id: str,
         keep_alive: bool = False,
-        push_to_directory_on_startup: bool = False,
         **kwargs,
     ):
         """Start a specific app container."""
@@ -285,7 +297,6 @@ class AppSession:
         if not container.is_running:
             await container.run(
                 keep_alive=keep_alive,
-                push_to_directory_on_startup=push_to_directory_on_startup,
             )
 
     async def stop_session(self, session_id: str):
@@ -296,15 +307,12 @@ class AppSession:
         if container.is_running:
             await container.stop()
 
-    async def start_all_sessions(
-        self, keep_alive: bool = False, push_to_directory_on_startup: bool = False
-    ):
+    async def start_all_sessions(self, keep_alive: bool = False):
         """Start all app containers."""
         for container in self.app_containers.values():
             if not container.is_running:
                 await container.run(
                     keep_alive=keep_alive,
-                    push_to_directory_on_startup=push_to_directory_on_startup,
                 )
 
     async def stop_all_sessions(self):

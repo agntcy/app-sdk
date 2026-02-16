@@ -11,7 +11,6 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.types import AgentCard
 
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 
 logger = get_logger(__name__)
@@ -40,10 +39,9 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         *,
         host: str,
         port: int,
-        directory: Optional[BaseAgentDirectory] = None,
     ):
         # BaseA2AServerHandler -> ServerHandler expects (managed_object, ...)
-        super().__init__(server, transport=None, topic=None, directory=directory)
+        super().__init__(server, transport=None, topic=None)
         self._server = server
         self._host = host
         self._port = port
@@ -77,11 +75,6 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
             loop="asyncio",
         )
         self._uvicorn_server = uvicorn.Server(config)
-
-        # --- Directory push ---
-        if self._directory:
-            await self._directory.setup()
-            await self._directory.push_agent_record(self._server.agent_card)
 
         # --- Serve in background ---
         self._server_task = asyncio.create_task(
