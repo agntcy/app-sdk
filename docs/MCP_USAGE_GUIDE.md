@@ -1,22 +1,64 @@
 # MCP Usage Guide
 
-In this guide, we will walk through some of the key features of the Agntcy Application SDK and explore an end-to-end example of creating two MCP agents that communicate over a custom transport (SLIM, NATS).
+In this guide, we will walk through the key features of the Agntcy Application SDK's MCP (Model Context Protocol) integration and explore end-to-end examples of creating MCP servers and clients that communicate over abstract transports (SLIM, NATS).
 
-The following diagram illustrates how the MCP protocol maps to a transport implementation:
+## Architecture
 
-<p align="center">
-  <img src="mcp-architecture.jpg" alt="architecture" width="90%">
-</p>
+The SDK supports two MCP variants — **MCP** (low-level `mcp.server.lowlevel.Server`) and **FastMCP** (high-level `mcp.server.fastmcp.FastMCP`). Both use the same transport layer, but differ in their protocol bridge and client model.
 
-The following table summarizes the current MCP and transport support in the Agntcy Application SDK:
+```
+                                AgntcyFactory
+                    ┌───────────┬──────┴──────┬────────────────┐
+                    v           v             v                v
+                 .mcp()    .fast_mcp()   .create_transport()  .create_app_session()
+                    │           │             │                       │
+                    v           v             v                  AppSession
+             MCPClientFactory  FastMCPClient  BaseTransport    .add(target)
+                    │          Factory     (SLIM / NATS)     .with_transport()
+                    v           │                            .with_topic()
+              ClientSession     v                                    │
+                            MCPClient                             .build()
+                                                              ┌──────┴──────┐
+                                                              v              v
+       CLIENT SIDE                               MCPServerHandler   FastMCPServerHandler
+      ─────────────                              (transport req'd)  (transport optional)
+       SERVER SIDE                                      │                   │
+                                                        v                   v
+                                                  MCP server.run()    Uvicorn/ASGI
+                                                 (memory streams)    (HTTP :8081)
+                                                        │            + opt. transport
+                                                        v                   │
+                                                   SLIM / NATS              v
+                                                                    HTTP + SLIM / NATS
+```
 
-| Protocol \ Transport | SLIM | NATS | MQTT |
-| -------------------- | :--: | :--: | :--: |
-| **MCP**              |  ✅  |  ✅  |  🕐  |
+**Handler auto-detection** — When you call `session.add(target).build()`, the SDK inspects the `target` type:
 
-### ⚡️ Connecting an MCP client to an MCP server over an abstract transport (SLIM | NATS)
+| Target type | Transport provided? | Handler selected                                                   |
+| ----------- | ------------------- | ------------------------------------------------------------------ |
+| `MCPServer` | Yes (required)      | `MCPServerHandler` — bridges MCP via memory streams over transport |
+| `FastMCP`   | Optional            | `FastMCPServerHandler` — runs Uvicorn + optional transport bridge  |
 
-A benefit of decoupling protocols from transports is that you can easily create agents that communicate over non http, point-to-point transports such SLIM or as NATS. Below is an example of how to create an MCP client and server that communicate over SLIM's dataplane server.
+**MCP vs FastMCP — key differences:**
+
+| Aspect              | MCP (`MCPServerHandler`)                            | FastMCP (`FastMCPServerHandler`)              |
+| ------------------- | --------------------------------------------------- | --------------------------------------------- |
+| **Server type**     | `mcp.server.lowlevel.Server`                        | `mcp.server.fastmcp.FastMCP`                  |
+| **Transport**       | Required — no HTTP fallback                         | Optional — always runs HTTP via Uvicorn       |
+| **Protocol bridge** | `MCPProtocol` — bidirectional memory streams        | `FastMCPProtocol` — ASGI simulation           |
+| **Client type**     | `ClientSession` (from `mcp` package, async ctx mgr) | `MCPClient` (SDK class, point-to-point)       |
+| **Message flow**    | JSON-RPC → memory stream → `server.run()` → stream  | JSON-RPC → ASGI scope → `streamable_http_app` |
+
+The following table summarizes current MCP transport support:
+
+| Handler \ Transport | SLIM | NATS |    HTTP     |
+| ------------------- | :--: | :--: | :---------: |
+| **MCP**             |  ✅  |  ✅  |      —      |
+| **FastMCP**         |  ✅  |  ✅  | ✅ (always) |
+
+---
+
+## Setup
 
 We will use `uv` for package management and virtual environments. If you don't have it installed, you can install it via:
 
@@ -31,13 +73,19 @@ uv init agntcy-mcp
 cd agntcy-mcp
 ```
 
-Install the Agntcy Application SDK and Langgraph:
+Install the Agntcy Application SDK:
 
 ```bash
 uv add agntcy-app-sdk
 ```
 
-Next we will create a simple weather MCP server that responds to weather queries. Create a file named `weather_server.py` and implement the MCP server. We will then add the server to an app session to serve via a transport of our choice, in this case SLIM.
+---
+
+## Example 1 — MCP over SLIM / NATS
+
+The MCP path bridges the low-level `mcp.server.lowlevel.Server` over an abstract transport using bidirectional memory streams. The transport is required — there is no HTTP fallback.
+
+### Server: `weather_server.py`
 
 ```python
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -45,23 +93,26 @@ from agntcy_app_sdk.app_sessions import AppContainer
 from mcp.server.fastmcp import FastMCP
 import asyncio
 
-# create an MCP server instance
+# Create an MCP server instance
 mcp = FastMCP()
 
-# add a tool to the MCP server
+# Add a tool to the MCP server
 @mcp.tool()
 async def get_forecast(location: str) -> str:
     return "Temperature: 30°C\n" "Humidity: 50%\n" "Condition: Sunny\n"
 
-# initialize the Agntcy factory
+# Initialize the Agntcy factory
 factory = AgntcyFactory()
 
-# create an Agntcy factory transport instance
-transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name="default/default/weather_server")
-# transport = factory.create_transport("NATS", endpoint="localhost:4222")
+# Create a transport instance (swap "SLIM" for "NATS" to use NATS)
+transport = factory.create_transport(
+    "SLIM", endpoint="http://localhost:46357", name="default/default/weather_server"
+)
 
 async def main():
-    # create an app session and serve the MCP server via an AppContainer
+    # Create an app session and serve the MCP server via an AppContainer.
+    # Note: we pass mcp._mcp_server (the low-level Server) since MCPServerHandler
+    # requires it. The handler auto-detection picks MCPServerHandler for this type.
     app_session = factory.create_app_session(max_sessions=1)
     app_container = AppContainer(
         mcp._mcp_server, transport=transport, topic="my_weather_agent.mcp"
@@ -73,25 +124,25 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Next we will create a simple client that queries the weather server. Create a file named `weather_client.py` and request an MCP client via the Agntcy factory:
+### Client: `weather_client.py`
 
 ```python
 from agntcy_app_sdk.factory import AgntcyFactory
 import asyncio
 
 factory = AgntcyFactory()
-transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name="default/default/weather_client")
+transport = factory.create_transport(
+    "SLIM", endpoint="http://localhost:46357", name="default/default/weather_client"
+)
 # transport = factory.create_transport("NATS", endpoint="localhost:4222")
 
 async def main():
-    # Create a MCP client
-    mcp_client = factory.create_client(
-        "MCP",
-        agent_topic="default/default/weather_server",
+    # Create an MCP client — returns an async context manager wrapping a ClientSession
+    mcp_client = await factory.mcp().create_client(
+        topic="default/default/weather_server",
         transport=transport,
     )
     async with mcp_client as client:
-        # Build message request
         tools = await client.list_tools()
         print("[test] Tools available:", tools)
 
@@ -105,43 +156,42 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-A few notes about the code above:
+A few notes:
 
-- The weather server is not binding to a host and port as the MCP server typically would, rather it is listening on a provided topic via the transport. In the current release, both the clent and server must know of and use the same topic to communicate.
+- The server does not bind to a host and port — it listens on the given topic via the transport. Both client and server must use the same topic to communicate.
+- Swapping `"SLIM"` for `"NATS"` (and changing the endpoint) is all that's needed to switch transports.
 
-### 🏁 Running the Example
+### Running
 
-First lets run the SLIM transport server, see the agntcy-app-sdk [docker-compose.yaml](https://github.com/agntcy/app-sdk/blob/main/infra/docker/docker-compose.yaml) or SLIM [repo](https://github.com/agntcy/slim/tree/main).
+First start the SLIM transport server — see the agntcy-app-sdk [docker-compose.yaml](https://github.com/agntcy/app-sdk/blob/main/services/docker/docker-compose.yaml) or SLIM [repo](https://github.com/agntcy/slim/tree/main).
 
-Now we can run the weather agent server:
+Run the weather server:
 
 ```bash
 uv run python weather_server.py
 ```
 
-You should see a log message indicating that the message bridge is running:
+You should see:
 
 ```
-2025-08-07 09:43:02 [agntcy_app_sdk.transports.slim.transport] [INFO] [subscribe:168] Subscribed to default/default/my_weather_agent.mcp
+[agntcy_app_sdk.transport.slim.transport] [INFO] Subscribed to default/default/my_weather_agent.mcp
 ```
 
-Next, we can run the weather client:
+In another terminal, run the weather client:
 
 ```bash
 uv run python weather_client.py
 ```
 
-You should see a print output with the weather report:
+You should see:
 
 ```
 Tool call result: meta=None content=[TextContent(type='text', text='Temperature: 30°C\nHumidity: 50%\nCondition: Sunny\n', annotations=None, meta=None)] structuredContent={'result': 'Temperature: 30°C\nHumidity: 50%\nCondition: Sunny\n'} isError=False
 ```
 
-🚀 Congratulations! You have successfully created an MCP client and server that communicate over SLIM via the agntcy-app-sdk SLIM transport.
+---
 
-For a fully functional multi-agent example integrating A2A, Agntcy, and Langgraph, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy).
-
-### 🖥️ + 🐳 Practical Example: Host and Docker resource monitoring
+## Example 2 — Practical multi-server monitoring
 
 The `examples/mcp/` directory demonstrates how **multiple MCP servers register on different topics** and how **one client can reach each server independently** by targeting its topic. The example uses [psutil](https://github.com/giampaolo/psutil) for host metrics and [docker-py](https://github.com/docker/docker-py) for container metrics.
 
@@ -152,7 +202,7 @@ cd examples/mcp
 uv sync
 ```
 
-#### Two servers, two topics
+### Two servers, two topics
 
 Each server is a standalone process that registers its tools on its own topic:
 
@@ -187,14 +237,14 @@ app_session.add_app_container("default_session", app_container)
 await app_session.start_all_sessions(keep_alive=True)
 ```
 
-#### One client, multiple topics
+### One client, multiple topics
 
-The client (`monitoring_client.py`) accepts a `--topics` argument listing the topics to query (defaults to both `host_monitor.mcp` and `docker_monitor.mcp`). For each topic it creates a separate MCP client, lists the available tools, then calls a representative tool if it recognizes one — `get_system_summary` for host monitoring, `list_containers` for Docker monitoring:
+The client (`monitoring_client.py`) accepts a `--topics` argument listing the topics to query (defaults to both `host_monitor.mcp` and `docker_monitor.mcp`). For each topic it creates a separate MCP client, lists the available tools, then calls a representative tool:
 
 ```python
 async def _query_server(topic, transport_type, endpoint):
     transport = factory.create_transport(transport_type, endpoint=endpoint, ...)
-    mcp_client = factory.create_client("MCP", agent_topic=topic, transport=transport)
+    mcp_client = await factory.mcp().create_client(topic=topic, transport=transport)
     async with mcp_client as client:
         tools = await client.list_tools()
         tool_names = [t.name for t in tools.tools]
@@ -210,7 +260,7 @@ for topic in topics:
     await _query_server(topic, transport_type, endpoint)
 ```
 
-#### Running the example
+### Running the example
 
 From the `examples/mcp` directory:
 
@@ -233,26 +283,41 @@ uv run python monitoring_client.py --transport SLIM --endpoint http://localhost:
 
 > **Note:** Use `--transport NATS --endpoint localhost:4222` for NATS instead of SLIM. See the full source in [`examples/mcp/`](../examples/mcp/).
 
-### ✨ FastMCP Support (Updated: 2025/08/18)
+---
 
-The Agntcy Application SDK now fully supports FastMCP, an enhanced version of the MCP protocol designed for high-performance and concurrent operations. FastMCP introduces additional capabilities such as streamable HTTP transport and optimized initialization flows. Developers can leverage these features seamlessly using the `FastMCPProtocol`.
+## Example 3 — FastMCP (Streamable HTTP + Optional Transport Bridge)
 
-#### Initialization Flow
+FastMCP runs an HTTP server (Uvicorn) that speaks the MCP streamable HTTP transport natively. Optionally, a SLIM or NATS transport can be wired alongside HTTP for bridged access.
 
-The FastMCP client initialization involves two POST requests:
+### Initialization flow
 
-1. **Initialization Request**: Establishes the session and retrieves the `Mcp-Session-Id`.
-2. **Notification Request**: Confirms the session initialization.
+The FastMCP client initialization involves two HTTP POST requests that establish a session:
 
-The following diagram illustrates the initialization flow:
+```
+  Client                                 FastMCP Server (Uvicorn :8081)
+    │                                              │
+    │  POST / {"method": "initialize", ...}        │
+    │─────────────────────────────────────────────>│
+    │                                              │
+    │  200 OK  +  Mcp-Session-Id: <session_id>     │
+    │<─────────────────────────────────────────────│
+    │                                              │
+    │  POST / {"method": "notifications/initialized"}
+    │  Mcp-Session-Id: <session_id>                │
+    │─────────────────────────────────────────────>│
+    │                                              │
+    │  200 OK (session ready)                      │
+    │<─────────────────────────────────────────────│
+    │                                              │
+    │  POST / {"method": "tools/list", ...}        │
+    │  Mcp-Session-Id: <session_id>                │
+    │─────────────────────────────────────────────>│
+    │                                              │
+```
 
-<p align="center">
-  <img src="./fast-mcp-client-init.png" alt="FastMCP Client Initialization Flow" width="90%">
-</p>
+For more details, refer to the [MCP transport specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram).
 
-For more details, refer to the [official documentation](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram).
-
-#### Example: Creating and Running a FastMCP Server
+### Server: `weather_server_fast.py`
 
 ```python
 import asyncio
@@ -260,78 +325,59 @@ from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.app_sessions import AppContainer
 from mcp.server.fastmcp import FastMCP
 
-# Create an MCP server instance
+# Create a FastMCP server instance
 mcp = FastMCP()
 
-# Add a tool to the MCP server
+# Add a tool
 @mcp.tool()
 async def get_forecast(location: str) -> str:
-    """
-    Tool to fetch the weather forecast for a given location.
-
-    :param location: The location for which the forecast is requested.
-    :return: A string containing the weather forecast.
-    """
+    """Fetch the weather forecast for a given location."""
     return "Temperature: 30°C\nHumidity: 50%\nCondition: Sunny\n"
 
-# Initialize the Agntcy factory
 factory = AgntcyFactory()
 
 async def main():
-    # Create the transport instance
-    transport_type = "SLIM"  # Replace with "NATS" if using NATS transport
-    endpoint = "http://localhost:46357"  # Replace with your transport endpoint
-    transport = factory.create_transport(transport_type, endpoint=endpoint)
-    print(f"[setup] Transport created: {transport_type} | Endpoint: {endpoint}")
-
-    # Create an app session and serve via AppContainer
+    # Option A: FastMCP with transport bridge (HTTP + SLIM)
+    transport = factory.create_transport(
+        "SLIM", endpoint="http://localhost:46357", name="default/default/weather_fast"
+    )
     app_session = factory.create_app_session(max_sessions=1)
     app_container = AppContainer(
-        mcp._mcp_server, transport=transport, topic="test_topic.mcp"
+        mcp, transport=transport, topic="weather_agent.fastmcp"
     )
-    app_session.add_app_container("default_session", app_container)
-    print("[setup] App session created with topic: test_topic.mcp")
 
-    # Start the session
-    print("[start] Starting the app session...")
+    # Option B: FastMCP HTTP-only (no transport bridge)
+    # app_container = AppContainer(mcp)
+
+    app_session.add_app_container("default_session", app_container)
     await app_session.start_all_sessions(keep_alive=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-#### Default Port Configuration
+Note: For FastMCP, pass the `mcp` instance directly (not `mcp._mcp_server`). The handler auto-detection selects `FastMCPServerHandler` for `FastMCP` types.
 
-The FastMCP server uses **port 8081** by default to avoid conflicts with other common ports like 8000. However, you can configure the port by setting the `FAST_MCP_PORT` environment variable.
-
-For example, to change the port to 9090, you can run:
-
-```bash
-export FAST_MCP_PORT=9090
-```
-
-Then, start your server as usual. The server will now listen on port 9090.
-
-#### Example: Creating a FastMCP Client
-
-The `FastMCPProtocol.create_client` method allows you to create an MCP client for interacting with a FastMCP server. Below is an example demonstrating its usage, including the `route_path` parameter.
+### Client: `weather_client_fast.py`
 
 ```python
-from agntcy_app_sdk.protocols.fast_mcp.protocol import FastMCPProtocol
 from agntcy_app_sdk.factory import AgntcyFactory
 import asyncio
 
-async def main():
-    protocol = FastMCPProtocol()
-    slim_transport = AgntcyFactory().create_transport("SLIM", endpoint="http://localhost:46357")
+factory = AgntcyFactory()
 
-    # Create a FastMCP client
-    client = await protocol.create_client(
+# Optional: create a transport for bridged access
+transport = factory.create_transport(
+    "SLIM", endpoint="http://localhost:46357", name="default/default/weather_client_fast"
+)
+
+async def main():
+    # Create a FastMCP client — performs the HTTP initialization handshake,
+    # then returns an MCPClient for point-to-point requests.
+    client = await factory.fast_mcp().create_client(
         url="http://localhost:8081",
         topic="weather_agent.fastmcp",
-        transport=slim_transport,  # Optional transport instance
-        route_path="/custom-path",  # Custom route path for the client
-        auth="your-bearer-token",  # Optional authentication
+        transport=transport,
     )
 
     async with client as mcp_client:
@@ -348,20 +394,30 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-For more details, refer to the [FastMCP API Reference](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sequence-diagram).
+### Default port configuration
 
-### Identity TBAC Integration
+The FastMCP server uses **port 8081** by default. Configure it via the `FAST_MCP_PORT` environment variable:
 
-Activate Agntcy Identity Service TBAC by configuring the `IDENTITY_AUTH_ENABLED` and `IDENTITY_SERVICE_API_KEY` environment variable with the Identity App Service API key.  
+```bash
+export FAST_MCP_PORT=9090
+```
+
+---
+
+## Identity TBAC Integration
+
+Activate Agntcy Identity Service TBAC by configuring the `IDENTITY_AUTH_ENABLED` and `IDENTITY_SERVICE_API_KEY` environment variable with the Identity App Service API key.
 For more details, refer to the [official documentation](https://identity-docs.outshift.com/docs/dev#mcp-integration-using-the-python-sdk).
 
 **Important**: Ensure the `IDENTITY_SERVICE_API_KEY` values for the client and server are different to enforce proper TBAC functionality.
 
-### ⚙️ Contributing additional Transports
+---
+
+## Contributing additional Transports
 
 To contribute a new transport implementation, follow these steps:
 
-1. **Implement the Transport Interface**: Create a new class for your transport in the `src/agntcy_app_sdk/transports` directory. Ensure it inherits from the `BaseTransport` interface and implements all required methods.
+1. **Implement the Transport Interface**: Create a new class for your transport in the `src/agntcy_app_sdk/transport/` directory. Ensure it inherits from the `BaseTransport` interface and implements all required methods.
 
 2. **Update the Factory**: Modify the `AgntcyFactory` to include your new transport in the `create_transport` method.
 
@@ -372,3 +428,5 @@ To contribute a new transport implementation, follow these steps:
 5. **Submit a Pull Request**: Once your changes are complete, submit a pull request for review.
 
 See [API Reference](API_REFERENCE.md) for detailed SDK API documentation.
+
+For a fully functional multi-agent example integrating A2A, Agntcy, and Langgraph, check out our [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy).

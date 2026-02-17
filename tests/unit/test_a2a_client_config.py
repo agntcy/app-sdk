@@ -416,7 +416,7 @@ class TestPatternsClientTransport:
 class TestA2AExperimentalClient:
     def test_properties(self):
         """Experimental client should expose agent_card, transport, topic properties."""
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
 
@@ -440,7 +440,7 @@ class TestA2AExperimentalClient:
 
     def test_is_client_subclass(self):
         """A2AExperimentalClient should be a subclass of Client."""
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
 
@@ -461,7 +461,7 @@ class TestA2AExperimentalClient:
 
     def test_experimental_methods_available(self):
         """Experimental client should have broadcast and groupchat methods."""
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
 
@@ -488,7 +488,7 @@ class TestA2AExperimentalClient:
     @pytest.mark.asyncio
     async def test_get_card(self):
         """get_card should return the cached agent card."""
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
 
@@ -623,7 +623,7 @@ class TestA2AClientFactory:
     async def test_create_with_eager_slim_transport(self):
         """create() with eager slim_transport should return A2AExperimentalClient."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
@@ -648,7 +648,7 @@ class TestA2AClientFactory:
     async def test_create_with_eager_nats_transport(self):
         """create() with eager nats_transport should return A2AExperimentalClient."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
@@ -673,7 +673,7 @@ class TestA2AClientFactory:
     async def test_create_jsonrpc_returns_upstream_client(self):
         """create() for JSONRPC should return upstream Client, not A2AExperimentalClient."""
         from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
         from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
@@ -923,7 +923,7 @@ class TestMultiTransportNegotiation:
     @pytest.mark.asyncio
     async def test_create_dispatches_slimpatterns(self):
         """create() with slimpatterns card should return A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
 
@@ -940,7 +940,7 @@ class TestMultiTransportNegotiation:
     @pytest.mark.asyncio
     async def test_create_dispatches_natspatterns(self):
         """create() with natspatterns card should return A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
             A2AExperimentalClient,
         )
 
