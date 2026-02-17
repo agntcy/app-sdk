@@ -1,6 +1,20 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+"""Experimental A2A client for communication patterns beyond the A2A spec.
+
+The standard A2A client handles point-to-point request/response between
+two agents. This module extends that model with experimental operations
+— broadcast (publish/subscribe) and multi-party group chat — over
+non-HTTP transports such as SLIM and NATS.
+
+The client preserves core A2A benefits: AgentCard-based discovery,
+JSON-RPC message envelopes, and typed ``MessageSendParams`` payloads.
+Standard A2A operations (send_message, get_task, etc.) delegate to the
+inner upstream ``Client``; experimental operations (broadcast_message,
+start_groupchat) delegate directly to the underlying ``BaseTransport``.
+"""
+
 from __future__ import annotations
 
 import asyncio

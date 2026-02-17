@@ -11,7 +11,7 @@ from agntcy_app_sdk.semantic.a2a.server import (
 )
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig as A2AClientConfig
-from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
     A2AExperimentalClient,
 )
 from agntcy_app_sdk.semantic.a2a.client.transports import PatternsClientTransport

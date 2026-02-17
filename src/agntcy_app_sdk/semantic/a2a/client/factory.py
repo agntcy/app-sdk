@@ -20,7 +20,7 @@ from slima2a.client_transport import SRPCTransport
 
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-from agntcy_app_sdk.semantic.a2a.client.additional_patterns import (
+from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
     A2AExperimentalClient,
 )
 from agntcy_app_sdk.semantic.a2a.client.transports import (

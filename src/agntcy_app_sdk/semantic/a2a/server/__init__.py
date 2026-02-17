@@ -3,7 +3,7 @@
 
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
-from agntcy_app_sdk.semantic.a2a.server.additional_patterns import (
+from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
     A2AExperimentalServer,
     A2AExperimentalServerHandler,
 )

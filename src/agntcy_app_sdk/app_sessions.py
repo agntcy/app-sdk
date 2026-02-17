@@ -28,7 +28,7 @@ def _get_handler_map() -> dict[type, type]:
         from mcp.server.fastmcp import FastMCP
         from mcp.server.lowlevel import Server as MCPServer
 
-        from agntcy_app_sdk.semantic.a2a.server.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
             A2AExperimentalServerHandler,
         )
         from agntcy_app_sdk.semantic.a2a.server.srpc import (
@@ -108,7 +108,7 @@ class ContainerBuilder:
         # provided, serve it over native HTTP JSONRPC instead of going through
         # the patterns handler (which requires a transport).
         from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
-        from agntcy_app_sdk.semantic.a2a.server.additional_patterns import (
+        from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
             A2AExperimentalServerHandler,
         )
 
