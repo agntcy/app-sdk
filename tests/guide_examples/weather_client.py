@@ -63,7 +63,9 @@ async def main(transport_type: str, endpoint: str):
         name="default/default/weather_client",
     )
 
-    agent_card = A2AExperimentalServer.create_client_card(base_agent_card, transport_type)
+    agent_card = A2AExperimentalServer.create_client_card(
+        base_agent_card, transport_type
+    )
 
     config_kwargs = {}
     if transport_type == "SLIM":
@@ -81,7 +83,9 @@ async def main(transport_type: str, endpoint: str):
                 messageId=str(uuid.uuid4()),
                 role=Role.user,
                 parts=[
-                    Part(root=TextPart(text="Hello, Weather Agent, how is the weather?"))
+                    Part(
+                        root=TextPart(text="Hello, Weather Agent, how is the weather?")
+                    )
                 ],
             ),
         ),

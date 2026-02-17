@@ -97,9 +97,7 @@ async def main(transport_type: str, endpoint: str):
 
     topic = A2AExperimentalServer.create_agent_topic(agent_card)
     name = f"default/default/{topic}"
-    transport = factory.create_transport(
-        transport_type, endpoint=endpoint, name=name
-    )
+    transport = factory.create_transport(transport_type, endpoint=endpoint, name=name)
 
     session = factory.create_app_session(max_sessions=1)
     session.add(server).with_transport(transport).with_session_id("weather").build()

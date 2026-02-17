@@ -21,7 +21,6 @@ import signal
 import subprocess
 import time
 
-import pytest
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -109,9 +108,14 @@ class TestExample1SlimRPC:
         # Launch server
         server_proc = _launch_server(
             [
-                "uv", "run", "python", server_script,
-                "--endpoint", SLIM_ENDPOINT,
-                "--name", agent_name,
+                "uv",
+                "run",
+                "python",
+                server_script,
+                "--endpoint",
+                SLIM_ENDPOINT,
+                "--name",
+                agent_name,
             ]
         )
 
@@ -128,9 +132,14 @@ class TestExample1SlimRPC:
             # Run client
             returncode, output = _run_client(
                 [
-                    "uv", "run", "python", client_script,
-                    "--endpoint", SLIM_ENDPOINT,
-                    "--agent-name", agent_name,
+                    "uv",
+                    "run",
+                    "python",
+                    client_script,
+                    "--endpoint",
+                    SLIM_ENDPOINT,
+                    "--agent-name",
+                    agent_name,
                 ]
             )
 
@@ -138,15 +147,15 @@ class TestExample1SlimRPC:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert returncode == 0, (
-                f"Client exited with code {returncode}. Output:\n{output}"
-            )
-            assert "SUCCESS" in output, (
-                f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            )
-            assert "sunny" in output.lower() or "75" in output, (
-                f"Expected weather report in output. Got:\n{output}"
-            )
+            assert (
+                returncode == 0
+            ), f"Client exited with code {returncode}. Output:\n{output}"
+            assert (
+                "SUCCESS" in output
+            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            assert (
+                "sunny" in output.lower() or "75" in output
+            ), f"Expected weather report in output. Got:\n{output}"
 
         finally:
             _kill_server(server_proc)
@@ -168,9 +177,14 @@ class TestExample2ExperimentalPatternsSLIM:
         # Launch server
         server_proc = _launch_server(
             [
-                "uv", "run", "python", server_script,
-                "--transport", "SLIM",
-                "--endpoint", SLIM_ENDPOINT,
+                "uv",
+                "run",
+                "python",
+                server_script,
+                "--transport",
+                "SLIM",
+                "--endpoint",
+                SLIM_ENDPOINT,
             ]
         )
 
@@ -187,9 +201,14 @@ class TestExample2ExperimentalPatternsSLIM:
             # Run client
             returncode, output = _run_client(
                 [
-                    "uv", "run", "python", client_script,
-                    "--transport", "SLIM",
-                    "--endpoint", SLIM_ENDPOINT,
+                    "uv",
+                    "run",
+                    "python",
+                    client_script,
+                    "--transport",
+                    "SLIM",
+                    "--endpoint",
+                    SLIM_ENDPOINT,
                 ]
             )
 
@@ -197,15 +216,15 @@ class TestExample2ExperimentalPatternsSLIM:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert returncode == 0, (
-                f"Client exited with code {returncode}. Output:\n{output}"
-            )
-            assert "SUCCESS" in output, (
-                f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            )
-            assert "sunny" in output.lower() or "75" in output, (
-                f"Expected weather report in output. Got:\n{output}"
-            )
+            assert (
+                returncode == 0
+            ), f"Client exited with code {returncode}. Output:\n{output}"
+            assert (
+                "SUCCESS" in output
+            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            assert (
+                "sunny" in output.lower() or "75" in output
+            ), f"Expected weather report in output. Got:\n{output}"
 
         finally:
             _kill_server(server_proc)
@@ -227,9 +246,14 @@ class TestExample2ExperimentalPatternsNATS:
         # Launch server
         server_proc = _launch_server(
             [
-                "uv", "run", "python", server_script,
-                "--transport", "NATS",
-                "--endpoint", NATS_ENDPOINT,
+                "uv",
+                "run",
+                "python",
+                server_script,
+                "--transport",
+                "NATS",
+                "--endpoint",
+                NATS_ENDPOINT,
             ]
         )
 
@@ -246,9 +270,14 @@ class TestExample2ExperimentalPatternsNATS:
             # Run client
             returncode, output = _run_client(
                 [
-                    "uv", "run", "python", client_script,
-                    "--transport", "NATS",
-                    "--endpoint", NATS_ENDPOINT,
+                    "uv",
+                    "run",
+                    "python",
+                    client_script,
+                    "--transport",
+                    "NATS",
+                    "--endpoint",
+                    NATS_ENDPOINT,
                 ]
             )
 
@@ -256,15 +285,15 @@ class TestExample2ExperimentalPatternsNATS:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert returncode == 0, (
-                f"Client exited with code {returncode}. Output:\n{output}"
-            )
-            assert "SUCCESS" in output, (
-                f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            )
-            assert "sunny" in output.lower() or "75" in output, (
-                f"Expected weather report in output. Got:\n{output}"
-            )
+            assert (
+                returncode == 0
+            ), f"Client exited with code {returncode}. Output:\n{output}"
+            assert (
+                "SUCCESS" in output
+            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            assert (
+                "sunny" in output.lower() or "75" in output
+            ), f"Expected weather report in output. Got:\n{output}"
 
         finally:
             _kill_server(server_proc)
