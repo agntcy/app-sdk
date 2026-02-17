@@ -1,13 +1,13 @@
 [project]
 name = "agntcy-app-sdk"
-version = "0.4.7"
+version = "0.5.0"
 description = "Agntcy Application SDK for Python"
 authors = [{ name = "Cody Hartsook", email = "codyhartsook@gmail.com" }]
 requires-python = ">=3.12,<4.0"
 license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
-    "a2a-sdk==0.3.2",
+    "a2a-sdk==0.3.20",
     "nats-py>=2.10.0,<3",
     "coloredlogs>=15.0.1,<16",
     "langchain-community>=0.3.24",
@@ -16,8 +16,9 @@ dependencies = [
     "httpx>=0.28.1",
     "ioa-observe-sdk==1.0.34",
     "asgi-lifespan>=2.1.0",
-    "slim-bindings~=1.0",
+    "slim-bindings~=1.1",
     "agntcy-identity-service-sdk==0.0.7",
+    "slima2a==0.3.0",
 ]
 
 [project.urls]

@@ -20,8 +20,7 @@ import json
 import docker
 from mcp.server.fastmcp import FastMCP
 
-from agntcy_app_sdk.factory import AgntcyFactory, TransportTypes
-from agntcy_app_sdk.app_sessions import AppContainer
+from agntcy_app_sdk.factory import AgntcyFactory
 
 factory = AgntcyFactory(enable_tracing=False)
 
@@ -136,12 +135,9 @@ async def main(transport_type: str, endpoint: str, name: str, block: bool = True
     transport = factory.create_transport(transport_type, endpoint=endpoint, name=name)
 
     app_session = factory.create_app_session(max_sessions=1)
-    app_container = AppContainer(
-        mcp._mcp_server,
-        transport=transport,
-        topic="docker_monitor.mcp",
-    )
-    app_session.add_app_container("default_session", app_container)
+    app_session.add(mcp._mcp_server).with_transport(transport).with_topic(
+        "docker_monitor.mcp"
+    ).with_session_id("default_session").build()
     await app_session.start_all_sessions(keep_alive=block)
 
 
@@ -152,8 +148,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--transport",
         type=str,
-        choices=[t.value for t in TransportTypes],
-        default=TransportTypes.NATS.value,
+        choices=AgntcyFactory().registered_transports(),
+        default="NATS",
         help="Transport type to use (default: NATS)",
     )
     parser.add_argument(

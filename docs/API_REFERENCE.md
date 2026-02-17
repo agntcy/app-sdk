@@ -15,8 +15,6 @@ The AGNTCY Factory SDK provides a flexible framework for creating and managing a
   - [AppSession](#appsession)
   - [AppContainer](#appcontainer)
 - [Enumerations](#enumerations)
-  - [ProtocolTypes](#protocoltypes)
-  - [TransportTypes](#transporttypes)
   - [ObservabilityProviders](#observabilityproviders)
   - [IdentityProviders](#identityproviders)
 - [Methods Reference](#methods-reference)
@@ -56,11 +54,8 @@ factory = AgntcyFactory(
     log_level="INFO"
 )
 
-# Create a client
-client = factory.create_client(
-    protocol="A2A",
-    agent_url="https://agent.example.com"
-)
+# Create an A2A client factory
+a2a = factory.a2a()
 
 # Create a transport
 transport = factory.create_transport(
@@ -228,48 +223,6 @@ container = AppContainer(
 ---
 
 ## Enumerations
-
-### ProtocolTypes
-
-Defines available semantic protocol types.
-
-```python
-class ProtocolTypes(Enum):
-    A2A = "A2A"    # Agent-to-Agent protocol
-    MCP = "MCP"    # Model Context Protocol
-```
-
-**Usage:**
-
-```python
-from agntcy_app_sdk.factory import ProtocolTypes
-
-protocol = ProtocolTypes.A2A.value  # "A2A"
-```
-
----
-
-### TransportTypes
-
-Defines available transport layer types.
-
-```python
-class TransportTypes(Enum):
-    A2A = "A2A"
-    SLIM = "SLIM"
-    NATS = "NATS"
-    MQTT = "MQTT"
-    STREAMABLE_HTTP = "StreamableHTTP"
-```
-
-**Transport Descriptions:**
-
-- **SLIM**: Lightweight internal transport
-- **NATS**: NATS messaging system transport
-- **MQTT**: MQTT protocol transport
-- **StreamableHTTP**: HTTP-based streaming transport
-
----
 
 ### ObservabilityProviders
 
@@ -731,60 +684,84 @@ print(providers)  # ['ioa_observe']
 
 ---
 
-### create_client()
+### a2a()
 
-Creates a client for the specified protocol and transport.
+Returns a typed A2A client factory.
 
 ```python
-def create_client(
-    protocol: str,
-    agent_url: str | None = None,
-    agent_topic: str | None = None,
-    transport: BaseTransport | None = None,
-    **kwargs
-) -> Client
+def a2a(
+    config: ClientConfig | None = None
+) -> A2AClientFactory
 ```
 
 **Parameters:**
 
-| Parameter     | Type                    | Required | Description                             |
-| ------------- | ----------------------- | -------- | --------------------------------------- |
-| `protocol`    | `str`                   | Yes      | Protocol type (e.g., "A2A", "MCP")      |
-| `agent_url`   | `str \| None`           | No\*     | URL endpoint for the agent              |
-| `agent_topic` | `str \| None`           | No\*     | Topic identifier for the agent          |
-| `transport`   | `BaseTransport \| None` | No       | Custom transport instance               |
-| `**kwargs`    | `dict`                  | No       | Additional protocol-specific parameters |
+| Parameter | Type                   | Required | Description              |
+| --------- | ---------------------- | -------- | ------------------------ |
+| `config`  | `ClientConfig \| None` | No       | A2A client configuration |
 
-**\*Note:** Either `agent_url` or `agent_topic` must be provided.
-
-**Returns:** Client instance for the specified protocol
-
-**Raises:**
-
-- `ValueError`: If neither `agent_url` nor `agent_topic` is provided
-- `ValueError`: If the specified protocol is not registered
+**Returns:** `A2AClientFactory` instance
 
 **Example:**
 
 ```python
-# Create client with URL
-client = factory.create_client(
-    protocol="A2A",
-    agent_url="https://agent.example.com/api"
-)
+from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 
-# Create client with topic
-client = factory.create_client(
-    protocol="MCP",
-    agent_topic="agents.processing"
-)
+# Create A2A client factory with default config
+a2a = factory.a2a()
 
-# Create client with custom transport
-custom_transport = factory.create_transport("NATS", endpoint="nats://localhost:4222")
-client = factory.create_client(
-    protocol="A2A",
-    agent_url="https://agent.example.com",
-    transport=custom_transport
+# Create with SLIM transport config
+a2a = factory.a2a(ClientConfig(slim_transport=my_transport))
+
+# Then create a client from a card
+client = await a2a.create(agent_card)
+
+# Or use the convenience connect() method
+client = await a2a.connect("https://agent.example.com")
+```
+
+---
+
+### mcp()
+
+Returns a typed MCP client factory.
+
+```python
+def mcp() -> MCPClientFactory
+```
+
+**Returns:** `MCPClientFactory` instance
+
+**Example:**
+
+```python
+# Create MCP client
+mcp_client = await factory.mcp().create_client(
+    topic="agents.processing",
+    transport=my_transport
+)
+```
+
+---
+
+### fast_mcp()
+
+Returns a typed FastMCP client factory.
+
+```python
+def fast_mcp() -> FastMCPClientFactory
+```
+
+**Returns:** `FastMCPClientFactory` instance
+
+**Example:**
+
+```python
+# Create FastMCP client
+client = await factory.fast_mcp().create_client(
+    url="http://localhost:8081/mcp",
+    topic="my_agent",
+    transport=my_transport
 )
 ```
 
@@ -871,34 +848,6 @@ transport = factory.create_transport(
 
 ---
 
-### create_protocol()
-
-Creates a protocol instance for the specified protocol type.
-
-```python
-def create_protocol(protocol: str) -> BaseAgentProtocol
-```
-
-**Parameters:**
-
-| Parameter  | Type  | Required | Description                                   |
-| ---------- | ----- | -------- | --------------------------------------------- |
-| `protocol` | `str` | Yes      | Protocol type (e.g., "A2A", "MCP", "FastMCP") |
-
-**Returns:** Protocol instance
-
-**Raises:**
-
-- `ValueError`: If the specified protocol is not registered
-
-**Example:**
-
-```python
-protocol = factory.create_protocol("A2A")
-```
-
----
-
 ### register_transport() (Class Method)
 
 Decorator to register a custom transport implementation.
@@ -929,36 +878,6 @@ class CustomTransport(BaseTransport):
 
 ---
 
-### register_protocol() (Class Method)
-
-Decorator to register a custom protocol implementation.
-
-```python
-@classmethod
-def register_protocol(cls, protocol_type: str)
-```
-
-**Parameters:**
-
-| Parameter       | Type  | Description                |
-| --------------- | ----- | -------------------------- |
-| `protocol_type` | `str` | Name for the protocol type |
-
-**Returns:** Decorator function
-
-**Example:**
-
-```python
-from agntcy_app_sdk.semantic.base import BaseAgentProtocol
-
-@AgntcyFactory.register_protocol("CUSTOM_PROTOCOL")
-class CustomProtocol(BaseAgentProtocol):
-    # Implementation here
-    pass
-```
-
----
-
 ## Usage Examples
 
 ### Basic Client Creation
@@ -969,11 +888,8 @@ from agntcy_app_sdk.factory import AgntcyFactory
 # Initialize factory
 factory = AgntcyFactory(log_level="DEBUG")
 
-# Create an A2A client
-client = factory.create_client(
-    protocol="A2A",
-    agent_url="https://api.agent.example.com"
-)
+# Create an A2A client via card resolution
+client = await factory.a2a().connect("https://api.agent.example.com")
 
 # Use the client
 response = client.send_message("Hello, agent!")
@@ -988,7 +904,7 @@ response = client.send_message("Hello, agent!")
 slim_transport = factory.create_transport(
     transport="SLIM",
     endpoint="http://localhost:46357",
-    name=f"org/namespace/{A2AProtocol.create_agent_topic(A2A_CARD)}"
+    name=f"org/namespace/{A2AExperimentalServer.create_agent_topic(A2A_CARD)}"
 )
 
 # Create NATS transport
@@ -998,11 +914,10 @@ nats_transport = factory.create_transport(
 )
 
 # Create clients with different transports
-a2a_client = factory.create_client(
-    protocol="A2A",
-    agent_topic=A2AProtocol.create_agent_topic(A2A_CARD),
-    transport=slim_transport
-)
+from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+
+a2a = factory.a2a(ClientConfig(slim_transport=slim_transport))
+a2a_client = await a2a.connect(A2A_CARD)
 ```
 
 ---
@@ -1023,9 +938,8 @@ factory = AgntcyFactory(
 )
 
 # All operations will now be traced
-client = factory.create_client(
-    protocol="A2A",
-    ...
+client = await factory.a2a().connect(
+    "https://agent.example.com"
 )
 ```
 
@@ -1058,7 +972,7 @@ async def main():
     transport = factory.create_transport(
         transport="SLIM",
         endpoint="http://localhost:46357",
-        name=f"org/namespace/{A2AProtocol.create_agent_topic(A2A_CARD)}"
+        name=f"org/namespace/{A2AExperimentalServer.create_agent_topic(A2A_CARD)}"
     )
 
     # Create app container
@@ -1101,7 +1015,7 @@ async def main():
     slim_transport = factory.create_transport(
         transport="SLIM",
         endpoint="http://localhost:46357",
-        name=f"org/namespace/{A2AProtocol.create_agent_topic(A2A_CARD)}"
+        name=f"org/namespace/{A2AExperimentalServer.create_agent_topic(A2A_CARD)}"
     )
 
     # Create multiple app containers

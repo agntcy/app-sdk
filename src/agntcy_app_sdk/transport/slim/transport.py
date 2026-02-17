@@ -4,15 +4,10 @@
 from typing import Optional, Callable, List, AsyncIterator
 import os
 import asyncio
-from uuid import uuid4
 import datetime
 import slim_bindings
 from identityservice.sdk import IdentityServiceSdk
-from slim_bindings import (
-    Name,
-    Session,
-    MessageContext
-)
+from slim_bindings import Name, Session, MessageContext
 
 from .common import (
     get_or_create_slim_instance,
@@ -23,7 +18,6 @@ from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 
-import agntcy_app_sdk.transport.slim.common
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
 configure_logging()
@@ -38,6 +32,9 @@ class SLIMTransport(BaseTransport):
     """
     SLIM Transport implementation using the slim_bindings library.
     """
+
+    TRANSPORT_TYPE: str = "SLIM"
+    """Registry key used by :class:`AgntcyFactory`."""
 
     def __init__(
         self,
@@ -145,18 +142,24 @@ class SLIMTransport(BaseTransport):
 
         try:
             await point_to_point_session.publish_async(message.serialize(), None, None)
-            logger.debug(f"Published message to {remote_name}, now waiting for response.")
+            logger.debug(
+                f"Published message to {remote_name}, now waiting for response."
+            )
             # Wait for reply from remote peer
-            reply = await point_to_point_session.get_message_async(timeout=datetime.timedelta(seconds=timeout))
+            reply = await point_to_point_session.get_message_async(
+                timeout=datetime.timedelta(seconds=timeout)
+            )
             logger.debug(f"Received message back from {remote_name}")
         except asyncio.TimeoutError:
             logger.warning(f"Request timed out after {timeout} seconds")
             return None
-        except Exception as e:
-            logger.exception(f"Failed to publish message in p2p session")
+        except Exception:
+            logger.exception("Failed to publish message in p2p session")
             return None
         finally:
-            logger.debug(f"Closing point-to-point session: {point_to_point_session.session_id()} ")
+            logger.debug(
+                f"Closing point-to-point session: {point_to_point_session.session_id()} "
+            )
             await self._session_manager.close_session(point_to_point_session)
 
         reply = Message.deserialize(reply.payload)
@@ -265,13 +268,19 @@ class SLIMTransport(BaseTransport):
 
                 await group_session.publish_async(message.serialize(), None, None)
 
-                logger.debug("Published message to topic: %s via session %s, now waiting for responses", topic, group_session.session_id())
+                logger.debug(
+                    "Published message to topic: %s via session %s, now waiting for responses",
+                    topic,
+                    group_session.session_id(),
+                )
 
                 # wait for responses from all invitees or be interrupted by caller
                 messages_received = 0
                 while messages_received < message_limit:
                     try:
-                        received_msg = await group_session.get_message_async(timeout=datetime.timedelta(seconds=timeout))
+                        received_msg = await group_session.get_message_async(
+                            timeout=datetime.timedelta(seconds=timeout)
+                        )
                         reply = Message.deserialize(received_msg.payload)
                         messages_received += 1
                         yield reply
@@ -284,9 +293,12 @@ class SLIMTransport(BaseTransport):
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
+            raise
         finally:
             if group_session:
-                logger.debug(f"Closing group session {group_session.session_id()} after gathering responses")
+                logger.debug(
+                    f"Closing group session {group_session.session_id()} after gathering responses"
+                )
                 await self._session_manager.close_session(group_session)
 
     # -----------------------------------------------------------------------------
@@ -364,7 +376,9 @@ class SLIMTransport(BaseTransport):
                 # Wait for responses from invitees until the end message is received
                 while True:
                     try:
-                        received_msg = await group_session.get_message_async(timeout=datetime.timedelta(seconds=timeout))
+                        received_msg = await group_session.get_message_async(
+                            timeout=datetime.timedelta(seconds=timeout)
+                        )
                         deserialized_msg = Message.deserialize(received_msg.payload)
                         yield deserialized_msg
 
@@ -380,12 +394,15 @@ class SLIMTransport(BaseTransport):
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
             )
+            raise
         finally:
             if group_session:
                 try:
                     await self._session_manager.close_session(group_session)
                 except Exception as e:
-                    logger.error(f"Failed to close session {group_session.session_id()}: {e}")
+                    logger.error(
+                        f"Failed to close session {group_session.session_id()}: {e}"
+                    )
 
     # -----------------------------------------------------------------------------
     # Utilities and setup methods
@@ -425,7 +442,7 @@ class SLIMTransport(BaseTransport):
 
     def type(self) -> str:
         """Return the transport type."""
-        return "SLIM"
+        return self.TRANSPORT_TYPE
 
     async def close(self) -> None:
         if not self._slim_service:
@@ -498,7 +515,9 @@ class SLIMTransport(BaseTransport):
         try:
             while not self._shutdown_event.is_set():
                 try:
-                    received_session = await self._slim_app.listen_for_session_async(timeout=self.message_timeout)
+                    received_session = await self._slim_app.listen_for_session_async(
+                        timeout=self.message_timeout
+                    )
                     logger.info(
                         f"Received new session with id: {received_session.session_id()}, "
                         f"type: {received_session.session_type()}, "
@@ -542,11 +561,19 @@ class SLIMTransport(BaseTransport):
                 except slim_bindings.SlimError.SessionError as e:
                     msg = str(e).lower()
 
-                    if "session channel closed" in msg or "session closed" in msg or "session already closed":
-                        logger.info(f"Session {session_id} closed remotely (likely by moderator), stopping listener")
+                    if (
+                        "session channel closed" in msg
+                        or "session closed" in msg
+                        or "session already closed"
+                    ):
+                        logger.info(
+                            f"Session {session_id} closed remotely (likely by moderator), stopping listener"
+                        )
                         break
                     else:
-                        logger.error(f"Unexpected session error while getting messages: {e}")
+                        logger.error(
+                            f"Unexpected session error while getting messages: {e}"
+                        )
                         await asyncio.sleep(0.5)  # backoff to avoid spin
                 except Exception as e:
                     logger.error(f"Error receiving messages: {e}")
@@ -592,7 +619,9 @@ class SLIMTransport(BaseTransport):
         # Handle response logic
         await self._handle_response(session, msg.context, deserialized_msg, output)
 
-    async def _handle_response(self, session: Session, msg_ctx: MessageContext, original_msg, output: Message) -> None:
+    async def _handle_response(
+        self, session: Session, msg_ctx: MessageContext, original_msg, output: Message
+    ) -> None:
         """Handle response publishing based on message headers."""
         session_id = session.session_id()
 
@@ -639,7 +668,9 @@ class SLIMTransport(BaseTransport):
                 # TODO: Revisit with SLIM team if this still exists in 0.5.0
                 logger.debug(f"Error handling response: {e}")
             elif "session closed" in msg:
-                logger.info(f"Unable to process incoming message, session {session_id} closed remotely (likely by moderator)")
+                logger.info(
+                    f"Unable to process incoming message, session {session_id} closed remotely (likely by moderator)"
+                )
             else:
                 logger.error(f"Error handling response: {e}")
 

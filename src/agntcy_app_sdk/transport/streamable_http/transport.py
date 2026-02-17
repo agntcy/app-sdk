@@ -16,6 +16,9 @@ logger = get_logger(__name__)
 
 
 class StreamableHTTPTransport(BaseTransport):
+    TRANSPORT_TYPE: str = "STREAMABLE_HTTP"
+    """Registry key used by :class:`AgntcyFactory`."""
+
     def __init__(self, endpoint: str):
         self.endpoint: str = endpoint if endpoint else None
         self.session: Optional[ClientSession] = None
@@ -38,7 +41,7 @@ class StreamableHTTPTransport(BaseTransport):
         return cls(endpoint=endpoint, **kwargs)
 
     def type(self) -> str:
-        return "StreamableHTTPTransport"
+        return self.TRANSPORT_TYPE
 
     def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
         """Set the message handler function."""
