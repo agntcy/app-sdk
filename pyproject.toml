@@ -18,6 +18,7 @@ dependencies = [
     "asgi-lifespan>=2.1.0",
     "slim-bindings~=1.1",
     "agntcy-identity-service-sdk==0.0.7",
+    "slima2a==0.3.0",
 ]
 
 [project.urls]

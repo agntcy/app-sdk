@@ -21,6 +21,8 @@ async def test_client(run_fast_mcp_server, transport):
     Launches a server, then fires 5 clients concurrently — each listing
     tools and calling ``get_forecast``.
     """
+    if transport == "JSONRPC":
+        pytest.skip("FastMCP not applicable for JSONRPC transport.")
     endpoint = TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_concurrent_client | {transport} | {endpoint} ---")
 

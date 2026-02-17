@@ -131,6 +131,108 @@ class A2AExperimentalServer:
         """
         return f"{agent_card.name}_{agent_card.version}".replace(" ", "_")
 
+    @staticmethod
+    def create_transport_uri(
+        agent_card: AgentCard,
+        transport_type: str,
+        *,
+        topic: Optional[str] = None,
+    ) -> str:
+        """Build the transport URI for an agent card.
+
+        Returns the scheme-prefixed topic that the server will set as the
+        card's ``url`` at startup — e.g. ``"slim://Weather_Agent_1.0.0"``.
+
+        This is useful when you need the URI but want to stamp the card
+        yourself (e.g. setting ``additional_interfaces``).  For the common
+        case, prefer :meth:`create_client_card` which returns a ready-to-use
+        card copy.
+
+        Args:
+            agent_card: The base agent card (as defined by the agent author).
+            transport_type: Transport type string (``"SLIM"`` or ``"NATS"``).
+            topic: Optional pre-computed topic string.  When provided it is
+                used directly instead of being derived from the card via
+                :meth:`create_agent_topic`.
+
+        Returns:
+            A URI string like ``"slim://Weather_Agent_1.0.0"``.
+
+        Raises:
+            ValueError: If ``transport_type`` is not supported.
+        """
+        entry = _TRANSPORT_NAME_MAP.get(transport_type)
+        if entry is None:
+            raise ValueError(
+                f"Unsupported transport type {transport_type!r}. "
+                f"Supported: {list(_TRANSPORT_NAME_MAP)}"
+            )
+        _preferred, scheme = entry
+        if topic is None:
+            topic = A2AExperimentalServer.create_agent_topic(agent_card)
+        return f"{scheme}://{topic}"
+
+    @staticmethod
+    def create_client_card(
+        agent_card: AgentCard,
+        transport_type: str,
+        *,
+        topic: Optional[str] = None,
+    ) -> AgentCard:
+        """Build a client-side AgentCard with transport metadata.
+
+        Returns a copy of the card with ``preferred_transport`` and ``url``
+        set to match what the server stamps at startup.  The returned card
+        is ready for ``factory.a2a(config).create(card)``.
+
+        This is the client-side counterpart of the server's ``setup()``
+        method which stamps the same fields on its own copy of the card.
+
+        Args:
+            agent_card: The base agent card (as defined by the agent author).
+            transport_type: Transport type string (``"SLIM"`` or ``"NATS"``).
+            topic: Optional pre-computed topic string.  When provided it is
+                used directly instead of being derived from the card via
+                :meth:`create_agent_topic`.  Useful when the server was
+                started with an explicit topic that differs from the
+                auto-derived ``name_version`` format.
+
+        Returns:
+            A copy of the card with ``preferred_transport`` and ``url`` set.
+
+        Raises:
+            ValueError: If ``transport_type`` is not supported.
+
+        Example::
+
+            from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
+                A2AExperimentalServer,
+            )
+
+            # Topic auto-derived from the card's name and version:
+            card = A2AExperimentalServer.create_client_card(agent_card, "SLIM")
+
+            # Explicit topic (e.g. for broadcast or custom routing):
+            card = A2AExperimentalServer.create_client_card(
+                agent_card, "SLIM", topic="my_custom_topic",
+            )
+
+            client = await factory.a2a(config).create(card)
+        """
+        entry = _TRANSPORT_NAME_MAP.get(transport_type)
+        if entry is None:
+            raise ValueError(
+                f"Unsupported transport type {transport_type!r}. "
+                f"Supported: {list(_TRANSPORT_NAME_MAP)}"
+            )
+        preferred, scheme = entry
+        if topic is None:
+            topic = A2AExperimentalServer.create_agent_topic(agent_card)
+        card = agent_card.model_copy()
+        card.preferred_transport = preferred
+        card.url = f"{scheme}://{topic}"
+        return card
+
     def bind_server(self, server: A2AStarletteApplication) -> None:
         """Bind the protocol to a server and extract the JSONRPCHandler."""
         self._server = server

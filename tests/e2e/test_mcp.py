@@ -22,6 +22,8 @@ pytest_plugins = "pytest_asyncio"
 @pytest.mark.asyncio
 async def test_client(run_mcp_server, transport):
     """Point-to-point MCP tool call over each transport."""
+    if transport == "JSONRPC":
+        pytest.skip("MCP not applicable for JSONRPC transport.")
     endpoint = TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_client | {transport} | {endpoint} ---")
 

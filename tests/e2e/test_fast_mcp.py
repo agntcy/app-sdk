@@ -22,6 +22,8 @@ pytest_plugins = "pytest_asyncio"
 @pytest.mark.asyncio
 async def test_client(run_fast_mcp_server, transport):
     """FastMCP tool call with resource/template listing over each transport."""
+    if transport == "JSONRPC":
+        pytest.skip("FastMCP not applicable for JSONRPC transport.")
     endpoint = TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_client | {transport} | {endpoint} ---")
 

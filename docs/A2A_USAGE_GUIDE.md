@@ -393,10 +393,10 @@ async def main():
         name="default/default/weather_client",
     )
 
-    a2a_topic = A2AExperimentalServer.create_agent_topic(agent_card)
+    card = A2AExperimentalServer.create_client_card(agent_card, "SLIM")
 
     config = ClientConfig(slim_transport=transport)
-    client = await factory.a2a(config).create(agent_card)
+    client = await factory.a2a(config).create(card)
 
     request = SendMessageRequest(
         id="request-001",
@@ -420,7 +420,7 @@ if __name__ == "__main__":
 A few notes:
 
 - The weather agent does not provide a URL in its agent card — it is discovered by the transport topic derived from the card.
-- The client uses `A2AExperimentalServer.create_agent_topic` to derive the topic from the agent card for transport-level addressing.
+- The client uses `A2AExperimentalServer.create_client_card` to build a card copy with the correct `preferred_transport` and `url` for transport negotiation.
 - Passing a transport via `.with_transport()` triggers the experimental patterns handler; omitting it would serve over HTTP instead.
 
 ### Running

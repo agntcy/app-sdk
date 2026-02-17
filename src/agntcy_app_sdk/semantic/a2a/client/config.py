@@ -26,6 +26,9 @@ logger = get_logger(__name__)
 class SlimRpcConfig:
     """Minimal fields needed to lazily construct SLIM-RPC infrastructure.
 
+    Note that this is an optional part of the config — you can set up SLIM-RPC eagerly with
+    a pre-built channel factory instead.
+
     When set on :class:`ClientConfig`, the factory will call
     ``setup_slim_client(namespace, group, name)`` only if the AgentCard
     negotiation selects ``slimrpc`` as the winning transport.

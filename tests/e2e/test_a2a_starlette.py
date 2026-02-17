@@ -20,6 +20,9 @@ from ioa_observe.sdk.tracing import session_start
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
+    A2AExperimentalServer,
+)
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
@@ -52,22 +55,24 @@ def _make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageR
 
 
 def _make_transport_card(topic: str, transport_type: str) -> AgentCard:
-    """Synthesise a minimal AgentCard for transport-based tests."""
-    _scheme_map: dict[str, tuple[str, str]] = {
-        "SLIM": ("slimpatterns", "slim"),
-        "NATS": ("natspatterns", "nats"),
-    }
-    preferred, scheme = _scheme_map[transport_type]
-    return AgentCard(
+    """Synthesise a minimal AgentCard for transport-based tests.
+
+    Uses ``A2AExperimentalServer.create_client_card`` with an explicit
+    *topic* so the topic string is stamped as-is (no ``name_version``
+    derivation).
+    """
+    base_card = AgentCard(
         name=topic,
-        url=f"{scheme}://{topic}",
+        url="",
         version="1.0.0",
         defaultInputModes=["text"],
         defaultOutputModes=["text"],
         capabilities=AgentCapabilities(),
         skills=[],
-        preferredTransport=preferred,
         description="Test agent",
+    )
+    return A2AExperimentalServer.create_client_card(
+        base_card, transport_type, topic=topic
     )
 
 

@@ -24,6 +24,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/11/33/719a9331421ee5df0338505548b58b4129a6aca82bba5c8e0593ac8864c7/a2a_sdk-0.3.20-py3-none-any.whl", hash = "sha256:35da261aae28fd22440b61f8eb16a8343b60809e1f7ef028a06d01f17b48a8b9", size = 141547, upload-time = "2025-12-03T15:48:20.812Z" },
 ]
 
+[package.optional-dependencies]
+telemetry = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+]
+
 [[package]]
 name = "agntcy-app-sdk"
 version = "0.4.7"
@@ -39,6 +45,7 @@ dependencies = [
     { name = "mcp", extra = ["cli"] },
     { name = "nats-py" },
     { name = "slim-bindings" },
+    { name = "slima2a" },
     { name = "uvicorn" },
 ]
 
@@ -67,6 +74,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.10.1" },
     { name = "nats-py", specifier = ">=2.10.0,<3" },
     { name = "slim-bindings", specifier = "~=1.1" },
+    { name = "slima2a", specifier = "==0.3.0" },
     { name = "uvicorn", specifier = ">=0.29.0" },
 ]
 
@@ -3419,6 +3427,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/93/e6/a10522130a200932898660435634f96ff7c5dc0dcb8355e08d123100f1c6/slim_bindings-1.1.0-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:8c5ab6b5fc950d5f3f9d0d0a0fe9cbafd698562c44cabfc1dc57ad43efc8998e", size = 13124012, upload-time = "2026-02-12T16:25:38.715Z" },
     { url = "https://files.pythonhosted.org/packages/58/eb/95311273d7c019e3a4adae7fe2b0dab177482aa2c7c44c6632b09499d6a1/slim_bindings-1.1.0-py3-none-win_amd64.whl", hash = "sha256:102826053bf775bd4109fb771c1b5387bc142f315d0bdaba9d1de4dc8331686f", size = 11909296, upload-time = "2026-02-12T16:25:41.224Z" },
     { url = "https://files.pythonhosted.org/packages/d8/15/c052f72407ee925163826548d22b09e4256f335e485d519f9a0167c0e217/slim_bindings-1.1.0-py3-none-win_arm64.whl", hash = "sha256:f11638fe0786729eb3fbb9bb0273029751b6fd1eae03e7370d70a913c8933972", size = 11142795, upload-time = "2026-02-12T16:25:43.678Z" },
+]
+
+[[package]]
+name = "slima2a"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "a2a-sdk", extra = ["telemetry"] },
+    { name = "slim-bindings" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9b/c7/e2a78170be1d09a2c8a58076adb6055eb5bb155428b3ea6b9af4708efdd3/slima2a-0.3.0.tar.gz", hash = "sha256:3d771f45485d6182526793a89fb07ff01842a972d2c35fdd481a11d04206bcbc", size = 142249, upload-time = "2026-02-17T15:38:15.026Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/a4/9f2f7c3276dad2b702ec1e4e1128688e765013ac8739ecabd7c84c623d05/slima2a-0.3.0-py3-none-any.whl", hash = "sha256:40330677ef04f061f55cc08f2a4b77dc2dfc1da3e860be85ddafc320663e8a94", size = 15858, upload-time = "2026-02-17T15:38:14.206Z" },
 ]
 
 [[package]]
