@@ -28,8 +28,8 @@ The SDK decouples _protocols_ (the semantic layer — how agents talk) from _tra
                         ┌─────────────────┬──────────┴──────────┐
                         v                 v                      v
               A2ASRPCServerHandler   A2AJsonRpc           A2AExperimental
-              (A2ASRPCConfig)        ServerHandler         ServerHandler
-                   │                (A2AStarlette          (A2AStarlette
+              (A2ASlimRpcServer-    ServerHandler         ServerHandler
+               Config)             (A2AStarlette          (A2AStarlette
                    │                 Application,           Application
                    │                 no transport)         + transport)
                    │                      │                     │
@@ -46,7 +46,7 @@ The SDK decouples _protocols_ (the semantic layer — how agents talk) from _tra
 
 | Target type               | Transport provided? | Handler selected                                                                             |
 | ------------------------- | ------------------- | -------------------------------------------------------------------------------------------- |
-| `A2ASRPCConfig`           | _(ignored)_         | `A2ASRPCServerHandler` — native SLIM RPC via `slim_bindings.Server`                          |
+| `A2ASlimRpcServerConfig`  | _(ignored)_         | `A2ASRPCServerHandler` — native SLIM RPC via `slim_bindings.Server`                          |
 | `A2AStarletteApplication` | No                  | `A2AJsonRpcServerHandler` — serves over HTTP via Uvicorn                                     |
 | `A2AStarletteApplication` | Yes                 | `A2AExperimentalServerHandler` — routes transport messages directly through `JSONRPCHandler` |
 
@@ -100,7 +100,7 @@ from a2a.types import (
 )
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCConfig
+from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig, SlimRpcConnectionConfig
 from agntcy_app_sdk.factory import AgntcyFactory
 
 """
@@ -152,7 +152,7 @@ class WeatherAgentExecutor(AgentExecutor):
         raise Exception("cancel not supported")
 
 """
-Create an A2ASRPCConfig and serve via AppSession.
+Create an A2ASlimRpcServerConfig and serve via AppSession.
 """
 
 async def main():
@@ -163,14 +163,14 @@ async def main():
         task_store=InMemoryTaskStore(),
     )
 
-    srpc_config = A2ASRPCConfig(
+    srpc_config = A2ASlimRpcServerConfig(
         agent_card=agent_card,
         request_handler=request_handler,
-        slimrpc_server_config={
-            "identity": "default/default/weather-agent",
-            "slim_client_config": {"endpoint": "http://localhost:46357"},
-            "shared_secret": "my-shared-secret",
-        },
+        connection=SlimRpcConnectionConfig(
+            identity="default/default/weather-agent",
+            shared_secret="my-shared-secret",
+            endpoint="http://localhost:46357",
+        ),
     )
 
     session = factory.create_app_session(max_sessions=1)
@@ -241,7 +241,7 @@ if __name__ == "__main__":
 
 A few notes:
 
-- **Server:** `A2ASRPCConfig` bundles the agent card, request handler, and SLIM connection config into a single object — the handler auto-detection in `session.add(srpc_config).build()` selects `A2ASRPCServerHandler` automatically. SlimRPC manages its own transport internally, so you do **not** call `.with_transport()`.
+- **Server:** `A2ASlimRpcServerConfig` bundles the agent card, request handler, and SLIM connection config into a single object — the handler auto-detection in `session.add(srpc_config).build()` selects `A2ASRPCServerHandler` automatically. SlimRPC manages its own transport internally, so you do **not** call `.with_transport()`.
 - **Client:** The SDK's `ClientConfig` declares all transports the client is capable of using. The `slimrpc_channel_factory` field enables slimrpc; `supported_transports` is auto-derived in `__post_init__` from whichever fields are populated. When `factory.a2a(config).create(card)` is called, the factory negotiates the best transport match between the config and the agent card.
 - **Multi-transport:** A single `ClientConfig` can hold slimrpc, slimpatterns, natspatterns, and JSONRPC configurations simultaneously. The factory picks the best match at connect time, so the same client config can talk to agents on different transports.
 

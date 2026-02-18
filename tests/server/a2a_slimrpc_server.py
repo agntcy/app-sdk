@@ -18,7 +18,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCConfig
+from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig, SlimRpcConnectionConfig
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -37,8 +37,8 @@ def _build_a2a_slimrpc_config(
     name: str = "default/default/Hello_World_Agent_1.0.0",
     endpoint: str = "http://localhost:46357",
     version: str = "1.0.0",
-) -> A2ASRPCConfig:
-    """Build an A2ASRPCConfig with a HelloWorld agent."""
+) -> A2ASlimRpcServerConfig:
+    """Build an A2ASlimRpcServerConfig with a HelloWorld agent."""
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
@@ -54,14 +54,14 @@ def _build_a2a_slimrpc_config(
         agent_executor=HelloWorldAgentExecutor(name),
         task_store=InMemoryTaskStore(),
     )
-    return A2ASRPCConfig(
+    return A2ASlimRpcServerConfig(
         agent_card=agent_card,
         request_handler=request_handler,
-        slimrpc_server_config={
-            "identity": name,
-            "slim_client_config": {"endpoint": endpoint},
-            "shared_secret": "secretsecretsecretsecretsecretsecret",
-        },
+        connection=SlimRpcConnectionConfig(
+            identity=name,
+            shared_secret="secretsecretsecretsecretsecretsecret",
+            endpoint=endpoint,
+        ),
     )
 
 

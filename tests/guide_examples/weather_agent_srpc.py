@@ -21,7 +21,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from a2a.utils import new_agent_text_message
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCConfig
+from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig, SlimRpcConnectionConfig
 
 # ---------------------------------------------------------------------------
 # Agent card & skill
@@ -88,14 +88,14 @@ async def main(endpoint: str, name: str):
         task_store=InMemoryTaskStore(),
     )
 
-    srpc_config = A2ASRPCConfig(
+    srpc_config = A2ASlimRpcServerConfig(
         agent_card=agent_card,
         request_handler=request_handler,
-        slimrpc_server_config={
-            "identity": name,
-            "slim_client_config": {"endpoint": endpoint},
-            "shared_secret": "secretsecretsecretsecretsecretsecret",
-        },
+        connection=SlimRpcConnectionConfig(
+            identity=name,
+            shared_secret="secretsecretsecretsecretsecretsecret",
+            endpoint=endpoint,
+        ),
     )
 
     session = factory.create_app_session(max_sessions=1)
