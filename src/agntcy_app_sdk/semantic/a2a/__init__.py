@@ -6,7 +6,8 @@ from agntcy_app_sdk.semantic.a2a.server import (
     A2AJsonRpcServerHandler,
     A2AExperimentalServerHandler,
     A2AExperimentalServer,
-    A2ASRPCConfig,
+    A2ASlimRpcServerConfig,
+    SlimRpcConnectionConfig,
     A2ASRPCServerHandler,
 )
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
@@ -21,7 +22,8 @@ __all__ = [
     "A2AJsonRpcServerHandler",
     "A2AExperimentalServerHandler",
     "A2AExperimentalServer",
-    "A2ASRPCConfig",
+    "A2ASlimRpcServerConfig",
+    "SlimRpcConnectionConfig",
     "A2ASRPCServerHandler",
     "A2AClientFactory",
     "A2AClientConfig",

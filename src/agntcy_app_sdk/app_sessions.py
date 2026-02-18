@@ -32,7 +32,7 @@ def _get_handler_map() -> dict[type, type]:
             A2AExperimentalServerHandler,
         )
         from agntcy_app_sdk.semantic.a2a.server.srpc import (
-            A2ASRPCConfig,
+            A2ASlimRpcServerConfig,
             A2ASRPCServerHandler,
         )
         from agntcy_app_sdk.semantic.fast_mcp.handler import FastMCPServerHandler
@@ -40,7 +40,7 @@ def _get_handler_map() -> dict[type, type]:
 
         _HANDLER_MAP = {
             A2AStarletteApplication: A2AExperimentalServerHandler,
-            A2ASRPCConfig: A2ASRPCServerHandler,
+            A2ASlimRpcServerConfig: A2ASRPCServerHandler,
             MCPServer: MCPServerHandler,
             FastMCP: FastMCPServerHandler,
         }
@@ -121,7 +121,7 @@ class ContainerBuilder:
         elif handler_class is A2ASRPCServerHandler:
             if self._transport is not None or self._topic is not None:
                 logger.warning(
-                    "transport and topic are ignored for A2ASRPCConfig; "
+                    "transport and topic are ignored for A2ASlimRpcServerConfig; "
                     "slimrpc manages its own transport."
                 )
             handler = handler_class(

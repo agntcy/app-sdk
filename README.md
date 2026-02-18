@@ -124,22 +124,22 @@ Stand up an A2A agent over **SlimRPC** (native RPC transport) in ~10 lines:
 
 ```python
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCConfig
+from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig, SlimRpcConnectionConfig
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 
 # Bundle agent card, handler, and SLIM connection into one config
-config = A2ASRPCConfig(
+config = A2ASlimRpcServerConfig(
     agent_card=agent_card,
     request_handler=DefaultRequestHandler(
         agent_executor=MyAgentExecutor(),
         task_store=InMemoryTaskStore(),
     ),
-    slimrpc_server_config={
-        "identity": "default/default/my_agent",
-        "slim_client_config": {"endpoint": "http://localhost:46357"},
-        "shared_secret": "my-shared-secret-at-least-32-characters-long",
-    },
+    connection=SlimRpcConnectionConfig(
+        identity="default/default/my_agent",
+        shared_secret="my-shared-secret-at-least-32-characters-long",
+        endpoint="http://localhost:46357",
+    ),
 )
 
 # Serve via fluent session API — no transport/topic needed
@@ -438,7 +438,7 @@ The SDK negotiates the best transport automatically by intersecting the server's
 │ SlimRPC      │  │  (SLIM/NATS       │  │                     │
 │  (native A2A │  │   patterns)       │  │ Targets:            │
 │   transport) │  │                   │  │ ├ A2AStarlette      │
-│              │  │ MCPClientSession  │  │ ├ A2ASRPCConfig     │
+│              │  │ MCPClientSession  │  │ ├ A2ASlimRpcServer │
 │ 3 Mixins:    │  │ FastMCPClient     │  │ ├ MCP Server        │
 │  ├ P2P       │  └───────────────────┘  │ └ FastMCP           │
 │  ├ FanOut    │                         └─────────────────────┘
@@ -454,7 +454,7 @@ The `AppSession` builder chains configuration into a single readable expression.
 | ---------------------------- | ------------------------------ | :-----------------: |
 | `A2AStarletteApplication`    | `A2AExperimentalServerHandler` |         Yes         |
 | `A2AStarletteApplication`    | `A2AJsonRpcServerHandler`      |      No (HTTP)      |
-| `A2ASRPCConfig`              | `A2ASRPCServerHandler`         |    No (internal)    |
+| `A2ASlimRpcServerConfig`     | `A2ASRPCServerHandler`         |    No (internal)    |
 | `mcp.server.lowlevel.Server` | `MCPServerHandler`             |         Yes         |
 | `mcp.server.fastmcp.FastMCP` | `FastMCPServerHandler`         |         Yes         |
 

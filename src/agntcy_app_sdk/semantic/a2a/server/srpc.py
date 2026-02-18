@@ -20,6 +20,9 @@ from agntcy_app_sdk.transport.slim.common import (
     split_id,
 )
 
+from slima2a.handler import SRPCHandler
+from slima2a.types.a2a_pb2_slimrpc import add_A2AServiceServicer_to_server
+
 logger = get_logger(__name__)
 
 
@@ -29,7 +32,20 @@ logger = get_logger(__name__)
 
 
 @dataclass
-class A2ASRPCConfig:
+class SlimRpcConnectionConfig:
+    """SLIM connectivity parameters for a SlimRPC server.
+
+    The ``identity`` must be in ``"org/namespace/app"`` format.
+    """
+
+    identity: str
+    shared_secret: str
+    endpoint: str = "http://localhost:46357"
+    tls_insecure: bool = True
+
+
+@dataclass
+class A2ASlimRpcServerConfig:
     """Configuration object for the slimrpc-based A2A handler.
 
     Users pass an instance of this to ``session.add(config)`` instead of
@@ -40,8 +56,8 @@ class A2ASRPCConfig:
         agent_card: The A2A AgentCard describing this agent.
         request_handler: A ``DefaultRequestHandler`` (from ``a2a-sdk``)
             that implements the agent's business logic.
-        slimrpc_server_config: Dict with keys ``identity``,
-            ``slim_client_config``, and ``shared_secret``.
+        connection: A :class:`SlimRpcConnectionConfig` with SLIM
+            connectivity parameters (identity, shared_secret, etc.).
 
     Optional fields:
         context_builder: Optional callable to build per-request context.
@@ -51,17 +67,9 @@ class A2ASRPCConfig:
 
     agent_card: AgentCard
     request_handler: DefaultRequestHandler
-    slimrpc_server_config: dict[str, Any]
+    connection: SlimRpcConnectionConfig
     context_builder: Optional[Callable[..., Any]] = None
     card_modifier: Optional[Callable[[AgentCard], AgentCard]] = None
-
-    def __post_init__(self) -> None:
-        required_keys = {"identity", "slim_client_config", "shared_secret"}
-        missing = required_keys - set(self.slimrpc_server_config.keys())
-        if missing:
-            raise ValueError(
-                f"slimrpc_server_config is missing required keys: {missing}"
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -79,14 +87,14 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
 
     Construction::
 
-        handler = A2ASRPCServerHandler(config, directory=my_dir)
+        handler = A2ASRPCServerHandler(config)
 
-    Where *config* is an :class:`A2ASRPCConfig` instance.
+    Where *config* is an :class:`A2ASlimRpcServerConfig` instance.
     """
 
     def __init__(
         self,
-        config: A2ASRPCConfig,
+        config: A2ASlimRpcServerConfig,
     ):
         # BaseA2AServerHandler → ServerHandler expects (managed_object, ...)
         # We pass the config — each handler knows what its managed object is.
@@ -111,7 +119,6 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         2. Create a SLIM ``App`` + ``Server`` from the user-provided config.
         3. Import ``slima2a`` and register the A2A servicer.
         4. Launch ``server.serve_async()`` as a background task.
-        5. Push to directory if available.
         """
         self._set_preferred_transport("slimrpc")
 
@@ -125,10 +132,8 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         slim_bindings.uniffi_set_event_loop(asyncio.get_running_loop())
 
         # --- Build the SLIM App ---
-        srpc_cfg = self._config.slimrpc_server_config
-        identity_str: str = srpc_cfg["identity"]
-        slim_client_config: dict = srpc_cfg["slim_client_config"]
-        shared_secret: str = srpc_cfg["shared_secret"]
+        identity_str: str = self._config.connection.identity
+        shared_secret: str = self._config.connection.shared_secret
 
         name = split_id(identity_str)
         provider, verifier = shared_secret_identity(
@@ -136,9 +141,8 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
             secret=shared_secret,
         )
 
-        endpoint = slim_client_config.get("endpoint", "http://localhost:46357")
-        tls_cfg = slim_client_config.get("tls", {})
-        tls_insecure = tls_cfg.get("insecure", True)
+        endpoint = self._config.connection.endpoint
+        tls_insecure = self._config.connection.tls_insecure
 
         # Reuse the existing helper that initialises the global SLIM runtime
         _service, slim_app, connection_id = await get_or_create_slim_instance(
@@ -154,15 +158,6 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         )
 
         # --- Register the A2A servicer (from slima2a) ---
-        try:
-            from slima2a.handler import SRPCHandler
-            from slima2a.types.a2a_pb2_slimrpc import add_A2AServiceServicer_to_server
-        except ImportError as exc:
-            raise ImportError(
-                "The 'slima2a' package is required for A2ASRPCServerHandler. "
-                "Install it with: pip install slim-a2a-python"
-            ) from exc
-
         srpc_handler_kwargs = {
             "agent_card": self._config.agent_card,
             "request_handler": self._config.request_handler,
