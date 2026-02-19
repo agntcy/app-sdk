@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from agntcy_app_sdk.app_sessions import AppContainer, AppSession
+from agntcy_app_sdk.directory.base import BaseAgentDirectory, RecordVisibility
+from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import (
     ClientConfig,
@@ -24,4 +26,7 @@ __all__ = [
     "SlimTransportConfig",
     "NatsTransportConfig",
     "SlimRpcConfig",
+    "AgentDirectory",
+    "BaseAgentDirectory",
+    "RecordVisibility",
 ]

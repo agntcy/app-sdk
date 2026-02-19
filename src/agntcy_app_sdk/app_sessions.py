@@ -235,6 +235,8 @@ class AppContainer:
         """Stop all components of the app container."""
         logger.info("Stopping app session...")
         await self.handler.teardown()
+        if self._directory:
+            await self._directory.teardown()
         self.is_running = False
         logger.info("App session stopped. Exiting event loop.")
 

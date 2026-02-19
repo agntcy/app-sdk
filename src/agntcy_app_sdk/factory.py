@@ -8,6 +8,8 @@ from typing import Any, Dict, Protocol, Type
 
 from agntcy_app_sdk.app_sessions import AppSession
 from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.directory.base import BaseAgentDirectory
+from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
 from agntcy_app_sdk.semantic.client_factory_base import BaseClientFactory
 from agntcy_app_sdk.transport.base import BaseTransport
 
@@ -120,9 +122,11 @@ class AgntcyFactory:
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
         self._protocol_registry: Dict[str, type] = {}
+        self._directory_registry: Dict[str, Type[BaseAgentDirectory]] = {}
 
         self._register_wellknown_transports()
         self._register_wellknown_protocols()
+        self._register_wellknown_directories()
 
         if self.enable_tracing:
             self._setup_tracing()
@@ -155,6 +159,10 @@ class AgntcyFactory:
         """Get the list of registered transport types."""
         return list(self._transport_registry.keys())
 
+    def registered_directories(self) -> list[str]:
+        """Get the list of registered directory types."""
+        return list(self._directory_registry.keys())
+
     def registered_observability_providers(self) -> list[str]:
         """Get the list of registered observability providers."""
         return list(self.OBSERVABILITY_PROVIDERS)
@@ -166,6 +174,36 @@ class AgntcyFactory:
     def create_app_session(self, max_sessions: int = 10) -> AppSession:
         """Create an app session to manage multiple app containers."""
         return AppSession(max_sessions=max_sessions)
+
+    def create_directory(
+        self,
+        directory: str,
+        endpoint: str | None = None,
+        **kwargs: Any,
+    ) -> BaseAgentDirectory:
+        """Create a directory client by type.
+
+        The returned directory is *not* connected yet — call
+        ``await directory.setup()`` or pass it to
+        ``ContainerBuilder.with_directory()`` which handles lifecycle
+        automatically.
+
+        Args:
+            directory: Registry key (e.g. ``"agntcy"``).
+            endpoint: Directory service address.
+            **kwargs: Extra arguments forwarded to the directory's
+                ``from_config()``.
+
+        Raises:
+            ValueError: If the directory type is not registered.
+        """
+        directory_class = self._directory_registry.get(directory)
+        if directory_class is None:
+            raise ValueError(
+                f"No directory registered for type: {directory!r}. "
+                f"Available directories: {list(self._directory_registry.keys())}"
+            )
+        return directory_class.from_config(endpoint=endpoint, **kwargs)
 
     def create_transport(
         self,
@@ -241,3 +279,21 @@ class AgntcyFactory:
                 return accessor
 
             setattr(self, factory_class.ACCESSOR_NAME, _make_accessor(factory_class))
+
+    def _register_wellknown_directories(self) -> None:
+        """Register well-known directory implementations.
+
+        Each entry derives its registry key from the directory class's
+        ``DIRECTORY_TYPE`` constant.
+        """
+        for directory_class in (AgentDirectory,):
+            self._directory_registry[directory_class.DIRECTORY_TYPE] = directory_class
+
+    def register_directory(self, directory_class: Type[BaseAgentDirectory]) -> None:
+        """Register a custom directory implementation.
+
+        Args:
+            directory_class: A ``BaseAgentDirectory`` subclass with a
+                ``DIRECTORY_TYPE`` class attribute.
+        """
+        self._directory_registry[directory_class.DIRECTORY_TYPE] = directory_class

@@ -21,7 +21,10 @@ from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from a2a.utils import new_agent_text_message
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig, SlimRpcConnectionConfig
+from agntcy_app_sdk.semantic.a2a.server.srpc import (
+    A2ASlimRpcServerConfig,
+    SlimRpcConnectionConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Agent card & skill
