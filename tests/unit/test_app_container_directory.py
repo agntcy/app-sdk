@@ -48,6 +48,7 @@ async def test_run_with_directory_pushes_record():
     card = _minimal_card()
     handler = _make_handler(agent_record=card)
     directory = AsyncMock()
+    directory.push_agent_record.return_value = "baeareifake123"
 
     container = AppContainer(handler, directory=directory)
     await container.run(keep_alive=False)
@@ -57,6 +58,7 @@ async def test_run_with_directory_pushes_record():
     handler.get_agent_record.assert_called_once()
     directory.push_agent_record.assert_awaited_once_with(card)
     assert container.is_running is True
+    assert container.directory_cid == "baeareifake123"
 
 
 @pytest.mark.asyncio
@@ -72,6 +74,7 @@ async def test_run_with_directory_no_record():
     directory.setup.assert_awaited_once()
     handler.get_agent_record.assert_called_once()
     directory.push_agent_record.assert_not_awaited()
+    assert container.directory_cid is None
 
 
 @pytest.mark.asyncio
@@ -85,6 +88,7 @@ async def test_run_without_directory():
     handler.setup.assert_awaited_once()
     # No directory calls — just verify no AttributeError
     assert container.is_running is True
+    assert container.directory_cid is None
 
 
 # ---------------------------------------------------------------------------
