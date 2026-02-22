@@ -1,0 +1,140 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+---
+name: python-build-and-test
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: Github hosted runner or Self hosted runner
+        required: false
+        type: string
+        default: ubuntu-latest
+      working-directory:
+        description: Working directory
+        required: false
+        type: string
+        default: ""
+      package:
+        description: Package name
+        required: false
+        type: string
+        default: "dist"
+      py-lint:
+        description: Whether to run "task lint"
+        required: false
+        type: boolean
+        default: true
+      py-test:
+        description: Whether to run "task test"
+        required: false
+        type: boolean
+        default: true
+      py-test-e2e:
+        description: Whether to run E2E tests with Docker services
+        required: false
+        type: boolean
+        default: false
+      py-package:
+        description: Whether to run "task packaging"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  pylint:
+    runs-on: ${{ inputs.runner }}
+    if: ${{ inputs.py-lint }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+      - name: Setup Python and Tools
+        uses: ./.github/actions/setup-python
+        with:
+          uv-install: true
+      - name: Install dependencies
+        run: uv sync
+      - name: Lint
+        run: task lint
+
+  pytest:
+    runs-on: ${{ inputs.runner }}
+    if: ${{ inputs.py-test }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Python and Tools
+        uses: ./.github/actions/setup-python
+        with:
+          uv-install: true
+      - name: Install dependencies
+        run: uv sync
+      - name: Run unit tests
+        run: task test
+
+  pytest-e2e:
+    runs-on: ${{ inputs.runner }}
+    if: ${{ inputs.py-test-e2e }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Python and Tools
+        uses: ./.github/actions/setup-python
+        with:
+          uv-install: true
+      - name: Install dependencies
+        run: uv sync
+      - name: Start services
+        run: docker-compose -f services/docker/docker-compose.yaml up -d
+      - name: Wait for services
+        run: |
+          echo "Waiting for SLIM (:46357) and NATS (:4222)..."
+          timeout 120 bash -c 'until nc -z localhost 46357 && nc -z localhost 4222; do sleep 2; done'
+          echo "Services are ready"
+      - name: Run E2E tests
+        run: task test-e2e
+      - name: Teardown services
+        if: always()
+        run: docker-compose -f services/docker/docker-compose.yaml down -v
+
+  pypackage:
+    runs-on: ${{ inputs.runner }}
+    if: ${{ inputs.py-package }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Python and Tools
+        uses: ./.github/actions/setup-python
+        with:
+          uv-install: true
+      - name: Install dependencies
+        run: uv sync
+      - name: Build package
+        run: task packaging
+      - name: Show packages
+        run: ls -la ./dist
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.package }}
+          if-no-files-found: error
+          path: ${{ inputs.working-directory && format('{0}/dist', inputs.working-directory) || 'dist' }}

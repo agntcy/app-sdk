@@ -8,69 +8,43 @@ inputs:
   py-install:
     description: "Install Python"
     required: false
-    default: false
+    default: "false"
   py-version:
     description: "Python version to install"
     required: false
     default: "3.12"
-  poetry-install:
-    description: "Install poetry"
-    required: false
-    default: false
-  poetry-version:
-    description: "Poetry version to use"
-    required: false
-    default: "1.7.1"
   uv-install:
     description: "Install uv"
     required: false
-    default: true
+    default: "true"
 
 runs:
   using: "composite"
   steps:
     - name: Setup Python
-      if: ${{ inputs.py-install }}
+      if: ${{ inputs.py-install == 'true' }}
       id: setup-python
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.py-version }}
 
-    - name: Load cached Poetry Binary
-      if: ${{ inputs.poetry-install }}
-      uses: actions/cache@v4
+    - name: Setup Taskfile
+      uses: ./.github/actions/setup-task
       with:
-        path: ~/.local
-        key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ inputs.poetry-version }}
-
-    - name: Install Poetry
-      if: ${{ inputs.poetry-install }}
-      shell: bash
-      run: |
-        if [[ -f ~/.local/bin/poetry ]]; then
-          echo "Poetry already installed"
-        else
-          curl -sSL https://install.python-poetry.org | POETRY_VERSION=${{ inputs.poetry-version }} python3 -
-        fi
+        version: latest
+        cache-enabled: true
 
     - name: Install uv (unix)
-      if: ${{ inputs.uv-install && runner.os != 'Windows' }}
+      if: ${{ inputs.uv-install == 'true' && runner.os != 'Windows' }}
       shell: bash
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="${HOME}/.local/bin" sh
 
     - name: Install uv (windows)
-      if: ${{ inputs.uv-install && runner.os == 'Windows' }}
+      if: ${{ inputs.uv-install == 'true' && runner.os == 'Windows' }}
       shell: bash
       run: |
         powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-    - name: Load cached venv
-      if: ${{ inputs.poetry-install }}
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pypoetry/virtualenvs
-        key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
     - name: Update GITHUB_PATH
       shell: bash

@@ -1,0 +1,47 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+---
+version: "3"
+
+silent: true
+set: [pipefail]
+shopt: [globstar]
+
+vars:
+  UV_ARGS: '{{.UV_ARGS | default ""}}'
+
+tasks:
+  lint:
+    desc: "Check code style, formatting, and type hints without making changes"
+    cmds:
+      - uv run {{.UV_ARGS}} ruff check
+      - uv run {{.UV_ARGS}} mypy --explicit-package-bases .
+      - uv run {{.UV_ARGS}} ruff format --check
+
+  fix-lint:
+    desc: "Lint and fix (where possible) code style and formatting issues using ruff and mypy"
+    cmds:
+      - uv run {{.UV_ARGS}} ruff check --fix
+      - uv run {{.UV_ARGS}} mypy --explicit-package-bases .
+      - uv run {{.UV_ARGS}} ruff format
+
+  test:
+    desc: "Run unit tests"
+    cmds:
+      - uv run {{.UV_ARGS}} pytest tests/unit/ -v {{.CLI_ARGS}}
+
+  test-e2e:
+    desc: "Run E2E tests sequentially per file (requires Docker services)"
+    cmds:
+      - uv run {{.UV_ARGS}} pytest tests/e2e/test_a2a_slimrpc.py -v -s {{.CLI_ARGS}}
+      - uv run {{.UV_ARGS}} pytest tests/e2e/test_a2a_starlette.py -v -s {{.CLI_ARGS}}
+      - uv run {{.UV_ARGS}} pytest tests/e2e/test_fast_mcp.py -v -s {{.CLI_ARGS}}
+      - uv run {{.UV_ARGS}} pytest tests/e2e/test_concurrent_fast_mcp.py -v -s {{.CLI_ARGS}}
+      - uv run {{.UV_ARGS}} pytest tests/e2e/test_mcp.py -v -s {{.CLI_ARGS}}
+      - uv run {{.UV_ARGS}} pytest tests/e2e/test_directory.py -v -s {{.CLI_ARGS}}
+
+  packaging:
+    desc: "Build Python package and generate distribution artifacts"
+    cmds:
+      - uv build {{.UV_ARGS}}

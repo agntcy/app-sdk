@@ -1,0 +1,26 @@
+# Copyright AGNTCY Contributors (https://github.com/agntcy)
+# SPDX-License-Identifier: Apache-2.0
+
+---
+name: ci-build-and-test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    name: Build and Test agntcy-app-sdk
+    uses: ./.github/workflows/reusable-python-build-and-test.yaml
+    with:
+      package: agntcy-app-sdk
+      py-lint: true
+      py-test: true
+      py-test-e2e: true
+      py-package: true
