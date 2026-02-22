@@ -99,7 +99,7 @@ jobs:
       - name: Install dependencies
         run: uv sync
       - name: Start services
-        run: docker-compose -f services/docker/docker-compose.yaml up -d
+        run: docker compose -f services/docker/docker-compose.yaml up -d
       - name: Wait for services
         run: |
           echo "Waiting for SLIM (:46357) and NATS (:4222)..."
@@ -109,7 +109,7 @@ jobs:
         run: task test-e2e
       - name: Teardown services
         if: always()
-        run: docker-compose -f services/docker/docker-compose.yaml down -v
+        run: docker compose -f services/docker/docker-compose.yaml down -v
 
   pypackage:
     runs-on: ${{ inputs.runner }}
