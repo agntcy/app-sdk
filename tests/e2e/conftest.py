@@ -3,6 +3,7 @@
 
 import os
 import signal
+import socket
 import subprocess
 import time
 
@@ -38,6 +39,18 @@ def _spawn_server(procs, script, transport, endpoint, extra_args=None):
     procs.append(proc)
     time.sleep(1)
     return proc
+
+
+def _wait_for_port(host, port, timeout=30):
+    """Block until a TCP port is accepting connections."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    raise TimeoutError(f"Port {host}:{port} not ready after {timeout}s")
 
 
 def _cleanup_procs(procs):
@@ -106,7 +119,7 @@ def run_a2a_server():
         name="default/default/Hello_World_Agent_1.0.0",
         topic="",
     ):
-        return _spawn_server(
+        proc = _spawn_server(
             procs,
             "tests/server/a2a_starlette_server.py",
             transport,
@@ -120,6 +133,13 @@ def run_a2a_server():
                 version,
             ],
         )
+        # For JSONRPC (HTTP), wait until the server is accepting connections
+        if transport == "JSONRPC":
+            from urllib.parse import urlparse
+
+            parsed = urlparse(endpoint)
+            _wait_for_port(parsed.hostname or "localhost", parsed.port or 9999)
+        return proc
 
     yield _run
     _cleanup_procs(procs)
@@ -147,13 +167,16 @@ def run_fast_mcp_server():
     procs = []
 
     def _run(transport, endpoint, name="default/default/fastmcp"):
-        return _spawn_server(
+        proc = _spawn_server(
             procs,
             "tests/server/fast_mcp_server.py",
             transport,
             endpoint,
             extra_args=["--name", name],
         )
+        # FastMCP starts an HTTP server on port 8081; wait for it to be ready
+        _wait_for_port("localhost", 8081)
+        return proc
 
     yield _run
     _cleanup_procs(procs)
