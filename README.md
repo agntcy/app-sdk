@@ -538,13 +538,49 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
 | **Directory**   | _Coming soon_ | Component for service discovery and directory-based agent lookups.                                                                                                                         | [Repo](https://github.com/agntcy/dir)                |
 | **Identity**    | _Coming soon_ | Provides agent identity, authentication, and verification mechanisms.                                                                                                                      | [Repo](https://github.com/agntcy/identity/tree/main) |
 
+# Development
+
+## Prerequisites
+
+- **Python 3.12+**
+- **[uv](https://docs.astral.sh/uv/)** — Package manager
+- **[Task](https://taskfile.dev/)** — Build orchestration (used locally and in CI)
+- **Docker** — Required for E2E tests
+
+## Setup
+
+```bash
+# Install dependencies (including dev)
+uv sync
+
+# Run linting and type checking
+task lint
+
+# Auto-fix lint issues
+task fix-lint
+
+# Run unit tests
+task test
+
+# Run E2E tests (requires Docker services)
+task test-e2e
+```
+
+## Code Quality
+
+The project uses **Ruff** for linting/formatting, **mypy** for type checking, and **Codespell** for spell checking. Pre-commit hooks enforce all checks automatically:
+
+```bash
+pre-commit run --all-files
+```
+
 # Testing
 
 The `/tests` directory contains both unit and end-to-end (E2E) tests for Agntcy components and workflows.
 
 ## Prerequisites
 
-Before running tests, start the required message bus services:
+Before running E2E tests, start the required message bus services:
 
 ```bash
 docker-compose -f services/docker/docker-compose.yaml up
@@ -552,19 +588,29 @@ docker-compose -f services/docker/docker-compose.yaml up
 
 ## Running Tests
 
-### 🧩 A2A Client Tests
+**Unit tests** (no Docker required):
+
+```bash
+task test
+```
+
+**All E2E tests** (requires Docker services):
+
+```bash
+task test-e2e
+```
+
+You can also pass additional arguments to pytest via the `CLI_ARGS` variable or run specific tests directly:
+
+### A2A Client Tests
 
 **Run all transports**
-
-Run the parameterized E2E test for the A2A client across all supported transports:
 
 ```bash
 uv run pytest tests/e2e/test_a2a_starlette.py::test_client -s
 ```
 
-**Run a single transport**
-
-To test only a specific transport (e.g. SLIM):
+**Run a single transport** (e.g. SLIM):
 
 ```bash
 uv run pytest tests/e2e/test_a2a_starlette.py::test_client -s -k "SLIM"
@@ -572,23 +618,17 @@ uv run pytest tests/e2e/test_a2a_starlette.py::test_client -s -k "SLIM"
 
 **SlimRPC A2A**
 
-Run the E2E test for A2A over native SlimRPC:
-
 ```bash
 uv run pytest tests/e2e/test_a2a_slimrpc.py::test_client -s
 ```
 
 **Broadcast messaging**
 
-Run the E2E test for A2A broadcast communication across all transports:
-
 ```bash
 uv run pytest tests/e2e/test_a2a_starlette.py::test_broadcast -s
 ```
 
-**Group chat**
-
-Run the E2E test for A2A moderated group-chat using a specific transport (e.g. SLIM):
+**Group chat** (SLIM only):
 
 ```bash
 uv run pytest tests/e2e/test_a2a_starlette.py::test_groupchat -s -k "SLIM"
@@ -596,34 +636,38 @@ uv run pytest tests/e2e/test_a2a_starlette.py::test_groupchat -s -k "SLIM"
 
 ### FastMCP Client Tests
 
-**Single transport**
-
-Run an E2E test for the FastMCP client with a specific transport:
+**Single transport** (e.g. SLIM):
 
 ```bash
 uv run pytest tests/e2e/test_fast_mcp.py::test_client -s -k "SLIM"
 ```
 
+# CI/CD
+
+## Continuous Integration
+
+Every push to `main` and every pull request triggers the **build-and-test** workflow, which runs the following jobs in parallel:
+
+| Job            | Description                                      |
+| -------------- | ------------------------------------------------ |
+| **pylint**     | Ruff linting + mypy type checking + format check |
+| **pytest**     | Unit test suite                                  |
+| **pytest-e2e** | E2E tests with Docker services (SLIM + NATS)     |
+| **pypackage**  | Build wheel and sdist artifacts                  |
+
+## Release Flow
+
+Releases are automated via [release-please](https://github.com/googleapis/release-please):
+
+1. Merge pull requests with [Conventional Commits](https://www.conventionalcommits.org/) (e.g., `feat: add X`, `fix: resolve Y`).
+2. **release-please** automatically creates a release PR that bumps the version in `pyproject.toml` and updates the changelog.
+3. Merge the release PR to create a GitHub release and push a `v*` tag.
+4. The **release workflow** builds multi-platform wheels (Linux x86/ARM, macOS ARM, Windows) and publishes to PyPI.
+
+```
+PR merged → release-please creates release PR → merge → tag v* → build wheels → publish to PyPI
+```
+
 # Contributing
 
 Contributions are welcome! Please see the [contribution guide](CONTRIBUTING.md) for details on how to contribute to the Agntcy Application SDK.
-
-## PyPI Release Flow
-
-Publishing to PyPI is automated via GitHub Actions. To release a new version:
-
-1. Update the `version` field in `pyproject.toml` to the desired release version.
-2. Commit this change and merge it into the `main` branch via a pull request.
-3. Ensure your local `main` is up to date:
-   ```bash
-   git checkout main
-   git pull origin main
-   ```
-4. Create and push a tag from the latest `main` commit. The tag must be in the format `vX.Y.Z` and match the `pyproject.toml` version:
-   ```bash
-   git tag -a v0.2.6 -m "Release v0.2.6"
-   git push origin v0.2.6
-   ```
-5. The release workflow will validate the tag and version, then publish to PyPI if all checks pass.
-
-**Note:** Tags must always be created from the `main` branch and must match the version in `pyproject.toml`.

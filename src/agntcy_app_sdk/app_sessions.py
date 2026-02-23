@@ -158,6 +158,7 @@ class AppContainer:
     ):
         self.handler = handler
         self._directory = directory
+        self._directory_cid: Optional[str] = None
         self._shutdown_event: Optional[asyncio.Event] = None
         self.is_running = False
 
@@ -174,6 +175,11 @@ class AppContainer:
     def directory(self) -> Optional[BaseAgentDirectory]:
         return self._directory
 
+    @property
+    def directory_cid(self) -> Optional[str]:
+        """CID of the record pushed to the directory, or ``None``."""
+        return self._directory_cid
+
     # -- Lifecycle ----------------------------------------------------------
 
     async def run(self, keep_alive: bool = False):
@@ -189,7 +195,9 @@ class AppContainer:
             await self._directory.setup()
             record = self.handler.get_agent_record()
             if record is not None:
-                await self._directory.push_agent_record(record)
+                cid = await self._directory.push_agent_record(record)
+                self._directory_cid = cid
+                logger.info("Agent record pushed to directory with CID: %s", cid)
 
         self.is_running = True
 
@@ -235,6 +243,8 @@ class AppContainer:
         """Stop all components of the app container."""
         logger.info("Stopping app session...")
         await self.handler.teardown()
+        if self._directory:
+            await self._directory.teardown()
         self.is_running = False
         logger.info("App session stopped. Exiting event loop.")
 

@@ -7,41 +7,25 @@ on:
   workflow_call:
 
 jobs:
-  python-bindings-wheels:
-    runs-on: ${{ matrix.platform.runner }}
+  python-build-wheel:
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
         working-directory: ./
-    strategy:
-      matrix:
-        platform:
-          - runner: ubuntu-22.04
-            os: linux
-            target: x86_64
-          #          - runner: ubuntu-22.04-arm
-          #            os: linux
-          #            target: aarch64
-          - runner: windows-latest
-            os: windows
-            target: x64
-          - runner: macos-15
-            os: macos
-            target: aarch64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Setup Python
         uses: ./.github/actions/setup-python
         with:
-          py-install: false
-          poetry-install: false
           uv-install: true
+      - name: Install dependencies
+        run: uv sync
       - name: Build wheel
-        run: |
-          uv build
+        run: task packaging
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.platform.os }}-${{ matrix.platform.target }}
+          name: wheel
           path: ./dist

@@ -183,7 +183,8 @@ async def test_broadcast(run_a2a_server, transport):
     for name in agent_names:
         run_a2a_server(transport, endpoint, name=name, topic="broadcast")
 
-    await asyncio.sleep(4)
+    # Allow extra time for all agents to subscribe (CI runners can be slow)
+    await asyncio.sleep(5)
 
     handshake_topic = (
         "default/default/agent1" if transport_instance.type() == "SLIM" else "broadcast"
@@ -248,7 +249,8 @@ async def test_broadcast_streaming(run_a2a_server, transport):
     for name in agent_names:
         run_a2a_server(transport, endpoint, name=name, topic="broadcast")
 
-    await asyncio.sleep(3)
+    # Allow extra time for all agents to subscribe (CI runners can be slow)
+    await asyncio.sleep(5)
 
     handshake_topic = (
         "default/default/agent1" if transport_instance.type() == "SLIM" else "broadcast"
@@ -409,9 +411,9 @@ async def test_groupchat_streaming(run_a2a_server, transport):
         print(f"Streaming message: {message}")
         messages.append(message)
 
-    assert (
-        len(messages) > 0
-    ), "No streaming group chat messages received (possible timeout)"
+    assert len(messages) > 0, (
+        "No streaming group chat messages received (possible timeout)"
+    )
 
     if transport_instance:
         await transport_instance.close()

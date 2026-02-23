@@ -18,7 +18,10 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig, SlimRpcConnectionConfig
+from agntcy_app_sdk.semantic.a2a.server.srpc import (
+    A2ASlimRpcServerConfig,
+    SlimRpcConnectionConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers

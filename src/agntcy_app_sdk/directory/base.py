@@ -17,6 +17,30 @@ class BaseAgentDirectory(ABC):
     High level interface for storing, retrieving, searching, and signing agent records.
     """
 
+    DIRECTORY_TYPE: str
+    """Subclasses must set this to a unique registry key (e.g. ``"agntcy"``)."""
+
+    @classmethod
+    @abstractmethod
+    def from_config(
+        cls, endpoint: str | None = None, **kwargs: Any
+    ) -> "BaseAgentDirectory":
+        """Create a directory instance from configuration parameters.
+
+        Args:
+            endpoint: Directory service address.
+            **kwargs: Extra keyword arguments specific to the implementation.
+        """
+        pass
+
+    ###########################################################################
+    #  Lifecycle
+    async def setup(self) -> None:
+        """Initialize the directory connection."""
+
+    async def teardown(self) -> None:
+        """Tear down the directory connection."""
+
     ###########################################################################
     #  Store API
     @abstractmethod

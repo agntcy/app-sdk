@@ -86,10 +86,13 @@ async def test_reexports():
 
     # Config re-exports
     from agntcy_app_sdk import (
+        AgentDirectory,
         AppContainer,
         AppSession,
+        BaseAgentDirectory,
         ClientConfig,
         NatsTransportConfig,
+        RecordVisibility,
         SlimRpcConfig,
         SlimTransportConfig,
     )
@@ -100,3 +103,106 @@ async def test_reexports():
     assert SlimRpcConfig is not None
     assert AppSession is not None
     assert AppContainer is not None
+    assert AgentDirectory is not None
+    assert BaseAgentDirectory is not None
+    assert RecordVisibility is not None
+
+
+# ---------------------------------------------------------------------------
+# create_directory() factory method tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_directory_agntcy():
+    """create_directory("agntcy") creates an AgentDirectory with the given endpoint."""
+    from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
+
+    factory = AgntcyFactory()
+    directory = factory.create_directory("agntcy", endpoint="127.0.0.1:8888")
+
+    assert isinstance(directory, AgentDirectory)
+    assert directory._config.server_address == "127.0.0.1:8888"
+
+
+@pytest.mark.asyncio
+async def test_create_directory_default_endpoint():
+    """create_directory("agntcy") without endpoint uses the Config default."""
+    from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
+
+    factory = AgntcyFactory()
+    directory = factory.create_directory("agntcy")
+
+    assert isinstance(directory, AgentDirectory)
+
+
+@pytest.mark.asyncio
+async def test_create_directory_unknown_raises():
+    """create_directory() raises ValueError for an unknown directory type."""
+    factory = AgntcyFactory()
+
+    with pytest.raises(ValueError, match="No directory registered for type"):
+        factory.create_directory("nonexistent")
+
+
+@pytest.mark.asyncio
+async def test_registered_directories():
+    """registered_directories() returns the list of registered directory types."""
+    factory = AgntcyFactory()
+
+    dirs = factory.registered_directories()
+    assert dirs == ["agntcy"]
+
+
+@pytest.mark.asyncio
+async def test_register_custom_directory():
+    """register_directory() allows plugging in a custom directory backend."""
+    from agntcy_app_sdk.directory.base import BaseAgentDirectory, RecordVisibility
+
+    class StubDirectory(BaseAgentDirectory):
+        DIRECTORY_TYPE: str = "stub"
+
+        @classmethod
+        def from_config(cls, endpoint=None, **kwargs):
+            return cls(endpoint=endpoint)
+
+        def __init__(self, endpoint=None):
+            self.endpoint = endpoint
+
+        async def push_agent_record(
+            self, record, visibility=RecordVisibility.PUBLIC, *a, **kw
+        ):
+            pass
+
+        async def pull_agent_record(self, ref, *a, **kw):
+            pass
+
+        async def delete_agent_record(self, ref, *a, **kw):
+            pass
+
+        async def list_agent_records(self, *a, **kw):
+            return []
+
+        async def search_agent_records(self, query, limit=1, *a, **kw):
+            return []
+
+        async def sign_agent_record(self, record_ref, provider, *a, **kw):
+            pass
+
+        async def verify_agent_record(self, record_ref):
+            pass
+
+        async def get_record_visibility(self, ref, *a, **kw):
+            return True
+
+        async def set_record_visibility(self, ref, visibility, *a, **kw):
+            return True
+
+    factory = AgntcyFactory()
+    factory.register_directory(StubDirectory)
+
+    assert "stub" in factory.registered_directories()
+
+    directory = factory.create_directory("stub", endpoint="custom:9999")
+    assert isinstance(directory, StubDirectory)
+    assert directory.endpoint == "custom:9999"
