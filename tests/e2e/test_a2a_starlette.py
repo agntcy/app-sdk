@@ -411,9 +411,9 @@ async def test_groupchat_streaming(run_a2a_server, transport):
         print(f"Streaming message: {message}")
         messages.append(message)
 
-    assert (
-        len(messages) > 0
-    ), "No streaming group chat messages received (possible timeout)"
+    assert len(messages) > 0, (
+        "No streaming group chat messages received (possible timeout)"
+    )
 
     if transport_instance:
         await transport_instance.close()
