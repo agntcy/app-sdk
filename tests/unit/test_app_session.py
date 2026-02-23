@@ -37,6 +37,6 @@ async def test_app_session():
 
     # test removing app container
     app_session.remove_app_container("test_session")
-    assert app_session.get_app_container("test_session") is None, (
-        "App container was not removed properly."
-    )
+    assert (
+        app_session.get_app_container("test_session") is None
+    ), "App container was not removed properly."
