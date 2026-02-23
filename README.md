@@ -58,20 +58,20 @@ It is intended as an integration and learning surface primarily used in [coffeeA
 </td>
 <td width="25%" valign="top">
 
-**📂 Directory 🕐**
+**📂 Directory**
 
 - Agntcy Directory integration
 - Agent Record Push / Pull / Search
+- OASF ↔ AgentCard conversion
 
 </td>
 <td width="25%" valign="top">
 
-**🔐 Identity 🕐**
+**🔐 Identity**
 
-- Agent badge creation
-- Agent badge verification
-- Tool-based access control
-- Task-based access control
+- Access token management
+- Shared secret & JWT identity providers
+- Auth middleware (A2A, FastMCP)
 
 </td>
 </tr>
@@ -531,12 +531,12 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
   <img alt="Agntcy App SDK Architecture" src="assets/app-sdk-arch.jpg" width="600">
 </a>
 
-| Component       | Version       | Description                                                                                                                                                                                | Repo                                                 |
-| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| **SLIM**        | `1.0.0`       | Secure Low-Latency Interactive Messaging (SLIM) facilitates communication between AI agents using request-reply and moderated group-chat patterns.                                         | [Repo](https://github.com/agntcy/slim)               |
-| **Observe SDK** | `1.0.34`      | Enables multi-agent observability by setting `enable_tracing=True` when initializing the `AgntcyFactory`. This automatically configures tracing and auto-instrumentation for SLIM and A2A. | [Repo](https://github.com/agntcy/observe/tree/main)  |
-| **Directory**   | _Coming soon_ | Component for service discovery and directory-based agent lookups.                                                                                                                         | [Repo](https://github.com/agntcy/dir)                |
-| **Identity**    | _Coming soon_ | Provides agent identity, authentication, and verification mechanisms.                                                                                                                      | [Repo](https://github.com/agntcy/identity/tree/main) |
+| Component       | Version  | Description                                                                                                                                                                                  | Repo                                                 |
+| --------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| **SLIM**        | `1.0.0`  | Secure Low-Latency Interactive Messaging (SLIM) facilitates communication between AI agents using request-reply and moderated group-chat patterns.                                           | [Repo](https://github.com/agntcy/slim)               |
+| **Observe SDK** | `1.0.34` | Enables multi-agent observability by setting `enable_tracing=True` when initializing the `AgntcyFactory`. This automatically configures tracing and auto-instrumentation for SLIM and A2A.   | [Repo](https://github.com/agntcy/observe/tree/main)  |
+| **Directory**   | `1.0.0`  | Agent discovery and registration via the Agntcy Directory service. Push, pull, and search agent records with automatic OASF ↔ AgentCard conversion. Integrated into `AppSession` lifecycle. | [Repo](https://github.com/agntcy/dir)                |
+| **Identity**    | `0.0.7`  | Agent identity and authentication via the Agntcy Identity Service SDK. Supports shared-secret and JWT identity providers, access token management, and auth middleware for A2A and FastMCP.  | [Repo](https://github.com/agntcy/identity/tree/main) |
 
 # Development
 
