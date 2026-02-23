@@ -74,6 +74,7 @@ API Reference
 .. autofunction:: configure_logging
 .. autofunction:: get_logger
 """
+
 from __future__ import annotations
 
 import json

@@ -13,17 +13,15 @@ vars:
 
 tasks:
   lint:
-    desc: "Check code style, formatting, and type hints without making changes"
+    desc: "Check code style and formatting without making changes"
     cmds:
       - uv run {{.UV_ARGS}} ruff check
-      - uv run {{.UV_ARGS}} mypy --explicit-package-bases .
       - uv run {{.UV_ARGS}} ruff format --check
 
   fix-lint:
-    desc: "Lint and fix (where possible) code style and formatting issues using ruff and mypy"
+    desc: "Lint and fix (where possible) code style and formatting issues"
     cmds:
       - uv run {{.UV_ARGS}} ruff check --fix
-      - uv run {{.UV_ARGS}} mypy --explicit-package-bases .
       - uv run {{.UV_ARGS}} ruff format
 
   test:

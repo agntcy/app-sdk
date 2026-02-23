@@ -34,18 +34,15 @@ logger = get_logger(__name__)
 
 
 class A2AAccessor(Protocol):
-    def __call__(self, config: ClientConfig | None = None) -> A2AClientFactory:
-        ...
+    def __call__(self, config: ClientConfig | None = None) -> A2AClientFactory: ...
 
 
 class MCPAccessor(Protocol):
-    def __call__(self) -> MCPClientFactory:
-        ...
+    def __call__(self) -> MCPClientFactory: ...
 
 
 class FastMCPAccessor(Protocol):
-    def __call__(self) -> FastMCPClientFactory:
-        ...
+    def __call__(self) -> FastMCPClientFactory: ...
 
 
 class AgntcyFactory:
