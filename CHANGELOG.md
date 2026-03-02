@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3](https://github.com/agntcy/app-sdk/compare/v0.5.1...v0.5.3) (2026-03-02)
+
+
+### Features
+
+* Agntcy dir client integration and enhanced CI pipeline ([#112](https://github.com/agntcy/app-sdk/issues/112)) ([5d8fba3](https://github.com/agntcy/app-sdk/commit/5d8fba385eda6ada9c6068f3c8e51f09b6b64ff5))
+
+
+### Bug Fixes
+
+* **ci:** use correct secret name for release-please token ([#116](https://github.com/agntcy/app-sdk/issues/116)) ([3c7f120](https://github.com/agntcy/app-sdk/commit/3c7f120986206adf85fcd3fe01a75566bb61044b))
+
+
+### Chores
+
+* bump agntcy-dir dependency from >=0.6.1 to >=1.0.0 ([#113](https://github.com/agntcy/app-sdk/issues/113)) ([85b7f02](https://github.com/agntcy/app-sdk/commit/85b7f02ddc8bc2409792290496fc0ca0878b2ed7))
+* bump package version to 0.5.2 ([#115](https://github.com/agntcy/app-sdk/issues/115)) ([16279ba](https://github.com/agntcy/app-sdk/commit/16279baa838011c74d3ee9e315c190a4a57a3806))
+
 ## 0.5.0
 
 ### Added
