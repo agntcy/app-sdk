@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from a2a.client.client import ClientConfig as A2AClientConfig
 
@@ -24,19 +24,28 @@ logger = get_logger(__name__)
 
 @dataclasses.dataclass
 class SlimRpcConfig:
-    """Minimal fields needed to lazily construct SLIM-RPC infrastructure.
+    """Fields needed to lazily construct SLIM-RPC infrastructure.
 
     Note that this is an optional part of the config — you can set up SLIM-RPC eagerly with
     a pre-built channel factory instead.
 
     When set on :class:`ClientConfig`, the factory will call
-    ``setup_slim_client(namespace, group, name)`` only if the AgentCard
-    negotiation selects ``slimrpc`` as the winning transport.
+    ``setup_slim_client(namespace, group, name, slim_url, ...)`` only if the
+    AgentCard negotiation selects ``slimrpc`` as the winning transport.
     """
 
     namespace: str
     group: str
     name: str
+
+    slim_url: str = "http://localhost:46357"
+    """SLIM dataplane endpoint."""
+
+    secret: str = "secretsecretsecretsecretsecretsecret"
+    """Shared secret for SLIM authentication."""
+
+    log_level: Literal["trace", "debug", "info", "warn", "error"] = "info"
+    """Log level for the underlying SLIM client."""
 
 
 @dataclasses.dataclass

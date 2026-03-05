@@ -130,8 +130,13 @@ class A2AClientFactory:
                 transport=base_transport,
                 topic=topic,
             )
+        elif transport_label == "slimrpc":
+            # Deferred slimrpc — lazily build the channel factory from
+            # SlimRpcConfig if an eager factory was not provided.
+            await self._build_slimrpc_if_needed()
+            return self._upstream.create(card, consumers, interceptors)
         else:
-            # Sync path — delegate to upstream for JSONRPC, slimrpc, etc.
+            # Sync path — delegate to upstream for JSONRPC, etc.
             return self._upstream.create(card, consumers, interceptors)
 
     @classmethod
@@ -296,6 +301,46 @@ class A2AClientFactory:
             )
 
         raise ValueError(f"Unknown patterns transport label: {label!r}")
+
+    async def _build_slimrpc_if_needed(self) -> None:
+        """Lazily construct the slimrpc channel factory from :class:`SlimRpcConfig`.
+
+        If an eager ``slimrpc_channel_factory`` is already set on the config,
+        this is a no-op.  Otherwise, ``setup_slim_client`` is called with the
+        parameters from ``slimrpc_config`` and the resulting channel factory is
+        stored on the config so the upstream ``ClientFactory`` can use it.
+        """
+        config = self._config
+
+        # Already eager — nothing to do.
+        if config.slimrpc_channel_factory is not None:
+            return
+
+        if config.slimrpc_config is None:
+            raise ValueError(
+                "Card selected 'slimrpc' but neither slimrpc_channel_factory "
+                "nor slimrpc_config is set on ClientConfig."
+            )
+
+        from slima2a import setup_slim_client
+        from slima2a.client_transport import (
+            slimrpc_channel_factory as _slimrpc_channel_factory,
+        )
+
+        _service, slim_local_app, _local_name, conn_id = await setup_slim_client(
+            namespace=config.slimrpc_config.namespace,
+            group=config.slimrpc_config.group,
+            name=config.slimrpc_config.name,
+            slim_url=config.slimrpc_config.slim_url,
+            secret=config.slimrpc_config.secret,
+            log_level=config.slimrpc_config.log_level,
+        )
+
+        config.slimrpc_channel_factory = _slimrpc_channel_factory(
+            slim_local_app, conn_id
+        )
+        self._upstream.register("slimrpc", SRPCTransport.create)
+        logger.debug("Registered slimrpc transport (deferred from SlimRpcConfig)")
 
     # ------------------------------------------------------------------
     # Internal helpers
