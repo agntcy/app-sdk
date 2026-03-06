@@ -318,12 +318,71 @@ class AppSession:
             await container.stop()
 
     async def start_all_sessions(self, keep_alive: bool = False):
-        """Start all app containers."""
+        """Start all app containers.
+
+        Each container's ``setup()`` is called sequentially.  When
+        *keep_alive* is ``True``, **all** containers are started first and
+        then the session blocks on a shutdown signal — otherwise only the
+        first container would block and the rest would never start.
+        """
         for container in self.app_containers.values():
             if not container.is_running:
-                await container.run(
-                    keep_alive=keep_alive,
-                )
+                await container.run(keep_alive=False)
+
+        if keep_alive and self.app_containers:
+            # Pick any running container to wait on — they all share the
+            # same event loop, so blocking on one keeps everything alive.
+            first = next(iter(self.app_containers.values()))
+            await first.loop_forever()
+
+    async def serve_card(
+        self,
+        agent_card: Any,
+        request_handler: Any,
+        *,
+        factory: Any | None = None,
+        keep_alive: bool = False,
+        dry_run: bool = False,
+    ) -> Any:
+        """Bootstrap all transports declared in *agent_card.additional_interfaces*.
+
+        This is a high-level convenience that replaces the typical
+        per-transport boilerplate loop.  Under the hood it delegates to
+        :func:`agntcy_app_sdk.serve.serve_card`.
+
+        Args:
+            agent_card: An ``AgentCard`` with ``additional_interfaces``.
+            request_handler: A ``DefaultRequestHandler`` with business logic.
+            factory: An optional :class:`AgntcyFactory`.  If *None*, a
+                default factory is created automatically.
+            keep_alive: Block on a shutdown signal after starting.
+            dry_run: When *True*, return a :class:`~agntcy_app_sdk.serve.ServeCardPlan`
+                describing what *would* be started instead of actually
+                starting anything.
+
+        Returns:
+            ``None`` in normal operation.
+            A :class:`~agntcy_app_sdk.semantic.a2a.server.card_bootstrap.ServeCardPlan`
+                when *dry_run* is ``True``.
+
+        Raises:
+            ValueError: If ``additional_interfaces`` is empty or required
+                environment variables are missing.
+        """
+        from agntcy_app_sdk.factory import AgntcyFactory
+        from agntcy_app_sdk.semantic.a2a.server import card_bootstrap as _bootstrap
+
+        if factory is None:
+            factory = AgntcyFactory()
+
+        return await _bootstrap.serve_card(
+            session=self,
+            factory=factory,
+            agent_card=agent_card,
+            request_handler=request_handler,
+            keep_alive=keep_alive,
+            dry_run=dry_run,
+        )
 
     async def stop_all_sessions(self):
         """Stop all running app containers."""

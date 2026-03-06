@@ -14,6 +14,10 @@ from agntcy_app_sdk.semantic.a2a.client.config import (
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from agntcy_app_sdk.semantic.fast_mcp.client_factory import FastMCPClientFactory
 from agntcy_app_sdk.semantic.mcp.client_factory import MCPClientFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
+    InterfaceTransport,
+    ServeCardPlan,
+)
 
 __all__ = [
     "AgntcyFactory",
@@ -29,4 +33,6 @@ __all__ = [
     "AgentDirectory",
     "BaseAgentDirectory",
     "RecordVisibility",
+    "InterfaceTransport",
+    "ServeCardPlan",
 ]

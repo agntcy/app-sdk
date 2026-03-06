@@ -109,13 +109,14 @@ class A2AClientFactory:
         self._initialize_tracing_if_enabled()
 
         transport_label, transport_url = self._negotiate(card)
+        transport_label_lower = transport_label.lower()
         topic = _parse_topic_from_url(transport_url)
 
-        if transport_label in ("slimpatterns", "natspatterns"):
+        if transport_label_lower in ("slimpatterns", "natspatterns"):
             # Async path — we build the transport ourselves because
             # upstream ClientFactory.create() is sync and cannot call
             # await transport.setup().
-            base_transport = await self._build_patterns_transport(transport_label)
+            base_transport = await self._build_patterns_transport(transport_label_lower)
             patterns_transport = PatternsClientTransport(base_transport, card, topic)
             upstream_client = BaseClient(
                 card,
@@ -130,13 +131,21 @@ class A2AClientFactory:
                 transport=base_transport,
                 topic=topic,
             )
-        elif transport_label == "slimrpc":
+        elif transport_label_lower == "slimrpc":
             # Deferred slimrpc — lazily build the channel factory from
             # SlimRpcConfig if an eager factory was not provided.
             await self._build_slimrpc_if_needed()
             return self._upstream.create(card, consumers, interceptors)
         else:
-            # Sync path — delegate to upstream for JSONRPC, etc.
+            # Sync path — construct JSONRPC client via upstream factory.
+            # Normalise transport identifiers to the casing the upstream
+            # ``a2a.client.client_factory`` expects (``TransportProtocol``
+            # enum values are UPPERCASE, e.g. ``"JSONRPC"``).  Without
+            # this, a card whose ``preferredTransport`` or
+            # ``additional_interfaces`` use lowercase ``"jsonrpc"``
+            # (our ``InterfaceTransport.JSONRPC``) would fail the
+            # upstream's exact-match negotiation.
+            self._normalise_card_transport_casing(card)
             return self._upstream.create(card, consumers, interceptors)
 
     @classmethod
@@ -201,19 +210,27 @@ class A2AClientFactory:
 
         client_set = self._config.supported_transports or ["JSONRPC"]
 
+        # Build a case-insensitive lookup so that "JSONRPC" matches "jsonrpc"
+        # while preserving the original key for downstream dispatch.
+        server_lower: dict[str, tuple[str, str]] = {
+            k.lower(): (k, v) for k, v in server_set.items()
+        }
+        client_lower: dict[str, str] = {c.lower(): c for c in client_set}
+
         transport_protocol: str | None = None
         transport_url: str | None = None
 
         if self._config.use_client_preference:
-            for x in client_set:
-                if x in server_set:
-                    transport_protocol = x
-                    transport_url = server_set[x]
+            for cl in client_set:
+                match = server_lower.get(cl.lower())
+                if match is not None:
+                    transport_protocol = match[0]
+                    transport_url = match[1]
                     break
         else:
-            for x, url in server_set.items():
-                if x in client_set:
-                    transport_protocol = x
+            for sk, url in server_set.items():
+                if sk.lower() in client_lower:
+                    transport_protocol = sk
                     transport_url = url
                     break
 
@@ -345,6 +362,37 @@ class A2AClientFactory:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    # Map lowercase transport strings to their upstream TransportProtocol
+    # enum values.  Only covers identifiers that the upstream SDK knows
+    # about — custom SDK-only labels (slimpatterns, natspatterns, slimrpc)
+    # are handled before reaching the upstream factory.
+    _UPSTREAM_TRANSPORT_CASING: dict[str, str] = {
+        "jsonrpc": "JSONRPC",
+        "grpc": "GRPC",
+        "http+json": "HTTP+JSON",
+    }
+
+    @staticmethod
+    def _normalise_card_transport_casing(card: AgentCard) -> None:
+        """Normalise transport identifiers on a card for upstream consumption.
+
+        The upstream ``a2a.client.client_factory.ClientFactory`` uses
+        ``TransportProtocol`` enum values (e.g. ``"JSONRPC"``) for
+        matching.  Our SDK and ``InterfaceTransport`` constants use
+        lowercase (``"jsonrpc"``).  This helper rewrites the card
+        in-place so the upstream negotiation succeeds.
+        """
+        mapping = A2AClientFactory._UPSTREAM_TRANSPORT_CASING
+        if card.preferred_transport:
+            canonical = mapping.get(card.preferred_transport.lower())
+            if canonical:
+                card.preferred_transport = canonical
+        if card.additional_interfaces:
+            for iface in card.additional_interfaces:
+                canonical = mapping.get(iface.transport.lower())
+                if canonical:
+                    iface.transport = canonical
 
     def _register_transports(self) -> None:
         """Register SDK transport producers with the upstream factory.

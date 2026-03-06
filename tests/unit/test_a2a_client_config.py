@@ -262,6 +262,27 @@ class TestParseTopicFromUrl:
             == "default/default/agent"
         )
 
+    def test_slim_endpoint_with_port(self):
+        """slim://host:port/topic should extract just the topic."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
+
+        assert _parse_topic_from_url("slim://localhost:46357/my_topic") == "my_topic"
+
+    def test_nats_endpoint_with_port(self):
+        """nats://host:port/topic should extract just the topic."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
+
+        assert _parse_topic_from_url("nats://localhost:4222/my_topic") == "my_topic"
+
+    def test_slim_endpoint_with_port_and_slashes(self):
+        """slim://host:port/ns/group/name should extract the full path as topic."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
+
+        assert (
+            _parse_topic_from_url("slim://localhost:46357/default/default/agent")
+            == "default/default/agent"
+        )
+
 
 # ---------------------------------------------------------------------------
 # PatternsClientTransport tests

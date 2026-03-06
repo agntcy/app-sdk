@@ -2,11 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
-from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
+    InterfaceTransport,
+    ServeCardPlan,
+    parse_interface_url,
+    serve_card,
+)
 from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
     A2AExperimentalServer,
     A2AExperimentalServerHandler,
 )
+from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
 from agntcy_app_sdk.semantic.a2a.server.srpc import (
     A2ASlimRpcServerConfig,
     A2ASRPCServerHandler,
@@ -21,4 +27,8 @@ __all__ = [
     "A2ASlimRpcServerConfig",
     "SlimRpcConnectionConfig",
     "A2ASRPCServerHandler",
+    "InterfaceTransport",
+    "ServeCardPlan",
+    "parse_interface_url",
+    "serve_card",
 ]

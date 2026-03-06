@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
 from a2a.client.transports.base import ClientTransport
@@ -43,17 +44,27 @@ _PATTERNS_SCHEMES = {"slim", "nats"}
 def _parse_topic_from_url(url: str) -> str:
     """Extract a topic from a scheme-encoded URL.
 
-    Examples::
+    Handles both topic-only and explicit-endpoint formats::
 
-        "slim://Hello_World_Agent_1.0.0"  →  "Hello_World_Agent_1.0.0"
+        "slim://my_topic"                 →  "my_topic"
+        "slim://localhost:46357/my_topic" →  "my_topic"
         "nats://my_topic"                 →  "my_topic"
-        "Hello_World_Agent_1.0.0"         →  "Hello_World_Agent_1.0.0"
+        "nats://localhost:4222/my_topic"  →  "my_topic"
+        "slim://default/default/agent"    →  "default/default/agent"
+        "http://localhost:9999"           →  "http://localhost:9999"
     """
-    if "://" in url:
-        scheme, _, rest = url.partition("://")
-        if scheme.lower() in _PATTERNS_SCHEMES:
-            return rest
-    return url
+    if "://" not in url:
+        return url
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in _PATTERNS_SCHEMES:
+        return url  # HTTP etc. — pass through unchanged
+    # Explicit endpoint: has a port → topic is the path
+    if parsed.port is not None:
+        return parsed.path.lstrip("/")
+    # Topic-only: hostname (+ path if slashes present) IS the topic
+    hostname = parsed.hostname or ""
+    path = parsed.path.lstrip("/")
+    return f"{hostname}/{path}" if path else hostname
 
 
 class PatternsClientTransport(ClientTransport):

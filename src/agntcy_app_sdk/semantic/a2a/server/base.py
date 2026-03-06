@@ -42,7 +42,11 @@ class BaseA2AServerHandler(ServerHandler):
         """
         card = self.agent_card
         current = card.preferred_transport
-        if current is not None and current != "JSONRPC" and current != name:
+        if (
+            current is not None
+            and current.lower() != "jsonrpc"
+            and current.lower() != name.lower()
+        ):
             logger.warning(
                 "Overriding agent card preferred_transport "
                 f"from '{current}' to '{name}'"

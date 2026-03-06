@@ -511,22 +511,38 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
         if self._transport is None:
             raise ValueError("Transport must be set before running A2A handler.")
 
-        # Stamp preferred_transport and card.url before anything else
+        # Stamp preferred_transport and card.url before anything else.
+        # When ``serve_card()`` registers the same ``a2a_app`` with multiple
+        # handlers (SLIM + NATS + HTTP), each handler shares the same card
+        # object.  We must avoid blindly overwriting ``card.url`` so the
+        # JSONRPC handler can still serve the card with a valid HTTP URL.
+        # Only overwrite when:
+        #   - preferred_transport is not yet set, or
+        #   - preferred_transport already matches this transport.
         transport_type = self._transport.type()
         transport_entry = _TRANSPORT_NAME_MAP.get(transport_type)
         if transport_entry:
             transport_name, scheme = transport_entry
-            self._set_preferred_transport(transport_name)
-            # Encode the topic into card.url so clients can derive it
-            old_url = self._managed_object.agent_card.url
-            new_url = f"{scheme}://{self._topic}"
-            logger.info(
-                "Overwriting card.url '%s' -> '%s' for %s transport",
-                old_url,
-                new_url,
-                transport_name,
-            )
-            self._managed_object.agent_card.url = new_url
+            current_preferred = self._managed_object.agent_card.preferred_transport
+            if current_preferred is None or current_preferred == transport_name:
+                self._set_preferred_transport(transport_name)
+                # Encode the topic into card.url so clients can derive it
+                old_url = self._managed_object.agent_card.url
+                new_url = f"{scheme}://{self._topic}"
+                logger.info(
+                    "Overwriting card.url '%s' -> '%s' for %s transport",
+                    old_url,
+                    new_url,
+                    transport_name,
+                )
+                self._managed_object.agent_card.url = new_url
+            else:
+                logger.info(
+                    "Skipping card.url overwrite for %s transport "
+                    "(preferred_transport already set to '%s')",
+                    transport_name,
+                    current_preferred,
+                )
         else:
             logger.warning(
                 f"Unknown transport type '{transport_type}'; "
