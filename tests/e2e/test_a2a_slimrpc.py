@@ -131,9 +131,9 @@ async def test_client_factory(run_a2a_slimrpc_server):
     )
 
     # Verify supported_transports was auto-derived
-    assert "slimrpc" in config.supported_transports, (
-        f"Expected 'slimrpc' in supported_transports, got: {config.supported_transports}"
-    )
+    assert (
+        "slimrpc" in config.supported_transports
+    ), f"Expected 'slimrpc' in supported_transports, got: {config.supported_transports}"
 
     # 4. Create client via A2AClientFactory
     factory = A2AClientFactory(config)
@@ -197,9 +197,9 @@ async def test_client_factory_deferred(run_a2a_slimrpc_server):
     )
 
     # Verify supported_transports was auto-derived
-    assert "slimrpc" in config.supported_transports, (
-        f"Expected 'slimrpc' in supported_transports, got: {config.supported_transports}"
-    )
+    assert (
+        "slimrpc" in config.supported_transports
+    ), f"Expected 'slimrpc' in supported_transports, got: {config.supported_transports}"
 
     # 3. Create client via A2AClientFactory — factory handles async setup
     factory = A2AClientFactory(config)

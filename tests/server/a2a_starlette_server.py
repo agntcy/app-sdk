@@ -16,8 +16,10 @@ import asyncio
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 factory = AgntcyFactory(enable_tracing=True)
 
@@ -37,8 +39,22 @@ DEFAULT_SKILL = AgentSkill(
 def _build_a2a_server(
     name: str = "Default_Hello_World_Agent",
     version: str = "1.0.0",
+    transport_type: str | None = None,
+    topic: str | None = None,
+    endpoint: str | None = None,
 ) -> A2AStarletteApplication:
-    """Build an A2A server with a HelloWorld agent."""
+    """Build an A2A server with a HelloWorld agent.
+
+    When *transport_type* is provided, ``additional_interfaces`` is populated
+    using the :class:`InterfaceTransport` constants so the card is ready for
+    ``serve_card()``-style bootstrap.
+    """
+    additional_interfaces: list[AgentInterface] | None = None
+    if transport_type is not None:
+        additional_interfaces = _build_interfaces(
+            transport_type, topic or name, endpoint
+        )
+
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
@@ -49,12 +65,70 @@ def _build_a2a_server(
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
         supportsAuthenticatedExtendedCard=False,
+        additional_interfaces=additional_interfaces,
     )
     request_handler = DefaultRequestHandler(
         agent_executor=HelloWorldAgentExecutor(name),
         task_store=InMemoryTaskStore(),
     )
     return A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler)
+
+
+def _build_interfaces(
+    transport_type: str,
+    topic: str,
+    endpoint: str | None = None,
+) -> list[AgentInterface]:
+    """Build ``additional_interfaces`` for an agent card.
+
+    Uses :class:`InterfaceTransport` constants and the URL format
+    understood by ``card_bootstrap.parse_interface_url``.
+    """
+    if transport_type == "SLIM":
+        if endpoint:
+            # Explicit: slim://host:port/topic
+            from urllib.parse import urlparse
+
+            p = urlparse(endpoint)
+            host = p.hostname or "localhost"
+            port = p.port or 46357
+            url = f"slim://{host}:{port}/{topic}"
+        else:
+            url = f"slim://{topic}"
+        return [
+            AgentInterface(
+                transport=InterfaceTransport.SLIM_PATTERNS,
+                url=url,
+            )
+        ]
+
+    if transport_type == "NATS":
+        if endpoint:
+            from urllib.parse import urlparse
+
+            p = urlparse(endpoint if "://" in endpoint else f"nats://{endpoint}")
+            host = p.hostname or "localhost"
+            port = p.port or 4222
+            url = f"nats://{host}:{port}/{topic}"
+        else:
+            url = f"nats://{topic}"
+        return [
+            AgentInterface(
+                transport=InterfaceTransport.NATS_PATTERNS,
+                url=url,
+            )
+        ]
+
+    if transport_type == "JSONRPC":
+        url = endpoint or "http://0.0.0.0:9999"
+        return [
+            AgentInterface(
+                transport=InterfaceTransport.JSONRPC,
+                url=url,
+            )
+        ]
+
+    raise ValueError(f"Unknown transport type: {transport_type!r}")
 
 
 # Module-level instance used by unit tests
@@ -74,7 +148,13 @@ async def main(
     block: bool = True,
 ):
     """Create a bridge between an A2A server and a transport."""
-    server = _build_a2a_server(name=name, version=version)
+    server = _build_a2a_server(
+        name=name,
+        version=version,
+        transport_type=transport_type,
+        topic=topic or None,
+        endpoint=endpoint,
+    )
 
     if transport_type == "JSONRPC":
         # No transport — AppSession will use A2AJsonRpcServerHandler
@@ -98,7 +178,7 @@ async def main(
 
         app_session = factory.create_app_session(max_sessions=1)
         app_session.add(server).with_transport(transport).with_topic(
-            topic
+            topic or name
         ).with_session_id("default_session").build()
         await app_session.start_all_sessions(keep_alive=block)
 

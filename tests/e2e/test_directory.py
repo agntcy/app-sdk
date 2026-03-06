@@ -17,7 +17,13 @@ import pytest_asyncio
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentProvider, AgentSkill
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    AgentProvider,
+    AgentSkill,
+)
 
 from agntcy_app_sdk.app_sessions import AppContainer
 from agntcy_app_sdk.directory import (
@@ -27,6 +33,7 @@ from agntcy_app_sdk.directory import (
 )
 from agntcy_app_sdk.directory.oasf_converter import MODULE_NAME_A2A
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 from tests.server.agent_executor import HelloWorldAgentExecutor
 
 pytest_plugins = "pytest_asyncio"
@@ -114,9 +121,9 @@ async def test_push_and_pull_extract_card(directory: AgentDirectory):
 
     # Pull and extract the AgentCard
     restored_card = await directory.pull_agent_record(cid, extract_card=True)
-    assert isinstance(restored_card, AgentCard), (
-        "extract_card should return an AgentCard"
-    )
+    assert isinstance(
+        restored_card, AgentCard
+    ), "extract_card should return an AgentCard"
     assert restored_card.name == card.name
     assert restored_card.url == card.url
     assert restored_card.version == card.version
@@ -215,6 +222,12 @@ def _build_a2a_server(name: str = "dir-pipeline-agent") -> A2AStarletteApplicati
         description="E2E directory pipeline agent",
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
+        additional_interfaces=[
+            AgentInterface(
+                transport=InterfaceTransport.JSONRPC,
+                url="http://0.0.0.0:9000",
+            ),
+        ],
     )
     request_handler = DefaultRequestHandler(
         agent_executor=HelloWorldAgentExecutor(name),
@@ -257,9 +270,9 @@ async def test_app_container_pushes_record_to_directory():
     # 4. Run — this triggers handler.setup() → directory.setup() → push_agent_record()
     await container.run(keep_alive=False)
     assert container.is_running
-    assert container.directory_cid is not None, (
-        "directory_cid should be set after run()"
-    )
+    assert (
+        container.directory_cid is not None
+    ), "directory_cid should be set after run()"
     print(f"  3. Container started — CID: {container.directory_cid}")
 
     # 5. Search the directory for the pushed card by name
@@ -270,9 +283,9 @@ async def test_app_container_pushes_record_to_directory():
     )
 
     names = [r.get("name") for r in results]
-    assert original_card.name in names, (
-        f"Expected '{original_card.name}' in search results, got: {names}"
-    )
+    assert (
+        original_card.name in names
+    ), f"Expected '{original_card.name}' in search results, got: {names}"
     print(f"  4. Directory search confirmed — found '{original_card.name}'")
 
     # 6. Pull and verify the card fields
@@ -331,20 +344,20 @@ async def test_app_session_start_all_pushes_records():
         ("A", container_a, card_a),
         ("B", container_b, card_b),
     ):
-        assert container.directory_cid is not None, (
-            f"Container {label} should have a directory_cid after run()"
-        )
+        assert (
+            container.directory_cid is not None
+        ), f"Container {label} should have a directory_cid after run()"
         cid = container.directory_cid
         print(f"  4{label}. Container {label} CID: {cid}")
 
         # Pull by CID and extract the AgentCard
         pulled = await directory.pull_agent_record(cid, extract_card=True)
-        assert pulled is not None, (
-            f"pull_agent_record({cid}) returned None for container {label}"
-        )
-        assert isinstance(pulled, AgentCard), (
-            f"Expected AgentCard, got {type(pulled).__name__}"
-        )
+        assert (
+            pulled is not None
+        ), f"pull_agent_record({cid}) returned None for container {label}"
+        assert isinstance(
+            pulled, AgentCard
+        ), f"Expected AgentCard, got {type(pulled).__name__}"
         assert pulled.name == card.name
         assert pulled.version == card.version
         print(f"  5{label}. Pulled & verified '{pulled.name}' v{pulled.version}")
@@ -418,9 +431,9 @@ async def test_factory_create_directory_in_pipeline():
 
     # Pull from directory to confirm the push
     results = await directory.search_agent_records(card.name, limit=5)
-    assert any(r.get("name") == card.name for r in results), (
-        f"Card '{card.name}' not found in directory after run()"
-    )
+    assert any(
+        r.get("name") == card.name for r in results
+    ), f"Card '{card.name}' not found in directory after run()"
     print(f"  3. Confirmed '{card.name}' in directory")
 
     await container.stop()

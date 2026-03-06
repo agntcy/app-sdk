@@ -147,15 +147,15 @@ class TestExample1SlimRPC:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert returncode == 0, (
-                f"Client exited with code {returncode}. Output:\n{output}"
-            )
-            assert "SUCCESS" in output, (
-                f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            )
-            assert "sunny" in output.lower() or "75" in output, (
-                f"Expected weather report in output. Got:\n{output}"
-            )
+            assert (
+                returncode == 0
+            ), f"Client exited with code {returncode}. Output:\n{output}"
+            assert (
+                "SUCCESS" in output
+            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            assert (
+                "sunny" in output.lower() or "75" in output
+            ), f"Expected weather report in output. Got:\n{output}"
 
         finally:
             _kill_server(server_proc)
@@ -216,15 +216,15 @@ class TestExample2ExperimentalPatternsSLIM:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert returncode == 0, (
-                f"Client exited with code {returncode}. Output:\n{output}"
-            )
-            assert "SUCCESS" in output, (
-                f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            )
-            assert "sunny" in output.lower() or "75" in output, (
-                f"Expected weather report in output. Got:\n{output}"
-            )
+            assert (
+                returncode == 0
+            ), f"Client exited with code {returncode}. Output:\n{output}"
+            assert (
+                "SUCCESS" in output
+            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            assert (
+                "sunny" in output.lower() or "75" in output
+            ), f"Expected weather report in output. Got:\n{output}"
 
         finally:
             _kill_server(server_proc)
@@ -285,15 +285,15 @@ class TestExample2ExperimentalPatternsNATS:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert returncode == 0, (
-                f"Client exited with code {returncode}. Output:\n{output}"
-            )
-            assert "SUCCESS" in output, (
-                f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            )
-            assert "sunny" in output.lower() or "75" in output, (
-                f"Expected weather report in output. Got:\n{output}"
-            )
+            assert (
+                returncode == 0
+            ), f"Client exited with code {returncode}. Output:\n{output}"
+            assert (
+                "SUCCESS" in output
+            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            assert (
+                "sunny" in output.lower() or "75" in output
+            ), f"Expected weather report in output. Got:\n{output}"
 
         finally:
             _kill_server(server_proc)
