@@ -258,6 +258,7 @@ async def test_app_container_pushes_record_to_directory():
     container = (
         session.add(server)
         .with_directory(directory)
+        .with_host("0.0.0.0")
         .with_port(9020)
         .with_session_id("dir-pipeline-test")
         .build()
@@ -325,12 +326,12 @@ async def test_app_session_start_all_pushes_records():
 
     # Wire both through the same AppSession (different ports to avoid conflict)
     session = factory.create_app_session(max_sessions=5)
-    session.add(server_a).with_directory(directory).with_port(9010).with_session_id(
-        "dir-a"
-    ).build()
-    session.add(server_b).with_directory(directory).with_port(9011).with_session_id(
-        "dir-b"
-    ).build()
+    session.add(server_a).with_directory(directory).with_host("0.0.0.0").with_port(
+        9010
+    ).with_session_id("dir-a").build()
+    session.add(server_b).with_directory(directory).with_host("0.0.0.0").with_port(
+        9011
+    ).with_session_id("dir-b").build()
     print("  2. Built 2 AppContainers with shared directory")
 
     # Start all
@@ -382,7 +383,7 @@ async def test_app_container_no_directory_skips_push():
 
     session = factory.create_app_session()
     container = (
-        session.add(server).with_port(9030).with_session_id("no-dir-test").build()
+        session.add(server).with_host("0.0.0.0").with_port(9030).with_session_id("no-dir-test").build()
     )
 
     assert container.directory is None
@@ -421,6 +422,7 @@ async def test_factory_create_directory_in_pipeline():
     container = (
         session.add(server)
         .with_directory(directory)
+        .with_host("0.0.0.0")
         .with_port(9040)
         .with_session_id("factory-dir-test")
         .build()

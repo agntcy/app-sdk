@@ -258,10 +258,15 @@ class TestParseHttp:
         result = parse_interface_url(iface)
         assert result == {"host": "localhost", "port": 8080}
 
-    def test_default_port(self):
+    def test_missing_port_raises(self):
         iface = AgentInterface(transport="http", url="http://localhost")
-        result = parse_interface_url(iface)
-        assert result["port"] == 9000
+        with pytest.raises(ValueError, match="explicit host and port"):
+            parse_interface_url(iface)
+
+    def test_missing_host_raises(self):
+        iface = AgentInterface(transport="jsonrpc", url="http://")
+        with pytest.raises(ValueError, match="explicit host and port"):
+            parse_interface_url(iface)
 
     def test_case_insensitive(self):
         iface = AgentInterface(transport="JSONRPC", url="http://0.0.0.0:9999")
@@ -318,7 +323,7 @@ class TestCardBuilderValidation:
 
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("SLIM_SHARED_SECRET", None)
-            with pytest.raises(ValueError, match="SLIM_SHARED_SECRET"):
+            with pytest.raises(ValueError, match="SLIM shared secret required"):
                 await builder.start()
 
     @pytest.mark.asyncio
@@ -335,8 +340,36 @@ class TestCardBuilderValidation:
 
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("SLIM_SHARED_SECRET", None)
-            with pytest.raises(ValueError, match="SLIM_SHARED_SECRET"):
+            with pytest.raises(ValueError, match="SLIM shared secret required"):
                 await builder.start()
+
+    @pytest.mark.asyncio
+    async def test_with_shared_secret_bypasses_env_var(self):
+        """Using .with_shared_secret() should not require SLIM_SHARED_SECRET env var."""
+        factory = MagicMock()
+        factory.create_transport.return_value = MagicMock()
+        session = MagicMock()
+        session.start_all_sessions = AsyncMock()
+        builder = _make_builder(
+            interfaces=[
+                AgentInterface(
+                    transport="slim",
+                    url="slim://my_topic",
+                )
+            ],
+            session=session,
+            factory=factory,
+        )
+        builder.with_shared_secret("my-secret-value")
+
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("SLIM_SHARED_SECRET", None)
+            # Should NOT raise — shared secret is provided via fluent setter
+            await builder.start()
+
+        factory.create_transport.assert_called_once()
+        call_kwargs = factory.create_transport.call_args
+        assert call_kwargs.kwargs.get("shared_secret_identity") == "my-secret-value"
 
 
 # =========================================================================

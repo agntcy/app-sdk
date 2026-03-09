@@ -73,8 +73,8 @@ class ContainerBuilder:
         self._topic: Optional[str] = None
         self._directory: Optional[BaseAgentDirectory] = None
         self._session_id: Optional[str] = None
-        self._host: str = "0.0.0.0"
-        self._port: int = 9000
+        self._host: Optional[str] = None
+        self._port: Optional[int] = None
 
     def with_transport(self, transport: BaseTransport) -> ContainerBuilder:
         self._transport = transport
@@ -116,6 +116,12 @@ class ContainerBuilder:
         )
 
         if handler_class is A2AExperimentalServerHandler and self._transport is None:
+            if self._host is None or self._port is None:
+                raise ValueError(
+                    "host and port are required when serving A2A over HTTP "
+                    "(no transport). Use .with_host() and .with_port() on "
+                    "the builder."
+                )
             handler = A2AJsonRpcServerHandler(
                 self._target,
                 host=self._host,

@@ -59,9 +59,13 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Well-known default ports for each transport protocol
+_SLIM_DEFAULT_PORT = 46357
+_NATS_DEFAULT_PORT = 4222
+
 # Default endpoints when using topic-only URLs
-_SLIM_DEFAULT_ENDPOINT = "http://localhost:46357"
-_NATS_DEFAULT_ENDPOINT = "nats://localhost:4222"
+_SLIM_DEFAULT_ENDPOINT = f"http://localhost:{_SLIM_DEFAULT_PORT}"
+_NATS_DEFAULT_ENDPOINT = f"nats://localhost:{_NATS_DEFAULT_PORT}"
 
 
 # ---------------------------------------------------------------------------
@@ -243,8 +247,13 @@ def parse_interface_url(interface: AgentInterface) -> dict[str, str | int]:
         return _parse_nats_patterns(url, parsed)
 
     if transport_type in ("jsonrpc", "http"):
-        host = parsed.hostname or "0.0.0.0"
-        port = parsed.port or 9000
+        host = parsed.hostname
+        port = parsed.port
+        if not host or port is None:
+            raise ValueError(
+                f"JSONRPC/HTTP URL must include an explicit host and port "
+                f"(e.g. 'http://0.0.0.0:9999'), got: {url!r}"
+            )
         return {"host": host, "port": port}
 
     raise ValueError(f"Unknown transport type: {transport_type!r}")
@@ -292,7 +301,7 @@ def _parse_slim_patterns(url: str, parsed: object) -> dict[str, str | int]:
     if _has_explicit_endpoint(p):
         # Explicit: slim://host[:port]/topic
         host = p.hostname or "localhost"
-        port = p.port or 46357
+        port = p.port or _SLIM_DEFAULT_PORT
         endpoint = f"http://{host}:{port}"
         topic = p.path.lstrip("/")
     else:
@@ -319,7 +328,7 @@ def _parse_nats_patterns(url: str, parsed: object) -> dict[str, str | int]:
     if _has_explicit_endpoint(p):
         # Explicit: nats://host[:port]/topic
         host = p.hostname or "localhost"
-        port = p.port or 4222
+        port = p.port or _NATS_DEFAULT_PORT
         endpoint = f"nats://{host}:{port}"
         topic = p.path.lstrip("/")
     else:
@@ -387,6 +396,7 @@ class CardBuilder:
         self._factory: AgntcyFactory | None = None
         self._overrides: dict[str, object] = {}  # canonical transport_type -> pre-built
         self._skips: set[str] = set()  # canonical transport_types to skip
+        self._shared_secret: str | None = None
 
     # -- Fluent setters -----------------------------------------------------
 
@@ -408,6 +418,16 @@ class CardBuilder:
     def skip(self, transport_type: str) -> CardBuilder:
         """Exclude an interface type from being started."""
         self._skips.add(_normalize_transport(transport_type))
+        return self
+
+    def with_shared_secret(self, secret: str) -> CardBuilder:
+        """Provide the SLIM shared secret directly.
+
+        If not called, the builder falls back to the ``SLIM_SHARED_SECRET``
+        environment variable.  A :class:`ValueError` is raised at start
+        time if neither is available and a SLIM-based transport is declared.
+        """
+        self._shared_secret = secret
         return self
 
     # -- Terminal operations ------------------------------------------------
@@ -485,10 +505,15 @@ class CardBuilder:
                 session_id = f"slimrpc-{i}"
 
                 if override is None:
-                    shared_secret = os.environ.get("SLIM_SHARED_SECRET")
+                    shared_secret = (
+                        self._shared_secret
+                        or os.environ.get("SLIM_SHARED_SECRET")
+                    )
                     if not shared_secret:
                         raise ValueError(
-                            "SLIM_SHARED_SECRET env var required for slimrpc interface"
+                            "SLIM shared secret required for slimrpc interface. "
+                            "Use .with_shared_secret() or set SLIM_SHARED_SECRET "
+                            "env var."
                         )
 
                 log = logger.bind(transport=transport_type, session_id=session_id)
@@ -533,10 +558,15 @@ class CardBuilder:
                 routable_name = str(parsed["topic"])
 
                 if override is None:
-                    shared_secret = os.environ.get("SLIM_SHARED_SECRET")
+                    shared_secret = (
+                        self._shared_secret
+                        or os.environ.get("SLIM_SHARED_SECRET")
+                    )
                     if not shared_secret:
                         raise ValueError(
-                            "SLIM_SHARED_SECRET env var required for slim interface"
+                            "SLIM shared secret required for slim interface. "
+                            "Use .with_shared_secret() or set SLIM_SHARED_SECRET "
+                            "env var."
                         )
 
                 log = logger.bind(transport=transport_type, session_id=session_id)
