@@ -5,7 +5,7 @@ from typing import Any, Callable
 import os
 import json
 
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 
@@ -20,7 +20,6 @@ import asyncio
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-configure_logging()
 logger = get_logger(__name__)
 
 

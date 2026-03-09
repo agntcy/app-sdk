@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.semantic.base import ServerHandler
 from agntcy_app_sdk.transport.base import BaseTransport
+
+if TYPE_CHECKING:
+    from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import CardBuilder
 
 logger = get_logger(__name__)
 
@@ -268,6 +271,24 @@ class AppSession:
         """Begin building an AppContainer for the given target (server or config)."""
         return ContainerBuilder(self, target)
 
+    def add_a2a_card(self, agent_card: Any, request_handler: Any) -> CardBuilder:
+        """Begin building containers from an A2A AgentCard's interfaces.
+
+        Returns a :class:`~agntcy_app_sdk.semantic.a2a.server.card_bootstrap.CardBuilder`
+        for fluent configuration.
+
+        Example::
+
+            await (
+                session.add_a2a_card(agent_card, handler)
+                .with_factory(factory)
+                .start(keep_alive=True)
+            )
+        """
+        from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import CardBuilder
+
+        return CardBuilder(self, agent_card, request_handler)
+
     # -- Internal registration (called by ContainerBuilder.build()) ---------
 
     def _register_container(self, session_id: str, container: AppContainer):
@@ -334,55 +355,6 @@ class AppSession:
             # same event loop, so blocking on one keeps everything alive.
             first = next(iter(self.app_containers.values()))
             await first.loop_forever()
-
-    async def serve_card(
-        self,
-        agent_card: Any,
-        request_handler: Any,
-        *,
-        factory: Any | None = None,
-        keep_alive: bool = False,
-        dry_run: bool = False,
-    ) -> Any:
-        """Bootstrap all transports declared in *agent_card.additional_interfaces*.
-
-        This is a high-level convenience that replaces the typical
-        per-transport boilerplate loop.  Under the hood it delegates to
-        :func:`agntcy_app_sdk.serve.serve_card`.
-
-        Args:
-            agent_card: An ``AgentCard`` with ``additional_interfaces``.
-            request_handler: A ``DefaultRequestHandler`` with business logic.
-            factory: An optional :class:`AgntcyFactory`.  If *None*, a
-                default factory is created automatically.
-            keep_alive: Block on a shutdown signal after starting.
-            dry_run: When *True*, return a :class:`~agntcy_app_sdk.serve.ServeCardPlan`
-                describing what *would* be started instead of actually
-                starting anything.
-
-        Returns:
-            ``None`` in normal operation.
-            A :class:`~agntcy_app_sdk.semantic.a2a.server.card_bootstrap.ServeCardPlan`
-                when *dry_run* is ``True``.
-
-        Raises:
-            ValueError: If ``additional_interfaces`` is empty or required
-                environment variables are missing.
-        """
-        from agntcy_app_sdk.factory import AgntcyFactory
-        from agntcy_app_sdk.semantic.a2a.server import card_bootstrap as _bootstrap
-
-        if factory is None:
-            factory = AgntcyFactory()
-
-        return await _bootstrap.serve_card(
-            session=self,
-            factory=factory,
-            agent_card=agent_card,
-            request_handler=request_handler,
-            keep_alive=keep_alive,
-            dry_run=dry_run,
-        )
 
     async def stop_all_sessions(self):
         """Stop all running app containers."""

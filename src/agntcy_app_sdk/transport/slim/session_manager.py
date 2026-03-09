@@ -4,7 +4,7 @@
 import asyncio
 from typing import Dict
 import datetime
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 import slim_bindings
 from slim_bindings import (
     Name,
@@ -13,7 +13,6 @@ from slim_bindings import (
     SessionType,
 )
 
-configure_logging()
 logger = get_logger(__name__)
 
 

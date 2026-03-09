@@ -37,14 +37,13 @@ from a2a.types import (
     TaskQueryParams,
 )
 
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.client.utils import (
     get_identity_auth_error,
     message_translator,
 )
 from agntcy_app_sdk.transport.base import BaseTransport
 
-configure_logging()
 logger = get_logger(__name__)
 
 
@@ -273,7 +272,7 @@ class A2AExperimentalClient(Client):
                 timeout=timeout,
             ):
                 try:
-                    logger.info(raw_resp)
+                    logger.debug(raw_resp)
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
                     if resp.get("error") == "forbidden" or raw_resp.status_code == 403:
                         logger.warning(

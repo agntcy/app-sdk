@@ -10,12 +10,11 @@ from nats.aio.client import Client as NATS
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.transport.base import BaseTransport
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
 from typing import Callable, List, Optional, Any, Awaitable, AsyncIterator
 from uuid import uuid4
 
-configure_logging()
 logger = get_logger(__name__)
 
 """

@@ -1,12 +1,12 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-"""A2A server that bootstraps via ``serve_card()`` — the way a real user would.
+"""A2A server that bootstraps via ``add_a2a_card()`` — the way a real user would.
 
 The agent card is the **single source of truth**.  It declares *all*
 available transports in ``additional_interfaces`` (SLIM, NATS, HTTP) and
 uses ``preferredTransport`` to signal which one clients should favour.
-``serve_card()`` reads those interfaces and wires everything up — no
+``add_a2a_card()`` reads those interfaces and wires everything up — no
 manual builder chain required.
 
 Compare with ``a2a_starlette_server.py`` which uses the manual
@@ -50,11 +50,12 @@ _PREFERRED_TRANSPORT: dict[str, str] = {
     "SLIM": InterfaceTransport.SLIM_PATTERNS,
     "NATS": InterfaceTransport.NATS_PATTERNS,
     "JSONRPC": InterfaceTransport.JSONRPC,
+    "SLIMRPC": InterfaceTransport.SLIM_RPC,
 }
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point — card is built declaratively, serve_card() does the rest
+# CLI entry point — card is built declaratively, add_a2a_card() does the rest
 # ---------------------------------------------------------------------------
 
 
@@ -65,11 +66,11 @@ async def main(
     port: int = 9999,
     block: bool = True,
 ):
-    """Start an A2A server using ``session.serve_card()``."""
+    """Start an A2A server using ``session.add_a2a_card()``."""
 
     # -- Build the card as a real user would: declare ALL transports --------
     # The *name* is the agent's routable identity, stamped into the SLIM/NATS
-    # interface URLs.  serve_card() reads those URLs and subscribes accordingly.
+    # interface URLs.  add_a2a_card() reads those URLs and subscribes accordingly.
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
@@ -94,6 +95,10 @@ async def main(
                 transport=InterfaceTransport.JSONRPC,
                 url=f"http://0.0.0.0:{port}",
             ),
+            AgentInterface(
+                transport=InterfaceTransport.SLIM_RPC,
+                url=f"{SLIM_ENDPOINT}/{name}",
+            ),
         ],
     )
 
@@ -105,16 +110,15 @@ async def main(
     # -- One call does it all -----------------------------------------------
     factory = AgntcyFactory(enable_tracing=True)
     session = factory.create_app_session(max_sessions=10)
-    await session.serve_card(
-        agent_card=agent_card,
-        request_handler=request_handler,
-        factory=factory,
-        keep_alive=block,
+    await (
+        session.add_a2a_card(agent_card, request_handler)
+        .with_factory(factory)
+        .start(keep_alive=block)
     )
 
 
 if __name__ == "__main__":
-    # Set SLIM_SHARED_SECRET if not already set — serve_card() requires it
+    # Set SLIM_SHARED_SECRET if not already set — add_a2a_card() requires it
     # for SLIM transports.  Use the same default as SLIMTransport.__init__.
     if "SLIM_SHARED_SECRET" not in os.environ:
         os.environ[
@@ -122,7 +126,7 @@ if __name__ == "__main__":
         ] = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
 
     parser = argparse.ArgumentParser(
-        description="Run the A2A server using serve_card() bootstrap."
+        description="Run the A2A server using add_a2a_card() bootstrap."
     )
     parser.add_argument(
         "--transport",

@@ -47,7 +47,7 @@ def _build_a2a_server(
 
     When *transport_type* is provided, ``additional_interfaces`` is populated
     using the :class:`InterfaceTransport` constants so the card is ready for
-    ``serve_card()``-style bootstrap.
+    ``add_a2a_card()``-style bootstrap.
     """
     additional_interfaces: list[AgentInterface] | None = None
     if transport_type is not None:

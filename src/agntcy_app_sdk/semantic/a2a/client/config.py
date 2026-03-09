@@ -8,12 +8,11 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from a2a.client.client import ClientConfig as A2AClientConfig
 
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 
 if TYPE_CHECKING:
     from agntcy_app_sdk.transport.base import BaseTransport
 
-configure_logging()
 logger = get_logger(__name__)
 
 

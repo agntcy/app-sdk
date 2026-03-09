@@ -3,19 +3,18 @@
 
 """Card-driven multi-transport server bootstrap for A2A agents.
 
-Provides :func:`serve_card` which reads an ``AgentCard``'s
+Provides :class:`CardBuilder` which reads an ``AgentCard``'s
 ``additional_interfaces``, parses each URL into transport-specific config,
-and starts all sessions — replacing ~50 lines of per-agent boilerplate
-with a single call.
+and starts all sessions via a fluent API.
 
 Example::
 
     factory = AgntcyFactory("lungo.brazil_farm", enable_tracing=True)
     session = factory.create_app_session()
-    await session.serve_card(
-        agent_card=agent_card,
-        request_handler=request_handler,
-        keep_alive=True,
+    await (
+        session.add_a2a_card(agent_card, request_handler)
+        .with_factory(factory)
+        .start(keep_alive=True)
     )
 
 URL formats
@@ -341,7 +340,7 @@ def _parse_nats_patterns(url: str, parsed: object) -> dict[str, str | int]:
 
 @dataclass
 class ServeCardPlan:
-    """Describes what :func:`serve_card` *would* start (dry-run output).
+    """Describes what :meth:`CardBuilder.start` *would* start (dry-run output).
 
     Each entry in :attr:`containers` maps a session ID to a human-readable
     description of the transport and its configuration.
@@ -361,205 +360,293 @@ class ServeCardPlan:
 
 
 # ---------------------------------------------------------------------------
-# serve_card core loop
+# CardBuilder — fluent API for expanding an AgentCard into containers
 # ---------------------------------------------------------------------------
 
 
-async def serve_card(
-    session: AppSession,
-    factory: AgntcyFactory,
-    agent_card: AgentCard,
-    request_handler: DefaultRequestHandler,
-    *,
-    keep_alive: bool = False,
-    dry_run: bool = False,
-) -> ServeCardPlan | None:
-    """Read *agent_card.additional_interfaces* and start all transports.
+class CardBuilder:
+    """Fluent builder that expands an AgentCard's interfaces into containers.
 
-    For each ``AgentInterface`` declared on the card, this function:
+    Constructed via :meth:`AppSession.add_a2a_card`.  The builder reads
+    ``agent_card.additional_interfaces``, creates transport/config objects
+    for each, and registers ``AppContainer`` instances on the session.
 
-    1. Parses the URL into transport-specific config.
-    2. Creates the appropriate transport / config objects.
-    3. Registers an ``AppContainer`` on *session* via the fluent builder API.
-    4. After all containers are registered, calls
-       ``session.start_all_sessions(keep_alive=keep_alive)``.
-
-    Args:
-        session: The ``AppSession`` that will own the containers.
-        factory: An ``AgntcyFactory`` used to create transports.
-        agent_card: The agent card whose ``additional_interfaces`` list
-            describes the transports to start.
-        request_handler: The ``DefaultRequestHandler`` with the agent's
-            business logic.
-        keep_alive: If *True*, block on a shutdown signal after starting.
-        dry_run: If *True*, do **not** create any containers or start any
-            sessions.  Instead return a :class:`ServeCardPlan` describing
-            what *would* be started.  Useful for validation and debugging.
-
-    Returns:
-        ``None`` when *dry_run* is ``False`` (normal operation).
-        A :class:`ServeCardPlan` when *dry_run* is ``True``.
-
-    Raises:
-        ValueError: If ``additional_interfaces`` is empty/missing, or if a
-            required environment variable (e.g. ``SLIM_SHARED_SECRET``) is
-            not set for a declared interface.
+    Use :meth:`override` to supply a pre-built config or transport for a
+    specific interface type, or :meth:`skip` to exclude one entirely.
     """
-    from a2a.server.apps import A2AStarletteApplication
 
-    from agntcy_app_sdk.semantic.a2a.server.srpc import (
-        A2ASlimRpcServerConfig,
-        SlimRpcConnectionConfig,
-    )
+    def __init__(
+        self,
+        session: AppSession,
+        agent_card: AgentCard,
+        request_handler: DefaultRequestHandler,
+    ):
+        self._session = session
+        self._agent_card = agent_card
+        self._request_handler = request_handler
+        self._factory: AgntcyFactory | None = None
+        self._overrides: dict[str, object] = {}  # canonical transport_type -> pre-built
+        self._skips: set[str] = set()  # canonical transport_types to skip
 
-    interfaces = agent_card.additional_interfaces or []
-    if not interfaces:
-        raise ValueError("agent_card.additional_interfaces is empty; nothing to serve")
+    # -- Fluent setters -----------------------------------------------------
 
-    plan = ServeCardPlan()
+    def with_factory(self, factory: AgntcyFactory) -> CardBuilder:
+        """Use an existing :class:`AgntcyFactory` instead of auto-creating one."""
+        self._factory = factory
+        return self
 
-    # Build the A2AStarletteApplication once for transports that need it
-    # (slim/nats patterns and jsonrpc all share the same app instance).
-    a2a_app = A2AStarletteApplication(
-        agent_card=agent_card, http_handler=request_handler
-    )
+    def override(self, transport_type: str, target: object) -> CardBuilder:
+        """Provide a pre-built config or transport for a specific interface type.
 
-    for i, interface in enumerate(interfaces):
-        transport_type = _normalize_transport(interface.transport)
+        For ``slimrpc``: pass a pre-built ``A2ASlimRpcServerConfig``.
+        For ``slimpatterns`` / ``natspatterns``: pass a pre-built ``BaseTransport``.
+        For ``jsonrpc`` / ``http``: pass a pre-built ``A2AStarletteApplication``.
+        """
+        self._overrides[_normalize_transport(transport_type)] = target
+        return self
 
-        if transport_type not in _CANONICAL_TRANSPORTS:
-            logger.warning(
-                "Unknown transport type '%s' on interface %d, skipping",
-                interface.transport,
-                i,
+    def skip(self, transport_type: str) -> CardBuilder:
+        """Exclude an interface type from being started."""
+        self._skips.add(_normalize_transport(transport_type))
+        return self
+
+    # -- Terminal operations ------------------------------------------------
+
+    async def dry_run(self) -> ServeCardPlan:
+        """Return a plan describing what would be started."""
+        result = await self._execute(dry_run=True, keep_alive=False)
+        assert isinstance(result, ServeCardPlan)
+        return result
+
+    async def start(self, *, keep_alive: bool = False) -> None:
+        """Build all containers and start sessions."""
+        await self._execute(dry_run=False, keep_alive=keep_alive)
+
+    # -- Core logic ---------------------------------------------------------
+
+    async def _execute(
+        self, *, dry_run: bool, keep_alive: bool
+    ) -> ServeCardPlan | None:
+        """Internal execution engine (shared by :meth:`start` and :meth:`dry_run`)."""
+        from a2a.server.apps import A2AStarletteApplication
+
+        from agntcy_app_sdk.factory import AgntcyFactory
+        from agntcy_app_sdk.semantic.a2a.server.srpc import (
+            A2ASlimRpcServerConfig,
+            SlimRpcConnectionConfig,
+        )
+
+        session = self._session
+        agent_card = self._agent_card
+        request_handler = self._request_handler
+
+        if self._factory is None:
+            self._factory = AgntcyFactory()
+        factory = self._factory
+
+        interfaces = agent_card.additional_interfaces or []
+        if not interfaces:
+            raise ValueError(
+                "agent_card.additional_interfaces is empty; nothing to serve"
             )
-            continue
 
-        parsed = parse_interface_url(interface)
+        plan = ServeCardPlan()
 
-        if transport_type == "slimrpc":
-            shared_secret = os.environ.get("SLIM_SHARED_SECRET")
-            if not shared_secret:
-                raise ValueError(
-                    "SLIM_SHARED_SECRET env var required for slimrpc interface"
+        # Build the A2AStarletteApplication once for transports that need it
+        # (slim/nats patterns and jsonrpc all share the same app instance).
+        a2a_app = A2AStarletteApplication(
+            agent_card=agent_card, http_handler=request_handler
+        )
+
+        for i, interface in enumerate(interfaces):
+            transport_type = _normalize_transport(interface.transport)
+
+            if transport_type not in _CANONICAL_TRANSPORTS:
+                logger.warning(
+                    "Unknown transport type '%s' on interface %d, skipping",
+                    interface.transport,
+                    i,
                 )
-            session_id = f"slimrpc-{i}"
+                continue
 
-            if dry_run:
-                plan.containers.append(
-                    {
-                        "session_id": session_id,
-                        "transport": "slimrpc",
-                        "detail": (
-                            f"endpoint={parsed['endpoint']}, "
-                            f"identity={parsed['identity']}"
+            # Skip check
+            if transport_type in self._skips:
+                logger.debug(
+                    "Skipping interface %d (transport '%s' in skip list)",
+                    i,
+                    transport_type,
+                )
+                continue
+
+            parsed = parse_interface_url(interface)
+
+            if transport_type == "slimrpc":
+                override = self._overrides.get("slimrpc")
+                session_id = f"slimrpc-{i}"
+
+                if override is None:
+                    shared_secret = os.environ.get("SLIM_SHARED_SECRET")
+                    if not shared_secret:
+                        raise ValueError(
+                            "SLIM_SHARED_SECRET env var required for slimrpc interface"
+                        )
+
+                log = logger.bind(transport=transport_type, session_id=session_id)
+                log.info("Serving interface", **parsed)
+
+                if dry_run:
+                    detail = (
+                        f"endpoint={parsed['endpoint']}, "
+                        f"identity={parsed['identity']}"
+                    )
+                    if override is not None:
+                        detail += " (source: override)"
+                    plan.containers.append(
+                        {
+                            "session_id": session_id,
+                            "transport": "slimrpc",
+                            "detail": detail,
+                        }
+                    )
+                    continue
+
+                if override is not None:
+                    session.add(override).with_session_id(session_id).build()
+                else:
+                    config = A2ASlimRpcServerConfig(
+                        agent_card=agent_card,
+                        request_handler=request_handler,
+                        connection=SlimRpcConnectionConfig(
+                            identity=str(parsed["identity"]),
+                            shared_secret=shared_secret,
+                            endpoint=str(parsed["endpoint"]),
                         ),
-                    }
+                    )
+                    session.add(config).with_session_id(session_id).build()
+
+            elif transport_type == "slimpatterns":
+                override = self._overrides.get("slimpatterns")
+                session_id = f"slim-{i}"
+                # Use the topic from the interface URL as the SLIM routable
+                # name — in SLIM, the transport name IS the routing address
+                # that clients send to.
+                routable_name = str(parsed["topic"])
+
+                if override is None:
+                    shared_secret = os.environ.get("SLIM_SHARED_SECRET")
+                    if not shared_secret:
+                        raise ValueError(
+                            "SLIM_SHARED_SECRET env var required for slim interface"
+                        )
+
+                log = logger.bind(transport=transport_type, session_id=session_id)
+                log.info("Serving interface", **parsed)
+
+                if dry_run:
+                    detail = (
+                        f"endpoint={parsed['endpoint']}, "
+                        f"topic={parsed['topic']}, "
+                        f"name={routable_name}"
+                    )
+                    if override is not None:
+                        detail += " (source: override)"
+                    plan.containers.append(
+                        {
+                            "session_id": session_id,
+                            "transport": transport_type,
+                            "detail": detail,
+                        }
+                    )
+                    continue
+
+                if override is not None:
+                    transport = override
+                else:
+                    transport = factory.create_transport(
+                        "SLIM",
+                        endpoint=str(parsed["endpoint"]),
+                        name=routable_name,
+                        shared_secret_identity=shared_secret,
+                    )
+                (
+                    session.add(a2a_app)
+                    .with_transport(transport)
+                    .with_topic(str(parsed["topic"]))
+                    .with_session_id(session_id)
+                    .build()
                 )
-                continue
 
-            config = A2ASlimRpcServerConfig(
-                agent_card=agent_card,
-                request_handler=request_handler,
-                connection=SlimRpcConnectionConfig(
-                    identity=str(parsed["identity"]),
-                    shared_secret=shared_secret,
-                    endpoint=str(parsed["endpoint"]),
-                ),
-            )
-            session.add(config).with_session_id(session_id).build()
+            elif transport_type == "natspatterns":
+                override = self._overrides.get("natspatterns")
+                session_id = f"nats-{i}"
 
-        elif transport_type == "slimpatterns":
-            shared_secret = os.environ.get("SLIM_SHARED_SECRET")
-            if not shared_secret:
-                raise ValueError(
-                    "SLIM_SHARED_SECRET env var required for slim interface"
+                log = logger.bind(transport=transport_type, session_id=session_id)
+                log.info("Serving interface", **parsed)
+
+                if dry_run:
+                    detail = f"endpoint={parsed['endpoint']}, topic={parsed['topic']}"
+                    if override is not None:
+                        detail += " (source: override)"
+                    plan.containers.append(
+                        {
+                            "session_id": session_id,
+                            "transport": transport_type,
+                            "detail": detail,
+                        }
+                    )
+                    continue
+
+                if override is not None:
+                    transport = override
+                else:
+                    transport = factory.create_transport(
+                        "NATS",
+                        endpoint=str(parsed["endpoint"]),
+                    )
+                (
+                    session.add(a2a_app)
+                    .with_transport(transport)
+                    .with_topic(str(parsed["topic"]))
+                    .with_session_id(session_id)
+                    .build()
                 )
-            session_id = f"slim-{i}"
-            # Use the topic from the interface URL as the SLIM routable
-            # name — in SLIM, the transport name IS the routing address
-            # that clients send to.
-            routable_name = str(parsed["topic"])
 
-            if dry_run:
-                plan.containers.append(
-                    {
-                        "session_id": session_id,
-                        "transport": transport_type,
-                        "detail": (
-                            f"endpoint={parsed['endpoint']}, "
-                            f"topic={parsed['topic']}, "
-                            f"name={routable_name}"
-                        ),
-                    }
+            elif transport_type in ("jsonrpc", "http"):
+                override = self._overrides.get(transport_type)
+                session_id = f"http-{i}"
+
+                log = logger.bind(transport=transport_type, session_id=session_id)
+                log.info("Serving interface", **parsed)
+
+                if dry_run:
+                    detail = f"host={parsed['host']}, port={parsed['port']}"
+                    if override is not None:
+                        detail += " (source: override)"
+                    plan.containers.append(
+                        {
+                            "session_id": session_id,
+                            "transport": transport_type,
+                            "detail": detail,
+                        }
+                    )
+                    continue
+
+                app_target = override if override is not None else a2a_app
+                (
+                    session.add(app_target)
+                    .with_host(str(parsed["host"]))
+                    .with_port(int(parsed["port"]))
+                    .with_session_id(session_id)
+                    .build()
                 )
-                continue
 
-            transport = factory.create_transport(
-                "SLIM",
-                endpoint=str(parsed["endpoint"]),
-                name=routable_name,
-                shared_secret_identity=shared_secret,
-            )
-            (
-                session.add(a2a_app)
-                .with_transport(transport)
-                .with_topic(str(parsed["topic"]))
-                .with_session_id(session_id)
-                .build()
-            )
+        if dry_run:
+            return plan
 
-        elif transport_type == "natspatterns":
-            session_id = f"nats-{i}"
-
-            if dry_run:
-                plan.containers.append(
-                    {
-                        "session_id": session_id,
-                        "transport": transport_type,
-                        "detail": (
-                            f"endpoint={parsed['endpoint']}, "
-                            f"topic={parsed['topic']}"
-                        ),
-                    }
-                )
-                continue
-
-            transport = factory.create_transport(
-                "NATS",
-                endpoint=str(parsed["endpoint"]),
-            )
-            (
-                session.add(a2a_app)
-                .with_transport(transport)
-                .with_topic(str(parsed["topic"]))
-                .with_session_id(session_id)
-                .build()
-            )
-
-        elif transport_type in ("jsonrpc", "http"):
-            session_id = f"http-{i}"
-
-            if dry_run:
-                plan.containers.append(
-                    {
-                        "session_id": session_id,
-                        "transport": transport_type,
-                        "detail": f"host={parsed['host']}, port={parsed['port']}",
-                    }
-                )
-                continue
-
-            (
-                session.add(a2a_app)
-                .with_host(str(parsed["host"]))
-                .with_port(int(parsed["port"]))
-                .with_session_id(session_id)
-                .build()
-            )
-
-    if dry_run:
-        return plan
-
-    await session.start_all_sessions(keep_alive=keep_alive)
-    return None
+        logger.debug(
+            "Starting all sessions",
+            interfaces=len(interfaces),
+            keep_alive=keep_alive,
+        )
+        await session.start_all_sessions(keep_alive=keep_alive)
+        return None

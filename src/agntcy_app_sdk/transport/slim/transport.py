@@ -13,14 +13,13 @@ from .common import (
     get_or_create_slim_instance,
     split_id,
 )
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
-configure_logging()
 logger = get_logger(__name__)
 
 """
@@ -63,15 +62,16 @@ class SLIMTransport(BaseTransport):
 
         try:
             org, namespace, local_name = routable_name.split("/", 2)
-            self.name = self.build_name(routable_name)
         except ValueError:
             raise ValueError(
                 "routable_name must be in the form 'org/namespace/local_name'"
             )
-        # Name encrypts the components so we need to store the original values separately
+        # Name encrypts the components so we need to store the original values separately.
+        # These must be assigned before build_name() which may fall back to self.org/namespace.
         self.org = org
         self.namespace = namespace
         self.local_name = local_name
+        self.name = self.build_name(routable_name)
         self._endpoint = endpoint
         self._slim_service = slim_service
         self._slim_app = slim_app

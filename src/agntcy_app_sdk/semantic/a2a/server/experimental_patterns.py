@@ -56,14 +56,13 @@ from a2a.types import (
 from pydantic import ValidationError
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 
 from identityservice.sdk import IdentityServiceSdk
 
-configure_logging()
 logger = get_logger(__name__)
 
 # Maps BaseTransport.type() -> (preferred_transport name, URI scheme)
@@ -250,7 +249,7 @@ class A2AExperimentalServer:
             )
 
         if is_identity_auth_enabled():
-            logger.info("Identity auth enabled — configuring direct auth guard")
+            logger.debug("Identity auth enabled — configuring direct auth guard")
             try:
                 self._configure_identity_auth()
             except Exception as e:
@@ -512,7 +511,7 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
             raise ValueError("Transport must be set before running A2A handler.")
 
         # Stamp preferred_transport and card.url before anything else.
-        # When ``serve_card()`` registers the same ``a2a_app`` with multiple
+        # When ``CardBuilder`` registers the same ``a2a_app`` with multiple
         # handlers (SLIM + NATS + HTTP), each handler shares the same card
         # object.  We must avoid blindly overwriting ``card.url`` so the
         # JSONRPC handler can still serve the card with a valid HTTP URL.
@@ -529,7 +528,7 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
                 # Encode the topic into card.url so clients can derive it
                 old_url = self._managed_object.agent_card.url
                 new_url = f"{scheme}://{self._topic}"
-                logger.info(
+                logger.debug(
                     "Overwriting card.url '%s' -> '%s' for %s transport",
                     old_url,
                     new_url,
@@ -537,7 +536,7 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
                 )
                 self._managed_object.agent_card.url = new_url
             else:
-                logger.info(
+                logger.debug(
                     "Skipping card.url overwrite for %s transport "
                     "(preferred_transport already set to '%s')",
                     transport_name,
@@ -564,13 +563,13 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
         # Protocol-level setup (auth, tracing, etc.)
         await self._protocol.setup()
 
-        logger.info(f"A2A experimental handler started on topic: {self._topic}")
+        logger.debug(f"A2A experimental handler started on topic: {self._topic}")
 
     async def teardown(self) -> None:
         """Close transport and clean up."""
         if self._transport:
             try:
                 await self._transport.close()
-                logger.info("A2A transport closed cleanly.")
+                logger.debug("A2A transport closed cleanly.")
             except Exception as e:
                 logger.exception(f"Error closing A2A transport: {e}")

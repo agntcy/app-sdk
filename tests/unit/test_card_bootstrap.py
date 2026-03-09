@@ -12,10 +12,10 @@ import pytest
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
+    CardBuilder,
     InterfaceTransport,
     ServeCardPlan,
     parse_interface_url,
-    serve_card,
 )
 
 pytest_plugins = "pytest_asyncio"
@@ -51,6 +51,22 @@ def _make_card(
         supportsAuthenticatedExtendedCard=False,
         additional_interfaces=interfaces,
     )
+
+
+def _make_builder(
+    interfaces: list[AgentInterface],
+    session: MagicMock | None = None,
+    factory: MagicMock | None = None,
+) -> CardBuilder:
+    """Create a CardBuilder with mock session and optional mock factory."""
+    card = _make_card(interfaces=interfaces)
+    handler = MagicMock()
+    if session is None:
+        session = MagicMock()
+    builder = CardBuilder(session, card, handler)
+    if factory is not None:
+        builder.with_factory(factory)
+    return builder
 
 
 # =========================================================================
@@ -266,35 +282,32 @@ class TestParseUnknown:
 
 
 # =========================================================================
-# serve_card — validation
+# CardBuilder — validation
 # =========================================================================
 
 
-class TestServeCardValidation:
+class TestCardBuilderValidation:
     @pytest.mark.asyncio
     async def test_raises_on_empty_interfaces(self):
-        card = _make_card(interfaces=[])
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
+        builder = _make_builder(interfaces=[])
 
         with pytest.raises(ValueError, match="empty"):
-            await serve_card(session, factory, card, handler)
+            await builder.start()
 
     @pytest.mark.asyncio
     async def test_raises_on_none_interfaces(self):
         card = _make_card(interfaces=None)
         session = MagicMock()
-        factory = MagicMock()
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
 
         with pytest.raises(ValueError, match="empty"):
-            await serve_card(session, factory, card, handler)
+            await builder.start()
 
     @pytest.mark.asyncio
     async def test_raises_on_missing_slim_shared_secret(self):
         """slimrpc interface declared but SLIM_SHARED_SECRET not set."""
-        card = _make_card(
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="slimrpc",
@@ -302,19 +315,16 @@ class TestServeCardValidation:
                 )
             ]
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("SLIM_SHARED_SECRET", None)
             with pytest.raises(ValueError, match="SLIM_SHARED_SECRET"):
-                await serve_card(session, factory, card, handler)
+                await builder.start()
 
     @pytest.mark.asyncio
     async def test_raises_on_missing_slim_shared_secret_for_slim_transport(self):
         """slim interface declared but SLIM_SHARED_SECRET not set."""
-        card = _make_card(
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="slim",
@@ -322,41 +332,37 @@ class TestServeCardValidation:
                 )
             ]
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("SLIM_SHARED_SECRET", None)
             with pytest.raises(ValueError, match="SLIM_SHARED_SECRET"):
-                await serve_card(session, factory, card, handler)
+                await builder.start()
 
 
 # =========================================================================
-# serve_card — dry-run
+# CardBuilder — dry-run
 # =========================================================================
 
 
-class TestServeCardDryRun:
-    """dry_run=True should return a plan without creating containers."""
+class TestCardBuilderDryRun:
+    """dry_run() should return a plan without creating containers."""
 
     @pytest.mark.asyncio
     async def test_dry_run_slimrpc_topic_only(self):
         """slimrpc with topic-only URL (identity format)."""
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="slimrpc",
                     url="slim://org/ns/agent",
                 )
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
         with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
-            plan = await serve_card(session, factory, card, handler, dry_run=True)
+            plan = await builder.dry_run()
 
         assert isinstance(plan, ServeCardPlan)
         assert len(plan.containers) == 1
@@ -369,20 +375,19 @@ class TestServeCardDryRun:
     @pytest.mark.asyncio
     async def test_dry_run_slimrpc_explicit_endpoint(self):
         """slimrpc with explicit host:port in URL."""
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="slimrpc",
                     url="slim://host:46357/org/ns/agent",
                 )
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
         with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
-            plan = await serve_card(session, factory, card, handler, dry_run=True)
+            plan = await builder.dry_run()
 
         entry = plan.containers[0]
         assert "http://host:46357" in entry["detail"]
@@ -391,20 +396,19 @@ class TestServeCardDryRun:
     @pytest.mark.asyncio
     async def test_dry_run_slim_topic_only(self):
         """slim with topic-only URL (existing convention)."""
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="slim",
                     url="slim://my_topic",
                 )
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
         with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
-            plan = await serve_card(session, factory, card, handler, dry_run=True)
+            plan = await builder.dry_run()
 
         assert len(plan.containers) == 1
         assert plan.containers[0]["session_id"] == "slim-0"
@@ -414,19 +418,18 @@ class TestServeCardDryRun:
     @pytest.mark.asyncio
     async def test_dry_run_nats_topic_only(self):
         """nats with topic-only URL (existing convention)."""
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="nats",
                     url="nats://my_topic",
                 )
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
-        plan = await serve_card(session, factory, card, handler, dry_run=True)
+        plan = await builder.dry_run()
 
         assert len(plan.containers) == 1
         assert plan.containers[0]["session_id"] == "nats-0"
@@ -434,19 +437,18 @@ class TestServeCardDryRun:
 
     @pytest.mark.asyncio
     async def test_dry_run_http(self):
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="jsonrpc",
                     url="http://0.0.0.0:9999",
                 )
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
-        plan = await serve_card(session, factory, card, handler, dry_run=True)
+        plan = await builder.dry_run()
 
         assert len(plan.containers) == 1
         entry = plan.containers[0]
@@ -456,7 +458,8 @@ class TestServeCardDryRun:
 
     @pytest.mark.asyncio
     async def test_dry_run_multiple_transports(self):
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="slimrpc",
@@ -470,14 +473,12 @@ class TestServeCardDryRun:
                     transport="jsonrpc",
                     url="http://0.0.0.0:8080",
                 ),
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
         with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
-            plan = await serve_card(session, factory, card, handler, dry_run=True)
+            plan = await builder.dry_run()
 
         assert len(plan.containers) == 3
         ids = [c["session_id"] for c in plan.containers]
@@ -485,19 +486,18 @@ class TestServeCardDryRun:
 
     @pytest.mark.asyncio
     async def test_dry_run_str_output(self):
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="jsonrpc",
                     url="http://0.0.0.0:9999",
                 )
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
-        plan = await serve_card(session, factory, card, handler, dry_run=True)
+        plan = await builder.dry_run()
 
         plan_str = str(plan)
         assert "serve_card plan:" in plan_str
@@ -505,23 +505,15 @@ class TestServeCardDryRun:
 
 
 # =========================================================================
-# serve_card — container building
+# CardBuilder — container building
 # =========================================================================
 
 
-class TestServeCardBuildsContainers:
+class TestCardBuilderBuildsContainers:
     """Non-dry-run mode: verify the fluent builder calls per transport."""
 
     @pytest.mark.asyncio
     async def test_builds_slimrpc_container_explicit_endpoint(self):
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="slimrpc",
-                    url="slim://host:46357/org/ns/agent",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_session_id.return_value = mock_builder
         mock_builder.build.return_value = MagicMock()
@@ -531,10 +523,21 @@ class TestServeCardBuildsContainers:
         session.start_all_sessions = AsyncMock()
 
         factory = MagicMock()
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slimrpc",
+                    url="slim://host:46357/org/ns/agent",
+                )
+            ]
+        )
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
 
         with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
-            await serve_card(session, factory, card, handler)
+            await builder.start()
 
         session.add.assert_called_once()
         config = session.add.call_args[0][0]
@@ -552,14 +555,6 @@ class TestServeCardBuildsContainers:
     @pytest.mark.asyncio
     async def test_builds_slimrpc_container_topic_only(self):
         """Topic-only format uses SLIM_ENDPOINT env or default."""
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="slimrpc",
-                    url="slim://org/ns/agent",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_session_id.return_value = mock_builder
         mock_builder.build.return_value = MagicMock()
@@ -569,7 +564,18 @@ class TestServeCardBuildsContainers:
         session.start_all_sessions = AsyncMock()
 
         factory = MagicMock()
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slimrpc",
+                    url="slim://org/ns/agent",
+                )
+            ]
+        )
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
 
         with patch.dict(
             os.environ,
@@ -578,7 +584,7 @@ class TestServeCardBuildsContainers:
                 "SLIM_ENDPOINT": "http://custom:11111",
             },
         ):
-            await serve_card(session, factory, card, handler)
+            await builder.start()
 
         config = session.add.call_args[0][0]
         assert config.connection.identity == "org/ns/agent"
@@ -586,14 +592,6 @@ class TestServeCardBuildsContainers:
 
     @pytest.mark.asyncio
     async def test_builds_nats_container_explicit_endpoint(self):
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="nats",
-                    url="nats://nhost:4222/my_topic",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
         mock_builder.with_topic.return_value = mock_builder
@@ -608,9 +606,19 @@ class TestServeCardBuildsContainers:
         factory = MagicMock()
         factory.create_transport.return_value = mock_transport
 
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="nats",
+                    url="nats://nhost:4222/my_topic",
+                )
+            ]
+        )
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
 
-        await serve_card(session, factory, card, handler)
+        await builder.start()
 
         factory.create_transport.assert_called_once_with(
             "NATS", endpoint="nats://nhost:4222"
@@ -624,14 +632,6 @@ class TestServeCardBuildsContainers:
     @pytest.mark.asyncio
     async def test_builds_nats_container_topic_only(self):
         """Topic-only format: nats://my_topic uses NATS_ENDPOINT or default."""
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="natspatterns",
-                    url="nats://my_topic",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
         mock_builder.with_topic.return_value = mock_builder
@@ -646,10 +646,20 @@ class TestServeCardBuildsContainers:
         factory = MagicMock()
         factory.create_transport.return_value = mock_transport
 
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="natspatterns",
+                    url="nats://my_topic",
+                )
+            ]
+        )
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
 
         with patch.dict(os.environ, {"NATS_ENDPOINT": "nats://custom:9999"}):
-            await serve_card(session, factory, card, handler)
+            await builder.start()
 
         factory.create_transport.assert_called_once_with(
             "NATS", endpoint="nats://custom:9999"
@@ -658,14 +668,6 @@ class TestServeCardBuildsContainers:
 
     @pytest.mark.asyncio
     async def test_builds_http_container(self):
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="jsonrpc",
-                    url="http://0.0.0.0:9999",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
         mock_builder.with_port.return_value = mock_builder
@@ -677,9 +679,20 @@ class TestServeCardBuildsContainers:
         session.start_all_sessions = AsyncMock()
 
         factory = MagicMock()
-        handler = MagicMock()
 
-        await serve_card(session, factory, card, handler)
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="jsonrpc",
+                    url="http://0.0.0.0:9999",
+                )
+            ]
+        )
+        handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
+
+        await builder.start()
 
         session.add.assert_called_once()
         mock_builder.with_host.assert_called_once_with("0.0.0.0")
@@ -690,14 +703,6 @@ class TestServeCardBuildsContainers:
     @pytest.mark.asyncio
     async def test_builds_slim_container_topic_only(self):
         """Topic-only format: slim://my_topic."""
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="slim",
-                    url="slim://my_topic",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
         mock_builder.with_topic.return_value = mock_builder
@@ -712,7 +717,17 @@ class TestServeCardBuildsContainers:
         factory = MagicMock()
         factory.create_transport.return_value = mock_transport
 
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slim",
+                    url="slim://my_topic",
+                )
+            ]
+        )
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
 
         with patch.dict(
             os.environ,
@@ -721,7 +736,7 @@ class TestServeCardBuildsContainers:
                 "SLIM_ENDPOINT": "http://slim:46357",
             },
         ):
-            await serve_card(session, factory, card, handler)
+            await builder.start()
 
         factory.create_transport.assert_called_once_with(
             "SLIM",
@@ -734,14 +749,6 @@ class TestServeCardBuildsContainers:
     @pytest.mark.asyncio
     async def test_builds_slim_container_explicit_endpoint(self):
         """Explicit endpoint format: slim://host:46357/my_topic."""
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="slim",
-                    url="slim://host:46357/my_topic",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
         mock_builder.with_topic.return_value = mock_builder
@@ -756,10 +763,20 @@ class TestServeCardBuildsContainers:
         factory = MagicMock()
         factory.create_transport.return_value = mock_transport
 
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slim",
+                    url="slim://host:46357/my_topic",
+                )
+            ]
+        )
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
 
         with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
-            await serve_card(session, factory, card, handler)
+            await builder.start()
 
         factory.create_transport.assert_called_once_with(
             "SLIM",
@@ -771,14 +788,6 @@ class TestServeCardBuildsContainers:
 
     @pytest.mark.asyncio
     async def test_keep_alive_forwarded(self):
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="jsonrpc",
-                    url="http://0.0.0.0:9999",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
         mock_builder.with_port.return_value = mock_builder
@@ -790,15 +799,38 @@ class TestServeCardBuildsContainers:
         session.start_all_sessions = AsyncMock()
 
         factory = MagicMock()
-        handler = MagicMock()
 
-        await serve_card(session, factory, card, handler, keep_alive=True)
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="jsonrpc",
+                    url="http://0.0.0.0:9999",
+                )
+            ]
+        )
+        handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
+
+        await builder.start(keep_alive=True)
 
         session.start_all_sessions.assert_awaited_once_with(keep_alive=True)
 
     @pytest.mark.asyncio
     async def test_unknown_transport_skipped(self):
         """Unknown transport types are logged and skipped, not fatal."""
+        mock_builder = MagicMock()
+        mock_builder.with_host.return_value = mock_builder
+        mock_builder.with_port.return_value = mock_builder
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        factory = MagicMock()
+
         card = _make_card(
             interfaces=[
                 AgentInterface(transport="grpc", url="grpc://host:50051/svc"),
@@ -808,21 +840,12 @@ class TestServeCardBuildsContainers:
                 ),
             ]
         )
-        mock_builder = MagicMock()
-        mock_builder.with_host.return_value = mock_builder
-        mock_builder.with_port.return_value = mock_builder
-        mock_builder.with_session_id.return_value = mock_builder
-        mock_builder.build.return_value = MagicMock()
-
-        session = MagicMock()
-        session.add.return_value = mock_builder
-        session.start_all_sessions = AsyncMock()
-
-        factory = MagicMock()
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
 
         # Should not raise — unknown transport is skipped
-        await serve_card(session, factory, card, handler)
+        await builder.start()
 
         # Only the http container should have been registered
         session.add.assert_called_once()
@@ -856,15 +879,14 @@ class TestServeCardPlan:
 
 
 # =========================================================================
-# AppSession.serve_card delegation
+# AppSession.add_a2a_card
 # =========================================================================
 
 
-class TestAppSessionServeCard:
-    """Test the convenience method on AppSession delegates correctly."""
+class TestAppSessionAddA2aCard:
+    """Test the convenience method on AppSession returns a CardBuilder."""
 
-    @pytest.mark.asyncio
-    async def test_serve_card_creates_default_factory(self):
+    def test_add_a2a_card_returns_card_builder(self):
         from agntcy_app_sdk.app_sessions import AppSession
 
         session = AppSession()
@@ -878,19 +900,38 @@ class TestAppSessionServeCard:
         )
         handler = MagicMock()
 
-        with patch(
-            "agntcy_app_sdk.semantic.a2a.server.card_bootstrap.serve_card"
-        ) as mock_serve:
-            mock_serve.return_value = None
-            await session.serve_card(card, handler)
-
-            mock_serve.assert_awaited_once()
-            call_kwargs = mock_serve.call_args.kwargs
-            # factory should have been auto-created (not None)
-            assert call_kwargs["factory"] is not None
+        result = session.add_a2a_card(card, handler)
+        assert isinstance(result, CardBuilder)
 
     @pytest.mark.asyncio
-    async def test_serve_card_passes_factory(self):
+    async def test_start_creates_default_factory(self):
+        """Calling .start() without .with_factory() auto-creates a factory."""
+        from agntcy_app_sdk.app_sessions import AppSession
+
+        session = AppSession()
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="jsonrpc",
+                    url="http://0.0.0.0:9999",
+                )
+            ]
+        )
+        handler = MagicMock()
+
+        cb = session.add_a2a_card(card, handler)
+        assert cb._factory is None
+
+        # Patch start_all_sessions to avoid actually starting anything
+        with patch.object(session, "start_all_sessions", new_callable=AsyncMock):
+            await cb.start()
+
+        # Factory should have been auto-created
+        assert cb._factory is not None
+
+    @pytest.mark.asyncio
+    async def test_start_uses_provided_factory(self):
+        """Calling .with_factory(f).start() uses the provided factory."""
         from agntcy_app_sdk.app_sessions import AppSession
 
         session = AppSession()
@@ -905,18 +946,15 @@ class TestAppSessionServeCard:
         handler = MagicMock()
         custom_factory = MagicMock()
 
-        with patch(
-            "agntcy_app_sdk.semantic.a2a.server.card_bootstrap.serve_card"
-        ) as mock_serve:
-            mock_serve.return_value = None
-            await session.serve_card(card, handler, factory=custom_factory)
+        cb = session.add_a2a_card(card, handler).with_factory(custom_factory)
 
-            # The custom factory should be forwarded
-            call_kwargs = mock_serve.call_args.kwargs
-            assert call_kwargs["factory"] == custom_factory
+        with patch.object(session, "start_all_sessions", new_callable=AsyncMock):
+            await cb.start()
+
+        assert cb._factory is custom_factory
 
     @pytest.mark.asyncio
-    async def test_serve_card_dry_run_forwarded(self):
+    async def test_dry_run_returns_plan(self):
         from agntcy_app_sdk.app_sessions import AppSession
 
         session = AppSession()
@@ -930,15 +968,9 @@ class TestAppSessionServeCard:
         )
         handler = MagicMock()
 
-        with patch(
-            "agntcy_app_sdk.semantic.a2a.server.card_bootstrap.serve_card"
-        ) as mock_serve:
-            mock_plan = ServeCardPlan()
-            mock_serve.return_value = mock_plan
-            result = await session.serve_card(card, handler, dry_run=True)
-
-            assert result is mock_plan
-            assert mock_serve.call_args.kwargs["dry_run"] is True
+        plan = await session.add_a2a_card(card, handler).dry_run()
+        assert isinstance(plan, ServeCardPlan)
+        assert len(plan.containers) == 1
 
 
 # =========================================================================
@@ -993,30 +1025,29 @@ class TestTransportAliasing:
 
 
 # =========================================================================
-# Transport aliasing — serve_card dry-run
+# Transport aliasing — CardBuilder dry-run
 # =========================================================================
 
 
-class TestServeCardAliasedDryRun:
+class TestCardBuilderAliasedDryRun:
     """Dry-run with aliased transport labels should show canonical names."""
 
     @pytest.mark.asyncio
     async def test_slim_extended_dry_run(self):
         """slim-extended resolves to slimpatterns in dry-run plan."""
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="slim-extended",
                     url="slim://my_topic",
                 )
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
         with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
-            plan = await serve_card(session, factory, card, handler, dry_run=True)
+            plan = await builder.dry_run()
 
         assert len(plan.containers) == 1
         entry = plan.containers[0]
@@ -1028,42 +1059,33 @@ class TestServeCardAliasedDryRun:
     @pytest.mark.asyncio
     async def test_nats_alias_dry_run(self):
         """transport='nats' resolves to natspatterns in dry-run plan."""
-        card = _make_card(
+        session = MagicMock()
+        builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     transport="nats",
                     url="nats://my_topic",
                 )
-            ]
+            ],
+            session=session,
         )
-        session = MagicMock()
-        factory = MagicMock()
-        handler = MagicMock()
 
-        plan = await serve_card(session, factory, card, handler, dry_run=True)
+        plan = await builder.dry_run()
 
         assert plan.containers[0]["transport"] == "natspatterns"
 
 
 # =========================================================================
-# Transport aliasing — serve_card container building
+# Transport aliasing — CardBuilder container building
 # =========================================================================
 
 
-class TestServeCardAliasedBuilds:
+class TestCardBuilderAliasedBuilds:
     """Non-dry-run with aliases: verify correct builder calls."""
 
     @pytest.mark.asyncio
     async def test_builds_slim_extended_container(self):
         """slim-extended should build the same as slimpatterns."""
-        card = _make_card(
-            interfaces=[
-                AgentInterface(
-                    transport="slim-extended",
-                    url="slim://my_topic",
-                )
-            ]
-        )
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
         mock_builder.with_topic.return_value = mock_builder
@@ -1078,10 +1100,20 @@ class TestServeCardAliasedBuilds:
         factory = MagicMock()
         factory.create_transport.return_value = mock_transport
 
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slim-extended",
+                    url="slim://my_topic",
+                )
+            ]
+        )
         handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory)
 
         with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
-            await serve_card(session, factory, card, handler)
+            await builder.start()
 
         factory.create_transport.assert_called_once_with(
             "SLIM",
@@ -1091,6 +1123,358 @@ class TestServeCardAliasedBuilds:
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
         mock_builder.with_session_id.assert_called_once_with("slim-0")
+
+
+# =========================================================================
+# CardBuilder — override
+# =========================================================================
+
+
+class TestCardBuilderOverride:
+    """Tests for the .override() fluent method."""
+
+    @pytest.mark.asyncio
+    async def test_override_slimrpc_uses_provided_config(self):
+        """User's pre-built config is passed to session.add() instead of auto-created."""
+        mock_builder = MagicMock()
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        factory = MagicMock()
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slimrpc",
+                    url="slim://org/ns/agent",
+                )
+            ]
+        )
+        handler = MagicMock()
+        user_config = MagicMock(name="UserSlimRpcConfig")
+
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory).override("slimrpc", user_config)
+
+        await builder.start()
+
+        # The user's config should have been passed to session.add()
+        session.add.assert_called_once_with(user_config)
+        mock_builder.with_session_id.assert_called_once_with("slimrpc-0")
+
+    @pytest.mark.asyncio
+    async def test_override_slimpatterns_uses_provided_transport(self):
+        """User's transport is used instead of factory.create_transport()."""
+        mock_builder = MagicMock()
+        mock_builder.with_transport.return_value = mock_builder
+        mock_builder.with_topic.return_value = mock_builder
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        factory = MagicMock()
+        user_transport = MagicMock(name="UserSlimTransport")
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slimpatterns",
+                    url="slim://my_topic",
+                )
+            ]
+        )
+        handler = MagicMock()
+
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory).override("slimpatterns", user_transport)
+
+        await builder.start()
+
+        # Factory should NOT have been called to create a transport
+        factory.create_transport.assert_not_called()
+        mock_builder.with_transport.assert_called_once_with(user_transport)
+        mock_builder.with_topic.assert_called_once_with("my_topic")
+
+    @pytest.mark.asyncio
+    async def test_override_natspatterns_uses_provided_transport(self):
+        """User's transport is used instead of factory.create_transport()."""
+        mock_builder = MagicMock()
+        mock_builder.with_transport.return_value = mock_builder
+        mock_builder.with_topic.return_value = mock_builder
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        factory = MagicMock()
+        user_transport = MagicMock(name="UserNatsTransport")
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="natspatterns",
+                    url="nats://my_topic",
+                )
+            ]
+        )
+        handler = MagicMock()
+
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory).override("natspatterns", user_transport)
+
+        await builder.start()
+
+        factory.create_transport.assert_not_called()
+        mock_builder.with_transport.assert_called_once_with(user_transport)
+        mock_builder.with_topic.assert_called_once_with("my_topic")
+
+    @pytest.mark.asyncio
+    async def test_override_slimrpc_skips_shared_secret_check(self):
+        """Override should NOT raise even without SLIM_SHARED_SECRET."""
+        mock_builder = MagicMock()
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        factory = MagicMock()
+        user_config = MagicMock(name="UserSlimRpcConfig")
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slimrpc",
+                    url="slim://org/ns/agent",
+                )
+            ]
+        )
+        handler = MagicMock()
+
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory).override("slimrpc", user_config)
+
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("SLIM_SHARED_SECRET", None)
+            # Should NOT raise — override bypasses the secret check
+            await builder.start()
+
+        session.add.assert_called_once_with(user_config)
+
+    @pytest.mark.asyncio
+    async def test_override_slimpatterns_skips_shared_secret_check(self):
+        """Override should NOT raise even without SLIM_SHARED_SECRET."""
+        mock_builder = MagicMock()
+        mock_builder.with_transport.return_value = mock_builder
+        mock_builder.with_topic.return_value = mock_builder
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        factory = MagicMock()
+        user_transport = MagicMock(name="UserSlimTransport")
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slimpatterns",
+                    url="slim://my_topic",
+                )
+            ]
+        )
+        handler = MagicMock()
+
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory).override("slimpatterns", user_transport)
+
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("SLIM_SHARED_SECRET", None)
+            # Should NOT raise — override bypasses the secret check
+            await builder.start()
+
+        mock_builder.with_transport.assert_called_once_with(user_transport)
+
+
+# =========================================================================
+# CardBuilder — skip
+# =========================================================================
+
+
+class TestCardBuilderSkip:
+    """Tests for the .skip() fluent method."""
+
+    @pytest.mark.asyncio
+    async def test_skip_transport_not_in_plan(self):
+        """dry-run with .skip("jsonrpc") should omit that entry."""
+        session = MagicMock()
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="nats",
+                    url="nats://my_topic",
+                ),
+                AgentInterface(
+                    transport="jsonrpc",
+                    url="http://0.0.0.0:9999",
+                ),
+            ]
+        )
+        handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.skip("jsonrpc")
+
+        plan = await builder.dry_run()
+
+        assert len(plan.containers) == 1
+        assert plan.containers[0]["transport"] == "natspatterns"
+
+    @pytest.mark.asyncio
+    async def test_skip_transport_not_built(self):
+        """Non-dry-run with .skip("slimrpc") should not call session.add() for it."""
+        mock_builder = MagicMock()
+        mock_builder.with_host.return_value = mock_builder
+        mock_builder.with_port.return_value = mock_builder
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        factory = MagicMock()
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slimrpc",
+                    url="slim://org/ns/agent",
+                ),
+                AgentInterface(
+                    transport="jsonrpc",
+                    url="http://0.0.0.0:9999",
+                ),
+            ]
+        )
+        handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(factory).skip("slimrpc")
+
+        with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
+            await builder.start()
+
+        # Only the HTTP container should have been built (slimrpc was skipped)
+        session.add.assert_called_once()
+        mock_builder.with_session_id.assert_called_once_with("http-1")
+
+    @pytest.mark.asyncio
+    async def test_skip_multiple_transports(self):
+        """Skip 2 transports, verify only remaining are built."""
+        session = MagicMock()
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="slimrpc",
+                    url="slim://org/ns/agent",
+                ),
+                AgentInterface(
+                    transport="nats",
+                    url="nats://my_topic",
+                ),
+                AgentInterface(
+                    transport="jsonrpc",
+                    url="http://0.0.0.0:9999",
+                ),
+            ]
+        )
+        handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.skip("slimrpc").skip("natspatterns")
+
+        with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
+            plan = await builder.dry_run()
+
+        assert len(plan.containers) == 1
+        assert plan.containers[0]["transport"] == "jsonrpc"
+
+
+# =========================================================================
+# CardBuilder — fluent chaining
+# =========================================================================
+
+
+class TestCardBuilderFluent:
+    """Verify fluent API returns self for chaining."""
+
+    def test_chaining_returns_self(self):
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="jsonrpc",
+                    url="http://0.0.0.0:9999",
+                )
+            ]
+        )
+        handler = MagicMock()
+        session = MagicMock()
+        factory = MagicMock()
+
+        builder = CardBuilder(session, card, handler)
+
+        result1 = builder.with_factory(factory)
+        assert result1 is builder
+
+        result2 = builder.override("slimrpc", MagicMock())
+        assert result2 is builder
+
+        result3 = builder.skip("natspatterns")
+        assert result3 is builder
+
+    @pytest.mark.asyncio
+    async def test_auto_creates_factory(self):
+        """Calling .start() without .with_factory() still works."""
+        mock_builder = MagicMock()
+        mock_builder.with_host.return_value = mock_builder
+        mock_builder.with_port.return_value = mock_builder
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    transport="jsonrpc",
+                    url="http://0.0.0.0:9999",
+                )
+            ]
+        )
+        handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+
+        # No with_factory() call — should auto-create
+        await builder.start()
+
+        session.add.assert_called_once()
+        session.start_all_sessions.assert_awaited_once()
+        # Factory was auto-created
+        assert builder._factory is not None
 
 
 # =========================================================================
@@ -1161,3 +1545,9 @@ class TestInterfaceTransport:
         from agntcy_app_sdk import InterfaceTransport as TL
 
         assert TL.SLIM_RPC == "slimrpc"
+
+    def test_card_builder_importable_from_package(self):
+        """CardBuilder is importable from the top-level package."""
+        from agntcy_app_sdk import CardBuilder as CB
+
+        assert CB is CardBuilder

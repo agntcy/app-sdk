@@ -18,7 +18,7 @@ from a2a.types import AgentCard
 
 from slima2a.client_transport import SRPCTransport
 
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
     A2AExperimentalClient,
@@ -29,7 +29,6 @@ from agntcy_app_sdk.semantic.a2a.client.transports import (
 )
 from agntcy_app_sdk.transport.base import BaseTransport
 
-configure_logging()
 logger = get_logger(__name__)
 
 
@@ -135,6 +134,11 @@ class A2AClientFactory:
             # Deferred slimrpc — lazily build the channel factory from
             # SlimRpcConfig if an eager factory was not provided.
             await self._build_slimrpc_if_needed()
+            # slima2a's channel factory expects a bare "org/ns/name"
+            # identity, but cards may use slim:// URLs for consistency
+            # with other transports.  Normalise them here so the
+            # upstream factory passes a plain identity string.
+            self._normalise_slimrpc_urls(card)
             return self._upstream.create(card, consumers, interceptors)
         else:
             # Sync path — construct JSONRPC client via upstream factory.
@@ -394,6 +398,25 @@ class A2AClientFactory:
                 if canonical:
                     iface.transport = canonical
 
+    @staticmethod
+    def _normalise_slimrpc_urls(card: AgentCard) -> None:
+        """Rewrite slim:// URLs on slimrpc interfaces to bare identities.
+
+        Cards may declare slimrpc interfaces with full ``slim://`` URLs
+        (e.g. ``slim://host:46357/org/ns/agent``) for consistency with
+        other transports.  The upstream ``SRPCTransport`` / ``slima2a``
+        channel factory expects a bare ``org/ns/name`` identity string.
+
+        This helper normalises ``card.url`` and matching
+        ``additional_interfaces`` entries in-place so the upstream
+        factory receives the correct format.
+        """
+        card.url = _parse_topic_from_url(card.url)
+        if card.additional_interfaces:
+            for iface in card.additional_interfaces:
+                if iface.transport.lower() == "slimrpc":
+                    iface.url = _parse_topic_from_url(iface.url)
+
     def _register_transports(self) -> None:
         """Register SDK transport producers with the upstream factory.
 
@@ -427,6 +450,6 @@ class A2AClientFactory:
                 from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
 
                 A2AInstrumentor().instrument()
-                logger.info("A2A Instrumentor enabled for tracing")
+                logger.debug("A2A Instrumentor enabled for tracing")
             except ImportError:
                 logger.warning("Tracing enabled but ioa_observe not installed")

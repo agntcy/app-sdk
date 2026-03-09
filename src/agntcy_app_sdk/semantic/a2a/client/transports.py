@@ -24,7 +24,7 @@ from a2a.types import (
 )
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.client.utils import (
     get_identity_auth_error,
     message_translator,
@@ -34,7 +34,6 @@ from agntcy_app_sdk.transport.base import BaseTransport
 if TYPE_CHECKING:
     from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 
-configure_logging()
 logger = get_logger(__name__)
 
 # Recognized URI schemes for patterns transports

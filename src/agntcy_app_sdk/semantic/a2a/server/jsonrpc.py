@@ -66,7 +66,7 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         4. Push to directory if available.
         """
         # Only stamp preferred_transport when it is unset.  When
-        # serve_card() registers multiple handlers on the same card, the
+        # CardBuilder registers multiple handlers on the same card, the
         # user-declared preferredTransport must not be overwritten.
         current = self.agent_card.preferred_transport
         if current is None:
@@ -86,7 +86,7 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
             self._uvicorn_server.serve(),
             name="jsonrpc-server",
         )
-        logger.info(f"JSONRPC A2A handler started on {self._host}:{self._port}")
+        logger.debug(f"JSONRPC A2A handler started on {self._host}:{self._port}")
 
     async def teardown(self) -> None:
         """Stop the Uvicorn server."""
@@ -98,4 +98,4 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
                 await self._server_task
             except asyncio.CancelledError:
                 pass
-            logger.info("JSONRPC server task finished.")
+            logger.debug("JSONRPC server task finished.")

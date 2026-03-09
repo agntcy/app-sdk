@@ -10,6 +10,7 @@ shopt: [globstar]
 
 vars:
   UV_ARGS: '{{.UV_ARGS | default ""}}'
+  DOCKER_COMPOSE_FILE: services/docker/docker-compose.yaml
 
 tasks:
   lint:
@@ -29,14 +30,29 @@ tasks:
     cmds:
       - uv run {{.UV_ARGS}} pytest tests/unit/ -v {{.CLI_ARGS}}
 
+  services-up:
+    desc: "Start Docker services required for E2E tests"
+    cmds:
+      - docker compose -f {{.DOCKER_COMPOSE_FILE}} up -d
+      - echo "Waiting for services to be ready..."
+      - docker compose -f {{.DOCKER_COMPOSE_FILE}} exec -T slim timeout 30 sh -c 'while ! nc -z localhost 46357 2>/dev/null; do sleep 1; done' || true
+      - docker compose -f {{.DOCKER_COMPOSE_FILE}} exec -T nats timeout 30 sh -c 'while ! nc -z localhost 4222 2>/dev/null; do sleep 1; done' || true
+
+  services-down:
+    desc: "Stop Docker services"
+    cmds:
+      - docker compose -f {{.DOCKER_COMPOSE_FILE}} down
+
   test-e2e:
-    desc: "Run E2E tests sequentially per file (requires Docker services)"
+    desc: "Run E2E tests sequentially per file (starts Docker services automatically)"
+    deps: [services-up]
     cmds:
       - uv run {{.UV_ARGS}} pytest tests/e2e/test_a2a_slimrpc.py -v -s {{.CLI_ARGS}}
       - uv run {{.UV_ARGS}} pytest tests/e2e/test_a2a_starlette.py -v -s {{.CLI_ARGS}}
       - uv run {{.UV_ARGS}} pytest tests/e2e/test_fast_mcp.py -v -s {{.CLI_ARGS}}
       - uv run {{.UV_ARGS}} pytest tests/e2e/test_concurrent_fast_mcp.py -v -s {{.CLI_ARGS}}
       - uv run {{.UV_ARGS}} pytest tests/e2e/test_mcp.py -v -s {{.CLI_ARGS}}
+      - uv run {{.UV_ARGS}} pytest tests/e2e/test_card_bootstrap.py -v -s {{.CLI_ARGS}}
       - uv run {{.UV_ARGS}} pytest tests/e2e/test_directory.py -v -s {{.CLI_ARGS}}
 
   packaging:

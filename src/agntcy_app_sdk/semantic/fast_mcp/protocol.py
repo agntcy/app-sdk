@@ -9,7 +9,7 @@ from typing import Any, Optional, Union
 import httpx
 import urllib.parse
 import uvicorn
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.fast_mcp.client import MCPClient
 from agntcy_app_sdk.semantic.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.semantic.message import Message
@@ -19,8 +19,6 @@ from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
 from identityservice.auth.starlette import IdentityServiceMCPMiddleware
 
-# Configure logging for the application
-configure_logging()
 logger = get_logger(__name__)
 
 

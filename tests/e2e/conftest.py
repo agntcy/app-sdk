@@ -36,6 +36,7 @@ PREFERRED_TRANSPORT: dict[str, str] = {
     "SLIM": InterfaceTransport.SLIM_PATTERNS,
     "NATS": InterfaceTransport.NATS_PATTERNS,
     "JSONRPC": InterfaceTransport.JSONRPC,
+    "SLIMRPC": InterfaceTransport.SLIM_RPC,
 }
 
 
@@ -72,8 +73,8 @@ def make_agent_card(
 ) -> AgentCard:
     """Build a single AgentCard that declares all transports.
 
-    The card lists SLIM, NATS, and HTTP in ``additional_interfaces`` and
-    sets ``preferredTransport`` based on *transport_type*.  Both client and
+    The card lists SLIM, NATS, HTTP, and SlimRPC in ``additional_interfaces``
+    and sets ``preferredTransport`` based on *transport_type*.  Both client and
     server can share this card — the only thing that varies per test is
     the *name* (the agent's routable identity, stamped into SLIM/NATS
     interface URLs) and which transport is preferred.
@@ -81,9 +82,9 @@ def make_agent_card(
     Args:
         name: The agent's routable identity, stamped into SLIM/NATS
             interface URLs and used as the card ``name``.
-        transport_type: ``"SLIM"``, ``"NATS"``, or ``"JSONRPC"`` — sets
-            ``preferredTransport`` so the client negotiation picks this
-            transport first.
+        transport_type: ``"SLIM"``, ``"NATS"``, ``"JSONRPC"``, or
+            ``"SLIMRPC"`` — sets ``preferredTransport`` so the client
+            negotiation picks this transport first.
         http_port: Port for the JSONRPC interface (default 9999).
     """
     preferred = PREFERRED_TRANSPORT[transport_type]
@@ -94,6 +95,8 @@ def make_agent_card(
         url = f"{SLIM_ENDPOINT}/{name}"
     elif transport_type == "NATS":
         url = f"{NATS_ENDPOINT}/{name}"
+    elif transport_type == "SLIMRPC":
+        url = f"{SLIM_ENDPOINT}/{name}"
     else:
         url = f"http://localhost:{http_port}/"
 
@@ -119,6 +122,10 @@ def make_agent_card(
             AgentInterface(
                 transport=InterfaceTransport.JSONRPC,
                 url=f"http://0.0.0.0:{http_port}",
+            ),
+            AgentInterface(
+                transport=InterfaceTransport.SLIM_RPC,
+                url=f"{SLIM_ENDPOINT}/{name}",
             ),
         ],
     )
@@ -255,7 +262,7 @@ def run_a2a_server():
 
 @pytest.fixture
 def run_card_bootstrap_server():
-    """Spawn an A2A server that uses serve_card() for bootstrap."""
+    """Spawn an A2A server that uses add_a2a_card() for bootstrap."""
     procs = []
 
     def _run(

@@ -3,10 +3,10 @@
 
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
+    CardBuilder,
     InterfaceTransport,
     ServeCardPlan,
     parse_interface_url,
-    serve_card,
 )
 from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
     A2AExperimentalServer,
@@ -27,8 +27,8 @@ __all__ = [
     "A2ASlimRpcServerConfig",
     "SlimRpcConnectionConfig",
     "A2ASRPCServerHandler",
+    "CardBuilder",
     "InterfaceTransport",
     "ServeCardPlan",
     "parse_interface_url",
-    "serve_card",
 ]

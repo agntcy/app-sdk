@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any, Optional
 
 from a2a.types import AgentCard
@@ -15,13 +14,14 @@ from agntcy.dir_sdk.client.config import Config
 from agntcy.dir_sdk.models import core_v1, search_v1
 from google.protobuf.json_format import MessageToDict, ParseDict
 
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.directory.base import BaseAgentDirectory, RecordVisibility
 from agntcy_app_sdk.directory.oasf_converter import (
     agent_card_to_oasf,
     oasf_to_agent_card,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentDirectory(BaseAgentDirectory):
