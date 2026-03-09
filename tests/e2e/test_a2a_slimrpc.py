@@ -15,7 +15,8 @@ from slima2a.client_transport import (
     slimrpc_channel_factory,
 )
 
-from agntcy_app_sdk.semantic.a2a import A2AClientConfig, A2AClientFactory
+from agntcy_app_sdk.semantic.a2a import ClientConfig as A2AClientConfig
+from agntcy_app_sdk.semantic.a2a import A2AClientFactory
 from agntcy_app_sdk.semantic.a2a.client.config import SlimRpcConfig
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
