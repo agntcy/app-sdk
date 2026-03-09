@@ -35,8 +35,16 @@ tasks:
     cmds:
       - docker compose -f {{.DOCKER_COMPOSE_FILE}} up -d
       - echo "Waiting for services to be ready..."
-      - docker compose -f {{.DOCKER_COMPOSE_FILE}} exec -T slim timeout 30 sh -c 'while ! nc -z localhost 46357 2>/dev/null; do sleep 1; done' || true
-      - docker compose -f {{.DOCKER_COMPOSE_FILE}} exec -T nats timeout 30 sh -c 'while ! nc -z localhost 4222 2>/dev/null; do sleep 1; done' || true
+      - |
+        i=0; while [ $i -lt 30 ]; do
+          nc -z localhost 46357 2>/dev/null && break
+          i=$((i+1)); sleep 1
+        done
+      - |
+        i=0; while [ $i -lt 30 ]; do
+          nc -z localhost 4222 2>/dev/null && break
+          i=$((i+1)); sleep 1
+        done
 
   services-down:
     desc: "Stop Docker services"
