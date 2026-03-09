@@ -97,9 +97,9 @@ class SLIMTransport(BaseTransport):
             from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
             SLIMInstrumentor().instrument()
-            logger.info("SLIMTransport initialized with tracing enabled")
+            logger.debug("SLIMTransport initialized with tracing enabled")
 
-        logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
+        logger.debug(f"SLIMTransport initialized with endpoint: {endpoint}")
 
     # -----------------------------------------------------------------------------
     # BaseTransport method implementations
@@ -518,7 +518,7 @@ class SLIMTransport(BaseTransport):
                     received_session = await self._slim_app.listen_for_session_async(
                         timeout=self.message_timeout
                     )
-                    logger.info(
+                    logger.debug(
                         f"Received new session with id: {received_session.session_id()}, "
                         f"type: {received_session.session_type()}, "
                         f"destination: {received_session.destination()},"
@@ -541,7 +541,7 @@ class SLIMTransport(BaseTransport):
                     logger.error(f"Error receiving session info: {e}")
                     await asyncio.sleep(1)  # prevent busy loop
         except asyncio.CancelledError:
-            logger.info("Listener cancelled")
+            logger.debug("Listener cancelled")
             raise
 
     async def _handle_session_receive(self, session: Session) -> None:
@@ -566,7 +566,7 @@ class SLIMTransport(BaseTransport):
                         or "session closed" in msg
                         or "session already closed"
                     ):
-                        logger.info(
+                        logger.debug(
                             f"Session {session_id} closed remotely (likely by moderator), stopping listener"
                         )
                         break
@@ -591,10 +591,10 @@ class SLIMTransport(BaseTransport):
                     )
                     await asyncio.sleep(0.5)  # backoff to avoid spin
         except asyncio.CancelledError:
-            logger.info(f"Session {session_id} handler cancelled")
+            logger.debug(f"Session {session_id} handler cancelled")
             raise
         finally:
-            logger.info(f"Session {session_id} receive loop terminated")
+            logger.debug(f"Session {session_id} receive loop terminated")
 
     async def _process_received_message(self, session: Session, msg):
         """Process a single received message and handle response logic."""
@@ -613,7 +613,7 @@ class SLIMTransport(BaseTransport):
             return
 
         if output is None:
-            logger.info("Received empty output from callback, skipping response.")
+            logger.debug("Received empty output from callback, skipping response.")
             return
 
         # Handle response logic
@@ -668,7 +668,7 @@ class SLIMTransport(BaseTransport):
                 # TODO: Revisit with SLIM team if this still exists in 0.5.0
                 logger.debug(f"Error handling response: {e}")
             elif "session closed" in msg:
-                logger.info(
+                logger.warn(
                     f"Unable to process incoming message, session {session_id} closed remotely (likely by moderator)"
                 )
             else:

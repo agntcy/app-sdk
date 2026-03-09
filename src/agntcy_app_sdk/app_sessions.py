@@ -206,11 +206,11 @@ class AppContainer:
             if record is not None:
                 cid = await self._directory.push_agent_record(record)
                 self._directory_cid = cid
-                logger.info("Agent record pushed to directory with CID: %s", cid)
+                logger.debug("Agent record pushed to directory with CID: %s", cid)
 
         self.is_running = True
 
-        logger.info("App session started.")
+        logger.debug("App session started.")
 
         if keep_alive:
             await self.loop_forever()
@@ -231,12 +231,12 @@ class AppContainer:
         except NotImplementedError:
             logger.warning("Signal handlers not supported in this environment.")
 
-        logger.info("App started. Waiting for shutdown signal (Ctrl+C)...")
+        logger.debug("App started. Waiting for shutdown signal (Ctrl+C)...")
 
         try:
             await self._shutdown_event.wait()
         except asyncio.CancelledError:
-            logger.info("Event loop cancelled; shutting down gracefully...")
+            logger.debug("Event loop cancelled; shutting down gracefully...")
         finally:
             await self.stop()
 
@@ -250,12 +250,12 @@ class AppContainer:
 
     async def stop(self):
         """Stop all components of the app container."""
-        logger.info("Stopping app session...")
+        logger.debug("Stopping app session...")
         await self.handler.teardown()
         if self._directory:
             await self._directory.teardown()
         self.is_running = False
-        logger.info("App session stopped. Exiting event loop.")
+        logger.debug("App session stopped. Exiting event loop.")
 
 
 # ---------------------------------------------------------------------------

@@ -53,7 +53,7 @@ class NatsTransport(BaseTransport):
         self.drain_timeout = kwargs.get("drain_timeout", 2)
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            logger.info("NatsTransport initialized with tracing enabled")
+            logger.debug("NatsTransport initialized with tracing enabled")
             from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
 
             NATSInstrumentor().instrument()
@@ -194,7 +194,7 @@ class NatsTransport(BaseTransport):
                 except Exception as e:
                     logger.error(f"Failed to get access token for agent: {e}")
 
-            logger.info(
+            logger.debug(
                 f"Publishing to: {publish_topic} and receiving from: {reply_topic}"
             )
 
@@ -248,7 +248,7 @@ class NatsTransport(BaseTransport):
             except Exception as e:
                 logger.error(f"Failed to get access token for agent: {e}")
 
-        logger.info(
+        logger.debug(
             f"Invite protocol: ephemeral={ephemeral_topic}, "
             f"reply={reply_topic}, ack={ack_topic}"
         )
@@ -396,7 +396,7 @@ class NatsTransport(BaseTransport):
     async def _connect(self):
         """Connect to the NATS server."""
         if self._nc is not None and self._nc.is_connected:
-            logger.info("Already connected to NATS server")
+            logger.debug("Already connected to NATS server")
             return
 
         self._nc = await nats.connect(
@@ -410,7 +410,7 @@ class NatsTransport(BaseTransport):
             connect_timeout=self.connect_timeout,
             drain_timeout=self.drain_timeout,
         )
-        logger.info("Connected to NATS server")
+        logger.debug("Connected to NATS server")
 
     async def close(self) -> None:
         """Close the NATS connection."""
@@ -426,7 +426,7 @@ class NatsTransport(BaseTransport):
             try:
                 await self._nc.drain()
                 await self._nc.close()
-                logger.info("NATS connection closed")
+                logger.debug("NATS connection closed")
             except Exception as e:
                 logger.error(f"Error closing NATS connection: {e}")
         else:
@@ -451,7 +451,7 @@ class NatsTransport(BaseTransport):
             sub = await self._nc.subscribe(topic, cb=self._message_handler)
 
             self.subscriptions.append(sub)
-            logger.info(f"Subscribed to topic: {topic}")
+            logger.debug(f"Subscribed to topic: {topic}")
         except Exception as e:
             logger.error(f"Error subscribe to topic '{topic}': {e}")
 
@@ -526,4 +526,4 @@ class NatsTransport(BaseTransport):
         logger.warning("Disconnected from NATS.")
 
     async def reconnected_cb(self):
-        logger.info(f"Reconnected to NATS at {self._nc.connected_url.netloc}...")
+        logger.debug(f"Reconnected to NATS at {self._nc.connected_url.netloc}...")

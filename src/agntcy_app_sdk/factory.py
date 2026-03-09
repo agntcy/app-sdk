@@ -142,7 +142,7 @@ class AgntcyFactory:
             api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
         )
 
-        logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
+        logger.debug(f"Tracing enabled for {self.name} via ioa_observe.sdk")
 
     # ------------------------------------------------------------------
     # Introspection
