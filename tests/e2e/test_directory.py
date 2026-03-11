@@ -121,9 +121,9 @@ async def test_push_and_pull_extract_card(directory: AgentDirectory):
 
     # Pull and extract the AgentCard
     restored_card = await directory.pull_agent_record(cid, extract_card=True)
-    assert isinstance(
-        restored_card, AgentCard
-    ), "extract_card should return an AgentCard"
+    assert isinstance(restored_card, AgentCard), (
+        "extract_card should return an AgentCard"
+    )
     assert restored_card.name == card.name
     assert restored_card.url == card.url
     assert restored_card.version == card.version
@@ -271,9 +271,9 @@ async def test_app_container_pushes_record_to_directory():
     # 4. Run — this triggers handler.setup() → directory.setup() → push_agent_record()
     await container.run(keep_alive=False)
     assert container.is_running
-    assert (
-        container.directory_cid is not None
-    ), "directory_cid should be set after run()"
+    assert container.directory_cid is not None, (
+        "directory_cid should be set after run()"
+    )
     print(f"  3. Container started — CID: {container.directory_cid}")
 
     # 5. Search the directory for the pushed card by name
@@ -284,9 +284,9 @@ async def test_app_container_pushes_record_to_directory():
     )
 
     names = [r.get("name") for r in results]
-    assert (
-        original_card.name in names
-    ), f"Expected '{original_card.name}' in search results, got: {names}"
+    assert original_card.name in names, (
+        f"Expected '{original_card.name}' in search results, got: {names}"
+    )
     print(f"  4. Directory search confirmed — found '{original_card.name}'")
 
     # 6. Pull and verify the card fields
@@ -345,20 +345,20 @@ async def test_app_session_start_all_pushes_records():
         ("A", container_a, card_a),
         ("B", container_b, card_b),
     ):
-        assert (
-            container.directory_cid is not None
-        ), f"Container {label} should have a directory_cid after run()"
+        assert container.directory_cid is not None, (
+            f"Container {label} should have a directory_cid after run()"
+        )
         cid = container.directory_cid
         print(f"  4{label}. Container {label} CID: {cid}")
 
         # Pull by CID and extract the AgentCard
         pulled = await directory.pull_agent_record(cid, extract_card=True)
-        assert (
-            pulled is not None
-        ), f"pull_agent_record({cid}) returned None for container {label}"
-        assert isinstance(
-            pulled, AgentCard
-        ), f"Expected AgentCard, got {type(pulled).__name__}"
+        assert pulled is not None, (
+            f"pull_agent_record({cid}) returned None for container {label}"
+        )
+        assert isinstance(pulled, AgentCard), (
+            f"Expected AgentCard, got {type(pulled).__name__}"
+        )
         assert pulled.name == card.name
         assert pulled.version == card.version
         print(f"  5{label}. Pulled & verified '{pulled.name}' v{pulled.version}")
@@ -383,7 +383,11 @@ async def test_app_container_no_directory_skips_push():
 
     session = factory.create_app_session()
     container = (
-        session.add(server).with_host("0.0.0.0").with_port(9030).with_session_id("no-dir-test").build()
+        session.add(server)
+        .with_host("0.0.0.0")
+        .with_port(9030)
+        .with_session_id("no-dir-test")
+        .build()
     )
 
     assert container.directory is None
@@ -433,9 +437,9 @@ async def test_factory_create_directory_in_pipeline():
 
     # Pull from directory to confirm the push
     results = await directory.search_agent_records(card.name, limit=5)
-    assert any(
-        r.get("name") == card.name for r in results
-    ), f"Card '{card.name}' not found in directory after run()"
+    assert any(r.get("name") == card.name for r in results), (
+        f"Card '{card.name}' not found in directory after run()"
+    )
     print(f"  3. Confirmed '{card.name}' in directory")
 
     await container.stop()

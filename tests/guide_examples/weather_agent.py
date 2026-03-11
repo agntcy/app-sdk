@@ -22,9 +22,6 @@ from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from a2a.utils import new_agent_text_message
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
-    A2AExperimentalServer,
-)
 
 # ---------------------------------------------------------------------------
 # Agent card & skill
@@ -95,8 +92,8 @@ async def main(transport_type: str, endpoint: str):
         agent_card=agent_card, http_handler=request_handler
     )
 
-    topic = A2AExperimentalServer.create_agent_topic(agent_card)
-    name = f"default/default/{topic}"
+    name = f"{agent_card.name}_{agent_card.version}".replace(" ", "_")
+    name = f"default/default/{name}"
     transport = factory.create_transport(transport_type, endpoint=endpoint, name=name)
 
     session = factory.create_app_session(max_sessions=1)

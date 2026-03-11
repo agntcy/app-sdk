@@ -147,35 +147,40 @@ class TestExample1SlimRPC:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert (
-                returncode == 0
-            ), f"Client exited with code {returncode}. Output:\n{output}"
-            assert (
-                "SUCCESS" in output
-            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            assert (
-                "sunny" in output.lower() or "75" in output
-            ), f"Expected weather report in output. Got:\n{output}"
+            assert returncode == 0, (
+                f"Client exited with code {returncode}. Output:\n{output}"
+            )
+            assert "SUCCESS" in output, (
+                f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            )
+            assert "sunny" in output.lower() or "75" in output, (
+                f"Expected weather report in output. Got:\n{output}"
+            )
 
         finally:
             _kill_server(server_proc)
 
 
 # ---------------------------------------------------------------------------
-# Example 2 — Experimental Patterns (SLIM)
+# Example 2 — Card-Driven Bootstrap (SLIM)
 # ---------------------------------------------------------------------------
 
 
-class TestExample2ExperimentalPatternsSLIM:
-    """Test the Experimental Patterns (SLIM) example from A2A_USAGE_GUIDE.md."""
+class TestExample2CardDrivenSLIM:
+    """Test the card-driven bootstrap example over SLIM from A2A_USAGE_GUIDE.md."""
 
-    def test_weather_agent_slim_patterns(self):
-        """Launch patterns weather server over SLIM, run client, verify response."""
-        server_script = os.path.join(GUIDE_DIR, "weather_agent.py")
-        client_script = os.path.join(GUIDE_DIR, "weather_client.py")
+    def test_weather_agent_card_slim(self):
+        """Launch card-driven weather server over SLIM, run client, verify response."""
+        server_script = os.path.join(GUIDE_DIR, "weather_agent_card.py")
+        client_script = os.path.join(GUIDE_DIR, "weather_client_card.py")
+
+        server_env = os.environ.copy()
+        server_env["SLIM_SHARED_SECRET"] = (
+            "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+        )
 
         # Launch server
-        server_proc = _launch_server(
+        server_proc = subprocess.Popen(
             [
                 "uv",
                 "run",
@@ -183,9 +188,13 @@ class TestExample2ExperimentalPatternsSLIM:
                 server_script,
                 "--transport",
                 "SLIM",
-                "--endpoint",
-                SLIM_ENDPOINT,
-            ]
+                "--slim-endpoint",
+                "slim://localhost:46357",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            preexec_fn=os.setsid,
+            env=server_env,
         )
 
         try:
@@ -216,35 +225,40 @@ class TestExample2ExperimentalPatternsSLIM:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert (
-                returncode == 0
-            ), f"Client exited with code {returncode}. Output:\n{output}"
-            assert (
-                "SUCCESS" in output
-            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            assert (
-                "sunny" in output.lower() or "75" in output
-            ), f"Expected weather report in output. Got:\n{output}"
+            assert returncode == 0, (
+                f"Client exited with code {returncode}. Output:\n{output}"
+            )
+            assert "SUCCESS" in output, (
+                f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            )
+            assert "sunny" in output.lower() or "75" in output, (
+                f"Expected weather report in output. Got:\n{output}"
+            )
 
         finally:
             _kill_server(server_proc)
 
 
 # ---------------------------------------------------------------------------
-# Example 2 — Experimental Patterns (NATS)
+# Example 2 — Card-Driven Bootstrap (NATS)
 # ---------------------------------------------------------------------------
 
 
-class TestExample2ExperimentalPatternsNATS:
-    """Test the Experimental Patterns (NATS) example from A2A_USAGE_GUIDE.md."""
+class TestExample2CardDrivenNATS:
+    """Test the card-driven bootstrap example over NATS from A2A_USAGE_GUIDE.md."""
 
-    def test_weather_agent_nats_patterns(self):
-        """Launch patterns weather server over NATS, run client, verify response."""
-        server_script = os.path.join(GUIDE_DIR, "weather_agent.py")
-        client_script = os.path.join(GUIDE_DIR, "weather_client.py")
+    def test_weather_agent_card_nats(self):
+        """Launch card-driven weather server over NATS, run client, verify response."""
+        server_script = os.path.join(GUIDE_DIR, "weather_agent_card.py")
+        client_script = os.path.join(GUIDE_DIR, "weather_client_card.py")
+
+        server_env = os.environ.copy()
+        server_env["SLIM_SHARED_SECRET"] = (
+            "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+        )
 
         # Launch server
-        server_proc = _launch_server(
+        server_proc = subprocess.Popen(
             [
                 "uv",
                 "run",
@@ -252,9 +266,13 @@ class TestExample2ExperimentalPatternsNATS:
                 server_script,
                 "--transport",
                 "NATS",
-                "--endpoint",
-                NATS_ENDPOINT,
-            ]
+                "--nats-endpoint",
+                "nats://localhost:4222",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            preexec_fn=os.setsid,
+            env=server_env,
         )
 
         try:
@@ -285,15 +303,15 @@ class TestExample2ExperimentalPatternsNATS:
             print(f"Client output:\n{output}")
 
             # Assert success
-            assert (
-                returncode == 0
-            ), f"Client exited with code {returncode}. Output:\n{output}"
-            assert (
-                "SUCCESS" in output
-            ), f"Expected 'SUCCESS' in client output. Got:\n{output}"
-            assert (
-                "sunny" in output.lower() or "75" in output
-            ), f"Expected weather report in output. Got:\n{output}"
+            assert returncode == 0, (
+                f"Client exited with code {returncode}. Output:\n{output}"
+            )
+            assert "SUCCESS" in output, (
+                f"Expected 'SUCCESS' in client output. Got:\n{output}"
+            )
+            assert "sunny" in output.lower() or "75" in output, (
+                f"Expected weather report in output. Got:\n{output}"
+            )
 
         finally:
             _kill_server(server_proc)

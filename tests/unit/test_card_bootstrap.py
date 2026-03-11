@@ -173,7 +173,7 @@ class TestParseSlimTopicOnly:
         assert result["topic"] == "my_topic"
 
     def test_topic_with_underscores(self):
-        """Topic names like Hello_World_1.0.0 from create_agent_topic()."""
+        """Topic names like Hello_World_1.0.0 (underscore-separated)."""
         iface = AgentInterface(
             transport="slimpatterns", url="slim://Hello_World_Agent_1.0.0"
         )

@@ -989,3 +989,249 @@ class TestMultiTransportNegotiation:
         )
         result = await factory.create(card)
         assert isinstance(result, Client)
+
+
+# =========================================================================
+# Transport alias resolution in negotiation
+# =========================================================================
+
+
+class TestTransportAliasNegotiation:
+    """Verify that transport aliases (e.g. "slim" -> "slimpatterns",
+    "nats" -> "natspatterns") are resolved during client-side negotiation
+    and dispatch so cards using alias names still produce valid clients.
+    """
+
+    @staticmethod
+    def _make_multi_transport_factory():
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig(
+            slimrpc_channel_factory=MagicMock(),
+            slim_transport=_make_mock_transport("SLIM"),
+            nats_transport=_make_mock_transport("NATS"),
+        )
+        return A2AClientFactory(config), config
+
+    # -- negotiate() resolves aliases in preferred_transport ----------------
+
+    def test_negotiate_slim_alias_preferred(self):
+        """Card with preferred_transport='slim' should negotiate successfully."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="slim",
+            url="slim://my_topic",
+        )
+        label, url = factory._negotiate(card)
+        assert label == "slim"
+        assert url == "slim://my_topic"
+
+    def test_negotiate_nats_alias_preferred(self):
+        """Card with preferred_transport='nats' should negotiate successfully."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="nats",
+            url="nats://my_topic",
+        )
+        label, url = factory._negotiate(card)
+        assert label == "nats"
+        assert url == "nats://my_topic"
+
+    def test_negotiate_slim_extended_alias_preferred(self):
+        """Card with preferred_transport='slim-extended' should negotiate."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="slim-extended",
+            url="slim://my_topic",
+        )
+        label, url = factory._negotiate(card)
+        assert label == "slim-extended"
+        assert url == "slim://my_topic"
+
+    # -- negotiate() resolves aliases in additional_interfaces ---------------
+
+    def test_negotiate_slim_alias_in_additional_interfaces(self):
+        """Card with transport='slim' in additional_interfaces matches client's 'slimpatterns'."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="grpc",
+            url="grpc://agent",
+            additional_interfaces=[
+                AgentInterface(transport="slim", url="slim://my_topic"),
+            ],
+        )
+        label, url = factory._negotiate(card)
+        assert label == "slim"
+        assert url == "slim://my_topic"
+
+    def test_negotiate_nats_alias_in_additional_interfaces(self):
+        """Card with transport='nats' in additional_interfaces matches client's 'natspatterns'."""
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="grpc",
+            url="grpc://agent",
+            additional_interfaces=[
+                AgentInterface(transport="nats", url="nats://my_topic"),
+            ],
+        )
+        label, url = factory._negotiate(card)
+        assert label == "nats"
+        assert url == "nats://my_topic"
+
+    # -- create() dispatches correctly for aliased labels -------------------
+
+    @pytest.mark.asyncio
+    async def test_create_slim_alias_dispatches_to_slimpatterns(self):
+        """create() with preferred_transport='slim' should return A2AExperimentalClient."""
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+            A2AExperimentalClient,
+        )
+
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="slim",
+            url="slim://my_agent",
+        )
+        result = await factory.create(card)
+        assert isinstance(result, A2AExperimentalClient)
+        assert result.transport.type() == "SLIM"
+        assert result.topic == "my_agent"
+
+    @pytest.mark.asyncio
+    async def test_create_nats_alias_dispatches_to_natspatterns(self):
+        """create() with preferred_transport='nats' should return A2AExperimentalClient."""
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+            A2AExperimentalClient,
+        )
+
+        factory, _config = self._make_multi_transport_factory()
+        card = _make_agent_card(
+            preferred_transport="nats",
+            url="nats://my_agent",
+        )
+        result = await factory.create(card)
+        assert isinstance(result, A2AExperimentalClient)
+        assert result.transport.type() == "NATS"
+        assert result.topic == "my_agent"
+
+    # -- client_preference mode also resolves aliases -----------------------
+
+    def test_client_preference_resolves_aliases(self):
+        """With use_client_preference, aliased server transports still match."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        config = ClientConfig(
+            slim_transport=_make_mock_transport("SLIM"),
+            use_client_preference=True,
+        )
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            preferred_transport="slim",
+            url="slim://my_topic",
+        )
+        label, url = factory._negotiate(card)
+        # Client supports "slimpatterns"; server offers "slim" (alias).
+        # Alias resolution should make them match.
+        assert label == "slim"
+        assert url == "slim://my_topic"
+
+
+# ---------------------------------------------------------------------------
+# Tests for _build_slimrpc_if_needed() — trailing-slash connection isolation
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSlimrpcIfNeeded:
+    """Verify that ``_build_slimrpc_if_needed()`` opens a dedicated SLIM
+    connection via the trailing-slash endpoint trick, matching the
+    server-side pattern in ``A2ASRPCServerHandler``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_slimrpc_uses_trailing_slash_endpoint(self):
+        """_build_slimrpc_if_needed should connect using endpoint + '/'."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from agntcy_app_sdk.semantic.a2a.client.config import (
+            ClientConfig,
+            SlimRpcConfig,
+        )
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        mock_service = MagicMock()
+        mock_service.connect_async = AsyncMock(return_value=42)
+        mock_app = MagicMock()
+        mock_service.create_app_with_secret = MagicMock(return_value=mock_app)
+
+        config = ClientConfig(
+            slimrpc_config=SlimRpcConfig(
+                namespace="lungo",
+                group="agents",
+                name="my_agent",
+                slim_url="http://localhost:46357",
+                secret="test-secret-32-chars-minimum-here",
+            ),
+        )
+        factory = A2AClientFactory(config)
+
+        with (
+            patch(
+                "agntcy_app_sdk.transport.slim.common.get_or_create_slim_instance",
+                new_callable=AsyncMock,
+                return_value=(mock_service, mock_app, 1),
+            ) as mock_get_or_create,
+            patch("slim_bindings.Name", MagicMock()) as mock_name,
+            patch(
+                "slim_bindings.new_insecure_client_config",
+                MagicMock(return_value="rpc_config"),
+            ) as mock_new_client_config,
+            patch(
+                "slima2a.client_transport.slimrpc_channel_factory",
+                return_value=MagicMock(),
+            ),
+        ):
+            # Wire connect_async on the service returned by get_or_create
+            mock_service.connect_async = AsyncMock(return_value=99)
+            # Wire the rpc app returned by create_app_with_secret
+            mock_rpc_app = MagicMock()
+            mock_rpc_app.subscribe_async = AsyncMock()
+            mock_service.create_app_with_secret = MagicMock(return_value=mock_rpc_app)
+
+            await factory._build_slimrpc_if_needed()
+
+            # Should have called get_or_create_slim_instance first
+            mock_get_or_create.assert_called_once()
+
+            # Should have called new_insecure_client_config with trailing slash
+            mock_new_client_config.assert_called_once_with("http://localhost:46357/")
+
+            # Should have opened a second connection
+            mock_service.connect_async.assert_called_once_with("rpc_config")
+
+            # Should have created a separate app with "-rpc" suffix
+            mock_name.assert_any_call("lungo", "agents", "my_agent-rpc")
+            mock_service.create_app_with_secret.assert_called_once()
+
+            # Should have subscribed the rpc app on the dedicated connection
+            mock_rpc_app.subscribe_async.assert_called_once()
+
+            # Channel factory should be set
+            assert config.slimrpc_channel_factory is not None
+
+    @pytest.mark.asyncio
+    async def test_slimrpc_noop_when_eager_factory_set(self):
+        """_build_slimrpc_if_needed should be a no-op if channel factory already set."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        eager_factory = MagicMock()
+        config = ClientConfig(slimrpc_channel_factory=eager_factory)
+        factory = A2AClientFactory(config)
+
+        await factory._build_slimrpc_if_needed()
+
+        # Should not have changed the factory
+        assert config.slimrpc_channel_factory is eager_factory

@@ -121,9 +121,9 @@ if __name__ == "__main__":
     # Set SLIM_SHARED_SECRET if not already set — add_a2a_card() requires it
     # for SLIM transports.  Use the same default as SLIMTransport.__init__.
     if "SLIM_SHARED_SECRET" not in os.environ:
-        os.environ[
-            "SLIM_SHARED_SECRET"
-        ] = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+        os.environ["SLIM_SHARED_SECRET"] = (
+            "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+        )
 
     parser = argparse.ArgumentParser(
         description="Run the A2A server using add_a2a_card() bootstrap."

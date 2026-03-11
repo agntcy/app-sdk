@@ -230,25 +230,25 @@ async def test_dry_run():
         )
 
     assert isinstance(plan, ServeCardPlan)
-    assert (
-        len(plan.containers) == 4
-    ), f"Expected 4 plan entries (SLIMRPC, SLIM, NATS, JSONRPC), got {len(plan.containers)}"
+    assert len(plan.containers) == 4, (
+        f"Expected 4 plan entries (SLIMRPC, SLIM, NATS, JSONRPC), got {len(plan.containers)}"
+    )
 
     # Verify transport types in the plan
     transport_types = [entry["transport"] for entry in plan.containers]
-    assert (
-        "slimpatterns" in transport_types
-    ), f"Missing slimpatterns in {transport_types}"
-    assert (
-        "natspatterns" in transport_types
-    ), f"Missing natspatterns in {transport_types}"
+    assert "slimpatterns" in transport_types, (
+        f"Missing slimpatterns in {transport_types}"
+    )
+    assert "natspatterns" in transport_types, (
+        f"Missing natspatterns in {transport_types}"
+    )
     assert "jsonrpc" in transport_types, f"Missing jsonrpc in {transport_types}"
     assert "slimrpc" in transport_types, f"Missing slimrpc in {transport_types}"
 
     # Verify no containers were actually started
-    assert (
-        len(session.app_containers) == 0
-    ), f"dry_run=True should not create containers, found {len(session.app_containers)}"
+    assert len(session.app_containers) == 0, (
+        f"dry_run=True should not create containers, found {len(session.app_containers)}"
+    )
 
     print("=== ✅ test_dry_run passed ===")
 
@@ -275,14 +275,14 @@ async def test_dry_run_with_skip():
         )
 
     assert isinstance(plan, ServeCardPlan)
-    assert (
-        len(plan.containers) == 3
-    ), f"Expected 3 plan entries (SLIMRPC, SLIM, NATS), got {len(plan.containers)}"
+    assert len(plan.containers) == 3, (
+        f"Expected 3 plan entries (SLIMRPC, SLIM, NATS), got {len(plan.containers)}"
+    )
 
     transport_types = [entry["transport"] for entry in plan.containers]
-    assert (
-        "jsonrpc" not in transport_types
-    ), f"jsonrpc should have been skipped: {transport_types}"
+    assert "jsonrpc" not in transport_types, (
+        f"jsonrpc should have been skipped: {transport_types}"
+    )
     assert "slimpatterns" in transport_types
     assert "natspatterns" in transport_types
     assert "slimrpc" in transport_types
