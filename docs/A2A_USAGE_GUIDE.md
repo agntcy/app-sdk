@@ -12,16 +12,16 @@ The SDK decouples _protocols_ (the semantic layer — how agents talk) from _tra
                      .a2a()  .create_transport()  .create_app_session()
                        |           |                     |
               A2AClientFactory  BaseTransport         AppSession
-                       |      (SLIM / NATS / HTTP)       |
-                       |           |               .add(target)
-                       v           |                     |
-                    Client         |            ContainerBuilder
-                                   |          .with_transport(t)
-                                   |          .with_session_id(id)
-                                   |                     |
-                                   |                  .build()
-                                   |                 /   |   \
-                                  v                v     v     v
+                       |      (SLIM / NATS / HTTP)    /        \
+                       |           |      .add(target)    .add_a2a_card(card, handler)
+                       v           |           |                     |
+                    Client         |   ContainerBuilder         CardBuilder
+                                   |  .with_transport(t)     .with_factory(f)
+                                   |  .with_session_id(id)   .skip() / .override()
+                                   |           |                     |
+                                   |        .build()              .start()
+                                   |       /   |   \          (auto-expands card
+                                  v       v    v    v          interfaces)
                                          ┌──────────────────────────┐
                                          │   Handler auto-detection │
                                          └──────────┬───────────────┘
@@ -42,7 +42,7 @@ The SDK decouples _protocols_ (the semantic layer — how agents talk) from _tra
               (protobuf)             (standard A2A)        (patterns)
 ```
 
-**Handler auto-detection** — When you call `session.add(target).build()`, the SDK inspects the `target` type:
+**Handler auto-detection** — When you call `session.add(target).build()` or `session.add_a2a_card(card, handler).start()`, the SDK inspects the target type:
 
 | Target type               | Transport provided? | Handler selected                                                                             |
 | ------------------------- | ------------------- | -------------------------------------------------------------------------------------------- |
@@ -268,11 +268,18 @@ uv run python weather_client_srpc.py
 
 ---
 
-## Example 2 — Experimental Patterns (Broadcast / Group Chat over SLIM | NATS)
+## Example 2 — Card-Driven Multi-Transport Bootstrap (Recommended)
 
-The experimental patterns path enables communication patterns beyond the A2A spec — broadcast (publish/subscribe) and multi-party group chat — over SLIM or NATS transports. It preserves A2A's AgentCard handshake, JSON-RPC envelope, and typed payloads while routing transport messages directly through the `JSONRPCHandler` (bypassing Starlette/ASGI entirely).
+The **card-driven approach** is the recommended way to serve an A2A agent over multiple transports. Instead of manually creating transports and wiring builder chains, you declare all available transports in the agent card's `additional_interfaces` and let `add_a2a_card()` handle everything automatically.
 
-### Server: `weather_agent.py`
+This approach:
+
+- Uses the **agent card as the single source of truth** for transport configuration
+- Supports SLIM patterns, NATS patterns, HTTP JSON-RPC, and SlimRPC — all from one card
+- Eliminates manual `create_transport()` / `with_transport()` / `build()` chains
+- Still preserves A2A's AgentCard handshake, JSON-RPC envelope, and typed payloads
+
+### Server: `weather_agent_card.py`
 
 ```python
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -281,16 +288,16 @@ from a2a.utils import new_agent_text_message
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
+    AgentInterface,
     AgentSkill,
 )
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import A2AExperimentalServer
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 """
-Define the AgentSkill and AgentCard.
+Define the AgentSkill and AgentCard with transport interfaces.
 """
 
 skill = AgentSkill(
@@ -300,6 +307,10 @@ skill = AgentSkill(
     tags=["weather", "report"],
     examples=["What's the weather like?", "Give me a weather report"],
 )
+
+# The card declares ALL available transports in additional_interfaces.
+# add_a2a_card() reads these and creates the appropriate transports.
+name = "default/default/Weather_Agent_1.0.0"
 
 agent_card = AgentCard(
     name="Weather Agent",
@@ -311,10 +322,21 @@ agent_card = AgentCard(
     capabilities=AgentCapabilities(streaming=True),
     skills=[skill],
     supportsAuthenticatedExtendedCard=False,
+    preferredTransport=InterfaceTransport.SLIM_PATTERNS,
+    additional_interfaces=[
+        AgentInterface(
+            transport=InterfaceTransport.SLIM_PATTERNS,
+            url=f"slim://localhost:46357/{name}",
+        ),
+        AgentInterface(
+            transport=InterfaceTransport.NATS_PATTERNS,
+            url=f"nats://localhost:4222/{name}",
+        ),
+    ],
 )
 
 """
-Implement the agent logic and executor.
+Implement the agent logic and executor (same as Example 1).
 """
 
 class WeatherAgent:
@@ -338,7 +360,7 @@ class WeatherAgentExecutor(AgentExecutor):
         raise Exception("cancel not supported")
 
 """
-Create the A2A server and serve via AppSession with a SLIM transport.
+Serve via add_a2a_card() — one call does it all.
 """
 
 async def main():
@@ -349,51 +371,81 @@ async def main():
         task_store=InMemoryTaskStore(),
     )
 
-    server = A2AStarletteApplication(
-        agent_card=agent_card, http_handler=request_handler
+    session = factory.create_app_session(max_sessions=10)
+    await (
+        session.add_a2a_card(agent_card, request_handler)
+        .with_factory(factory)
+        .start(keep_alive=True)
     )
-
-    topic = A2AExperimentalServer.create_agent_topic(agent_card)
-    name = f"default/default/{topic}"
-    transport = factory.create_transport("SLIM", endpoint="http://localhost:46357", name=name)
-
-    session = factory.create_app_session(max_sessions=1)
-    session.add(server).with_transport(transport).with_session_id("weather").build()
-
-    await session.start_all_sessions(keep_alive=True)
 
 if __name__ == "__main__":
     import asyncio
+    import os
+
+    # SLIM_SHARED_SECRET is required for SLIM transports
+    if "SLIM_SHARED_SECRET" not in os.environ:
+        os.environ["SLIM_SHARED_SECRET"] = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+
     asyncio.run(main())
 ```
 
-### Client: `weather_client.py`
+### Client: `weather_client_card.py`
+
+The client is unchanged — `add_a2a_card()` is server-side only. Clients still use `factory.a2a(config).create(card)` with an agent card that has matching `additional_interfaces` for topic derivation.
 
 ```python
 from a2a.types import (
-    SendMessageRequest,
-    MessageSendParams,
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    AgentSkill,
     Message,
+    MessageSendParams,
     Part,
-    TextPart,
     Role,
+    SendMessageRequest,
+    TextPart,
 )
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import A2AExperimentalServer
-from weather_agent import agent_card
+
+# Reconstruct the same agent card as the server (for topic derivation)
+agent_card = AgentCard(
+    name="Weather Agent",
+    url="",
+    version="1.0.0",
+    defaultInputModes=["text"],
+    defaultOutputModes=["text"],
+    capabilities=AgentCapabilities(streaming=True),
+    skills=[AgentSkill(id="weather_report", ...)],
+    preferredTransport=InterfaceTransport.SLIM_PATTERNS,
+    additional_interfaces=[
+        AgentInterface(
+            transport=InterfaceTransport.SLIM_PATTERNS,
+            url="slim://localhost:46357/default/default/Weather_Agent_1.0.0",
+        ),
+        AgentInterface(
+            transport=InterfaceTransport.NATS_PATTERNS,
+            url="nats://localhost:4222/default/default/Weather_Agent_1.0.0",
+        ),
+    ],
+    description="An agent that provides weather reports",
+)
 
 async def main():
     factory = AgntcyFactory()
 
+    transport_type = "SLIM"  # or "NATS"
     transport = factory.create_transport(
-        "SLIM",
+        transport_type,
         endpoint="http://localhost:46357",
-        name="default/default/weather_client",
+        name="default/default/weather_client_card",
     )
 
-    card = A2AExperimentalServer.create_client_card(agent_card, "SLIM")
+    card = A2AExperimentalServer.create_client_card(agent_card, transport_type)
 
     config = ClientConfig(slim_transport=transport)
     client = await factory.a2a(config).create(card)
@@ -404,33 +456,48 @@ async def main():
             message=Message(
                 messageId="0",
                 role=Role.user,
-                parts=[Part(TextPart(text="Hello, Weather Agent, how is the weather?"))],
+                parts=[Part(root=TextPart(text="Hello, Weather Agent, how is the weather?"))],
             ),
         ),
     )
 
-    response = await client.send_message(request)
-    print(response)
+    async for event in client.send_message(request=request.params.message):
+        if isinstance(event, Message):
+            for part in event.parts:
+                if isinstance(part.root, TextPart):
+                    print(part.root.text)
 
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
 ```
 
-A few notes:
+### Notes
 
-- The weather agent does not provide a URL in its agent card — it is discovered by the transport topic derived from the card.
-- The client uses `A2AExperimentalServer.create_client_card` to build a card copy with the correct `preferred_transport` and `url` for transport negotiation.
-- Passing a transport via `.with_transport()` triggers the experimental patterns handler; omitting it would serve over HTTP instead.
+- **Card as single source of truth:** The `AgentCard.additional_interfaces` list declares every transport the agent supports. `add_a2a_card()` iterates over these interfaces, parses the URLs, creates transports, and registers containers — all automatically.
+- **`InterfaceTransport` constants:** Use `InterfaceTransport.SLIM_PATTERNS`, `.NATS_PATTERNS`, `.JSONRPC`, `.SLIM_RPC` instead of raw strings. Aliases like `InterfaceTransport.SLIM` (→ `"slimpatterns"`) and `.NATS` (→ `"natspatterns"`) are also available.
+- **Fluent API options:**
+  - `.with_factory(factory)` — reuse an existing `AgntcyFactory` (auto-created if omitted)
+  - `.skip(transport_type)` — exclude a specific transport (e.g., `.skip("jsonrpc")`)
+  - `.override(transport_type, target)` — supply a pre-built transport or config for a specific interface
+  - `.dry_run()` — returns a `ServeCardPlan` describing what _would_ be started, without starting anything
+- **`SLIM_SHARED_SECRET`:** Required environment variable for any SLIM-based transport. Set it before calling `start()`.
+- **URL formats:** Each interface URL supports two styles:
+  - **Topic-only:** `slim://my_topic` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`)
+  - **Explicit endpoint:** `slim://host:46357/my_topic` — endpoint extracted from the URL
 
 ### Running
 
-First start the SLIM transport server — see the agntcy-app-sdk [docker-compose.yaml](https://github.com/agntcy/app-sdk/blob/main/services/docker/docker-compose.yaml) or SLIM [repo](https://github.com/agntcy/slim/tree/main).
+First start the required services — see the agntcy-app-sdk [docker-compose.yaml](https://github.com/agntcy/app-sdk/blob/main/services/docker/docker-compose.yaml):
+
+```bash
+docker-compose -f services/docker/docker-compose.yaml up
+```
 
 Run the weather agent server:
 
 ```bash
-uv run python weather_agent.py
+uv run python weather_agent_card.py
 ```
 
 You should see:
@@ -443,14 +510,10 @@ You should see:
 In another terminal, run the weather client:
 
 ```bash
-uv run python weather_client.py
+uv run python weather_client_card.py
 ```
 
-You should see:
-
-```
-root=SendMessageSuccessResponse(id='...', jsonrpc='2.0', result=Message(..., parts=[Part(root=TextPart(kind='text', ..., text='The weather is sunny with a high of 75F.'))], ..., role=<Role.agent: 'agent'>, ...))
-```
+You should see the weather report: `The weather is sunny with a high of 75F.`
 
 ---
 
