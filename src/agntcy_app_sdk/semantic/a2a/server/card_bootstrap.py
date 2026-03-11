@@ -49,6 +49,11 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.semantic.a2a.transport_types import (
+    CANONICAL_TRANSPORTS as _CANONICAL_TRANSPORTS,
+    InterfaceTransport,
+    normalize_transport as _normalize_transport,
+)
 
 if TYPE_CHECKING:
     from a2a.server.request_handlers import DefaultRequestHandler
@@ -69,110 +74,20 @@ _NATS_DEFAULT_ENDPOINT = f"nats://localhost:{_NATS_DEFAULT_PORT}"
 
 
 # ---------------------------------------------------------------------------
-# Interface transport types — valid values for ``AgentInterface.transport``
+# Interface transport types — re-exported from shared module for backward
+# compatibility.  Canonical definitions live in
+# ``agntcy_app_sdk.semantic.a2a.transport_types``.
 # ---------------------------------------------------------------------------
 
-
-class InterfaceTransport:
-    """Valid transport identifiers for ``AgentInterface.transport``.
-
-    Use these constants instead of hard-coded strings when building
-    ``AgentCard.additional_interfaces``::
-
-        from agntcy_app_sdk import InterfaceTransport
-
-        AgentInterface(
-            transport=InterfaceTransport.SLIM_PATTERNS,
-            url="slim://topic",
-        )
-        AgentInterface(
-            transport=InterfaceTransport.JSONRPC,
-            url="http://0.0.0.0:9999",
-        )
-
-    **Aliases** are provided for convenience — they resolve to the same
-    canonical transport during parsing:
-
-    ================================  =====================
-    Alias                             Resolves to
-    ================================  =====================
-    ``InterfaceTransport.SLIM``         ``"slimpatterns"``
-    ``InterfaceTransport.NATS``         ``"natspatterns"``
-    ``InterfaceTransport.SLIM_EXTENDED`` ``"slimpatterns"``
-    ================================  =====================
-
-    Call :meth:`all_types` to retrieve the full set of accepted strings.
-    """
-
-    # -- Canonical types (one-to-one with internal transport dispatch) ------
-
-    SLIM_RPC: str = "slimrpc"
-    """SLIM-RPC (protobuf-over-SLIM) transport."""
-
-    SLIM_PATTERNS: str = "slimpatterns"
-    """SLIM pub/sub patterns transport (A2A experimental)."""
-
-    NATS_PATTERNS: str = "natspatterns"
-    """NATS pub/sub patterns transport (A2A experimental)."""
-
-    JSONRPC: str = "jsonrpc"
-    """HTTP JSON-RPC transport (standard A2A)."""
-
-    HTTP: str = "http"
-    """HTTP transport (alias for ``jsonrpc``)."""
-
-    # -- Convenience aliases ------------------------------------------------
-
-    SLIM: str = "slimpatterns"
-    """Alias for :attr:`SLIM_PATTERNS`."""
-
-    NATS: str = "natspatterns"
-    """Alias for :attr:`NATS_PATTERNS`."""
-
-    SLIM_EXTENDED: str = "slimpatterns"
-    """Alias for :attr:`SLIM_PATTERNS` (emphasises extended A2A features)."""
-
-    @classmethod
-    def all_types(cls) -> set[str]:
-        """Return the full set of strings accepted as transport types.
-
-        Includes canonical names **and** aliases, all lower-case.
-        """
-        return set(_TRANSPORT_ALIASES.keys()) | _CANONICAL_TRANSPORTS
-
-    @classmethod
-    def canonical_types(cls) -> set[str]:
-        """Return only the canonical (non-alias) transport types."""
-        return set(_CANONICAL_TRANSPORTS)
-
-
-# Canonical transports (used for dispatch after normalisation)
-_CANONICAL_TRANSPORTS: frozenset[str] = frozenset(
-    {
-        "slimrpc",
-        "slimpatterns",
-        "natspatterns",
-        "jsonrpc",
-        "http",
-    }
-)
-
-# Alias → canonical mapping (lower-case keys)
-_TRANSPORT_ALIASES: dict[str, str] = {
-    "slim": "slimpatterns",
-    "slim-extended": "slimpatterns",
-    "nats": "natspatterns",
-}
-
-
-def _normalize_transport(raw: str) -> str:
-    """Normalise a transport identifier to its canonical form.
-
-    Applies case-folding and alias resolution.  Returns the canonical
-    string or the lower-cased input if it is already canonical.
-    """
-    key = raw.lower()
-    return _TRANSPORT_ALIASES.get(key, key)
+# InterfaceTransport, _CANONICAL_TRANSPORTS, _TRANSPORT_ALIASES, and
+# _normalize_transport are imported at the top of this file from
+# ``agntcy_app_sdk.semantic.a2a.transport_types``.
+__all__ = [
+    "InterfaceTransport",
+    "CardBuilder",
+    "ServeCardPlan",
+    "parse_interface_url",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -505,9 +420,8 @@ class CardBuilder:
                 session_id = f"slimrpc-{i}"
 
                 if override is None:
-                    shared_secret = (
-                        self._shared_secret
-                        or os.environ.get("SLIM_SHARED_SECRET")
+                    shared_secret = self._shared_secret or os.environ.get(
+                        "SLIM_SHARED_SECRET"
                     )
                     if not shared_secret:
                         raise ValueError(
@@ -521,8 +435,7 @@ class CardBuilder:
 
                 if dry_run:
                     detail = (
-                        f"endpoint={parsed['endpoint']}, "
-                        f"identity={parsed['identity']}"
+                        f"endpoint={parsed['endpoint']}, identity={parsed['identity']}"
                     )
                     if override is not None:
                         detail += " (source: override)"
@@ -558,9 +471,8 @@ class CardBuilder:
                 routable_name = str(parsed["topic"])
 
                 if override is None:
-                    shared_secret = (
-                        self._shared_secret
-                        or os.environ.get("SLIM_SHARED_SECRET")
+                    shared_secret = self._shared_secret or os.environ.get(
+                        "SLIM_SHARED_SECRET"
                     )
                     if not shared_secret:
                         raise ValueError(

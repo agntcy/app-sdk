@@ -71,6 +71,16 @@ _TRANSPORT_NAME_MAP: dict[str, tuple[str, str]] = {
     "NATS": ("natspatterns", "nats"),
 }
 
+
+def _default_topic(agent_card: AgentCard) -> str:
+    """Derive a fallback topic from an agent card's name and version.
+
+    Used when :func:`~agntcy_app_sdk.semantic.a2a.utils.get_agent_identifier`
+    returns ``None`` (no matching interface or URL on the card).
+    """
+    return f"{agent_card.name}_{agent_card.version}".replace(" ", "_")
+
+
 # Method name -> typed request model — derived from the SDK's canonical mapping.
 _A2A_METHOD_TO_MODEL: dict[str, type] = dict(JSONRPCApplication.METHOD_TO_MODEL)
 
@@ -123,14 +133,6 @@ class A2AExperimentalServer:
         return "A2A"
 
     @staticmethod
-    def create_agent_topic(agent_card: AgentCard) -> str:
-        """
-        A standard way to create a topic for the agent card metadata.
-        Spaces are replaced with underscores to ensure transport compatibility.
-        """
-        return f"{agent_card.name}_{agent_card.version}".replace(" ", "_")
-
-    @staticmethod
     def create_transport_uri(
         agent_card: AgentCard,
         transport_type: str,
@@ -152,7 +154,7 @@ class A2AExperimentalServer:
             transport_type: Transport type string (``"SLIM"`` or ``"NATS"``).
             topic: Optional pre-computed topic string.  When provided it is
                 used directly instead of being derived from the card via
-                :meth:`create_agent_topic`.
+                :func:`~agntcy_app_sdk.semantic.a2a.utils.get_agent_identifier`.
 
         Returns:
             A URI string like ``"slim://Weather_Agent_1.0.0"``.
@@ -160,6 +162,8 @@ class A2AExperimentalServer:
         Raises:
             ValueError: If ``transport_type`` is not supported.
         """
+        from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
+
         entry = _TRANSPORT_NAME_MAP.get(transport_type)
         if entry is None:
             raise ValueError(
@@ -168,7 +172,7 @@ class A2AExperimentalServer:
             )
         _preferred, scheme = entry
         if topic is None:
-            topic = A2AExperimentalServer.create_agent_topic(agent_card)
+            topic = get_agent_identifier(agent_card) or _default_topic(agent_card)
         return f"{scheme}://{topic}"
 
     @staticmethod
@@ -192,9 +196,9 @@ class A2AExperimentalServer:
             transport_type: Transport type string (``"SLIM"`` or ``"NATS"``).
             topic: Optional pre-computed topic string.  When provided it is
                 used directly instead of being derived from the card via
-                :meth:`create_agent_topic`.  Useful when the server was
-                started with an explicit topic that differs from the
-                auto-derived ``name_version`` format.
+                :func:`~agntcy_app_sdk.semantic.a2a.utils.get_agent_identifier`.
+                Useful when the server was started with an explicit topic
+                that differs from the auto-derived format.
 
         Returns:
             A copy of the card with ``preferred_transport`` and ``url`` set.
@@ -218,6 +222,8 @@ class A2AExperimentalServer:
 
             client = await factory.a2a(config).create(card)
         """
+        from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
+
         entry = _TRANSPORT_NAME_MAP.get(transport_type)
         if entry is None:
             raise ValueError(
@@ -226,7 +232,7 @@ class A2AExperimentalServer:
             )
         preferred, scheme = entry
         if topic is None:
-            topic = A2AExperimentalServer.create_agent_topic(agent_card)
+            topic = get_agent_identifier(agent_card) or _default_topic(agent_card)
         card = agent_card.model_copy()
         card.preferred_transport = preferred
         card.url = f"{scheme}://{topic}"
@@ -492,7 +498,11 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
     ):
         # Auto-derive topic from agent_card if not provided
         if topic is None or topic == "":
-            topic = A2AExperimentalServer.create_agent_topic(server.agent_card)
+            from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
+
+            topic = get_agent_identifier(server.agent_card) or _default_topic(
+                server.agent_card
+            )
 
         super().__init__(server, transport=transport, topic=topic)
         self._protocol = A2AExperimentalServer()

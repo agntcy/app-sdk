@@ -506,7 +506,7 @@ class SLIMTransport(BaseTransport):
         Store the subscription information for a given topic, org, and namespace
         to be used for receive filtering.
         """
-        logger.warning(
+        logger.debug(
             "SLIMTransport.subscribe is a no-op since SLIM does not require explicit subscriptions."
         )
 

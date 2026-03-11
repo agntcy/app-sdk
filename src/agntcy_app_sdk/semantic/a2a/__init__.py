@@ -22,6 +22,7 @@ from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
     A2AExperimentalClient,
 )
 from agntcy_app_sdk.semantic.a2a.client.transports import PatternsClientTransport
+from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
 
 __all__ = [
     "BaseA2AServerHandler",
@@ -38,4 +39,5 @@ __all__ = [
     "NatsTransportConfig",
     "A2AExperimentalClient",
     "PatternsClientTransport",
+    "get_agent_identifier",
 ]

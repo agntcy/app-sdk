@@ -92,11 +92,6 @@ class MCPProtocol:
             ) as mcp_session:
                 yield mcp_session
 
-    def create_agent_topic(self):
-        raise NotImplementedError(
-            "MCPProtocol does not implement create_agent_topic yet."
-        )
-
     @asynccontextmanager
     async def new_streams(self, send_method: Callable, **kwargs):
         """

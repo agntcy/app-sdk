@@ -27,6 +27,7 @@ from agntcy_app_sdk.semantic.a2a.client.transports import (
     PatternsClientTransport,
     _parse_topic_from_url,
 )
+from agntcy_app_sdk.semantic.a2a.transport_types import normalize_transport
 from agntcy_app_sdk.transport.base import BaseTransport
 
 logger = get_logger(__name__)
@@ -108,7 +109,9 @@ class A2AClientFactory:
         self._initialize_tracing_if_enabled()
 
         transport_label, transport_url = self._negotiate(card)
-        transport_label_lower = transport_label.lower()
+        # Resolve aliases (e.g. "slim" -> "slimpatterns") so dispatch
+        # always works against canonical transport names.
+        transport_label_lower = normalize_transport(transport_label)
         topic = _parse_topic_from_url(transport_url)
 
         if transport_label_lower in ("slimpatterns", "natspatterns"):
@@ -214,26 +217,27 @@ class A2AClientFactory:
 
         client_set = self._config.supported_transports or ["JSONRPC"]
 
-        # Build a case-insensitive lookup so that "JSONRPC" matches "jsonrpc"
-        # while preserving the original key for downstream dispatch.
+        # Build a case-insensitive lookup that also resolves aliases
+        # (e.g. "slim" -> "slimpatterns") so that server and client
+        # transport identifiers always match on canonical names.
         server_lower: dict[str, tuple[str, str]] = {
-            k.lower(): (k, v) for k, v in server_set.items()
+            normalize_transport(k): (k, v) for k, v in server_set.items()
         }
-        client_lower: dict[str, str] = {c.lower(): c for c in client_set}
+        client_lower: dict[str, str] = {normalize_transport(c): c for c in client_set}
 
         transport_protocol: str | None = None
         transport_url: str | None = None
 
         if self._config.use_client_preference:
             for cl in client_set:
-                match = server_lower.get(cl.lower())
+                match = server_lower.get(normalize_transport(cl))
                 if match is not None:
                     transport_protocol = match[0]
                     transport_url = match[1]
                     break
         else:
             for sk, url in server_set.items():
-                if sk.lower() in client_lower:
+                if normalize_transport(sk) in client_lower:
                     transport_protocol = sk
                     transport_url = url
                     break
@@ -327,9 +331,22 @@ class A2AClientFactory:
         """Lazily construct the slimrpc channel factory from :class:`SlimRpcConfig`.
 
         If an eager ``slimrpc_channel_factory`` is already set on the config,
-        this is a no-op.  Otherwise, ``setup_slim_client`` is called with the
-        parameters from ``slimrpc_config`` and the resulting channel factory is
-        stored on the config so the upstream ``ClientFactory`` can use it.
+        this is a no-op.  Otherwise, a dedicated SLIM connection is opened
+        for slimrpc using the trailing-slash endpoint trick (mirroring the
+        server-side pattern in ``A2ASRPCServerHandler``) so that slimrpc and
+        slimpatterns can coexist on the same SLIM endpoint without a
+        "client already connected" collision.
+
+        Strategy (matches server-side ``srpc.py``):
+          1. Initialise the global SLIM runtime via
+             ``get_or_create_slim_instance()`` — idempotent if slimpatterns
+             already ran.
+          2. Open a *second* connection using ``endpoint + "/"`` so
+             ``slim_bindings`` treats it as a distinct endpoint key.
+          3. Create a separate App under ``name + "-rpc"`` to isolate
+             RPC traffic from pub/sub.
+          4. Build the ``slimrpc_channel_factory`` from the dedicated
+             app and connection.
         """
         config = self._config
 
@@ -343,23 +360,49 @@ class A2AClientFactory:
                 "nor slimrpc_config is set on ClientConfig."
             )
 
-        from slima2a import setup_slim_client
+        import slim_bindings
+
+        from agntcy_app_sdk.transport.slim.common import get_or_create_slim_instance
         from slima2a.client_transport import (
             slimrpc_channel_factory as _slimrpc_channel_factory,
         )
 
-        _service, slim_local_app, _local_name, conn_id = await setup_slim_client(
-            namespace=config.slimrpc_config.namespace,
-            group=config.slimrpc_config.group,
-            name=config.slimrpc_config.name,
-            slim_url=config.slimrpc_config.slim_url,
-            secret=config.slimrpc_config.secret,
-            log_level=config.slimrpc_config.log_level,
+        rpc_cfg = config.slimrpc_config
+        rpc_name = slim_bindings.Name(rpc_cfg.namespace, rpc_cfg.group, rpc_cfg.name)
+
+        # 1) Ensure the global SLIM runtime is initialised.  If
+        #    slimpatterns already did this, it returns the cached
+        #    globals (no-op).  Otherwise, the first connection is
+        #    opened here.
+        service, _global_app, _global_conn = await get_or_create_slim_instance(
+            local=rpc_name,
+            slim_endpoint=rpc_cfg.slim_url,
+            slim_insecure_client=True,
+            shared_secret=rpc_cfg.secret,
         )
 
-        config.slimrpc_channel_factory = _slimrpc_channel_factory(
-            slim_local_app, conn_id
+        # 2) Open a dedicated connection for slimrpc by appending a
+        #    trailing slash so the SLIM service sees it as a distinct
+        #    endpoint key — avoids "client already connected" when
+        #    slimpatterns already holds a connection to the same host.
+        rpc_endpoint = rpc_cfg.slim_url.rstrip("/") + "/"
+        rpc_client_config = slim_bindings.new_insecure_client_config(rpc_endpoint)
+        conn_id = await service.connect_async(rpc_client_config)
+
+        # 3) Create a separate App under a unique name so that the
+        #    SLIM dataplane does not cross-deliver pub/sub messages to
+        #    the RPC channel (or vice-versa).
+        rpc_app_name = slim_bindings.Name(
+            rpc_cfg.namespace, rpc_cfg.group, rpc_cfg.name + "-rpc"
         )
+        slim_app = service.create_app_with_secret(rpc_app_name, rpc_cfg.secret)
+
+        # Subscribe the new app on the dedicated connection so that
+        # RPC session handshakes can find this participant.
+        await slim_app.subscribe_async(rpc_app_name, conn_id)
+
+        # 4) Build the channel factory from the dedicated app + connection.
+        config.slimrpc_channel_factory = _slimrpc_channel_factory(slim_app, conn_id)
         self._upstream.register("slimrpc", SRPCTransport.create)
         logger.debug("Registered slimrpc transport (deferred from SlimRpcConfig)")
 

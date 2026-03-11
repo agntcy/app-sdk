@@ -17,9 +17,10 @@ from agntcy_app_sdk.semantic.fast_mcp.client_factory import FastMCPClientFactory
 from agntcy_app_sdk.semantic.mcp.client_factory import MCPClientFactory
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
     CardBuilder,
-    InterfaceTransport,
     ServeCardPlan,
 )
+from agntcy_app_sdk.semantic.a2a.transport_types import InterfaceTransport
+from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
 
 __all__ = [
     "AgntcyFactory",
@@ -38,5 +39,6 @@ __all__ = [
     "CardBuilder",
     "InterfaceTransport",
     "ServeCardPlan",
+    "get_agent_identifier",
     "configure_logging",
 ]

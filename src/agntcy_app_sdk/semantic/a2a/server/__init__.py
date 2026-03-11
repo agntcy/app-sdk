@@ -4,7 +4,6 @@
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
     CardBuilder,
-    InterfaceTransport,
     ServeCardPlan,
     parse_interface_url,
 )
@@ -18,6 +17,7 @@ from agntcy_app_sdk.semantic.a2a.server.srpc import (
     A2ASRPCServerHandler,
     SlimRpcConnectionConfig,
 )
+from agntcy_app_sdk.semantic.a2a.transport_types import InterfaceTransport
 
 __all__ = [
     "BaseA2AServerHandler",
