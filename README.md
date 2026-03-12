@@ -554,7 +554,7 @@ await (
 | `.with_factory(factory)`         | Reuse an existing `AgntcyFactory` (auto-created if omitted)              |
 | `.with_shared_secret(secret)`    | Provide SLIM shared secret directly (falls back to `SLIM_SHARED_SECRET`) |
 | `.skip(transport_type)`          | Exclude a specific transport from being started                          |
-| `.override(transport_type, obj)` | Supply a pre-built transport or config for an interface                   |
+| `.override(transport_type, obj)` | Supply a pre-built transport or config for an interface                  |
 | `.dry_run()`                     | Return a `ServeCardPlan` describing what _would_ start                   |
 | `.start(keep_alive=False)`       | Build all containers and start sessions                                  |
 
