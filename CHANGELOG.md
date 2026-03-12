@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4](https://github.com/agntcy/app-sdk/compare/v0.5.3...v0.5.4) (2026-03-12)
+
+
+### Features
+
+* **a2a:** card-driven multi-transport bootstrap and enhanced transport negotiation ([#118](https://github.com/agntcy/app-sdk/issues/118)) ([8231d1c](https://github.com/agntcy/app-sdk/commit/8231d1cd5d1c54692d4a0344ec9d668ea7aea470))
+
 ## [0.5.3](https://github.com/agntcy/app-sdk/compare/v0.5.1...v0.5.3) (2026-03-02)
 
 
