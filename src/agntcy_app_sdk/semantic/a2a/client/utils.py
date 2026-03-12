@@ -6,9 +6,8 @@ from uuid import uuid4
 from typing import Any
 
 from agntcy_app_sdk.semantic.message import Message
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 
-configure_logging()
 logger = get_logger(__name__)
 
 

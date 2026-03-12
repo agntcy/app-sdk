@@ -126,6 +126,7 @@ Manages the lifecycle of multiple agent application containers, providing centra
 - Session lifecycle management (start, stop, individual or batch operations)
 - Resource pooling with configurable session limits
 - Async/await support for non-blocking operations
+- Card-driven multi-transport bootstrap via `add_a2a_card()`
 
 **Note:** Created via `AgntcyFactory.create_app_session()`
 
@@ -157,6 +158,8 @@ session = factory.create_app_session(max_sessions=20)
 ### AppContainer
 
 Encapsulates all components required to run an agent application, including the server instance, transport layer, protocol handler, and optional directory service. An AppContainer manages the complete lifecycle of a single agent service.
+
+**Note:** `AppContainer` instances are typically created automatically by `add_a2a_card()` (card-driven bootstrap) or `ContainerBuilder.build()` (manual builder). Direct instantiation is rarely needed.
 
 **Key Features:**
 
@@ -457,6 +460,50 @@ await session.stop_all_sessions()
 
 ---
 
+### add_a2a_card()
+
+Begin building containers from an A2A AgentCard's `additional_interfaces`. Returns a `CardBuilder` for fluent configuration.
+
+```python
+def add_a2a_card(
+    agent_card: AgentCard,
+    request_handler: DefaultRequestHandler
+) -> CardBuilder
+```
+
+**Parameters:**
+
+| Parameter         | Type                    | Required | Description                                      |
+| ----------------- | ----------------------- | -------- | ------------------------------------------------ |
+| `agent_card`      | `AgentCard`             | Yes      | Agent card with `additional_interfaces` declared |
+| `request_handler` | `DefaultRequestHandler` | Yes      | Request handler for A2A message processing       |
+
+**Returns:** `CardBuilder` instance for fluent configuration
+
+**Example:**
+
+```python
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
+from a2a.types import AgentCard, AgentInterface
+
+agent_card = AgentCard(
+    ...,
+    additional_interfaces=[
+        AgentInterface(transport=InterfaceTransport.SLIM_PATTERNS, url="slim://host:46357/topic"),
+        AgentInterface(transport=InterfaceTransport.NATS_PATTERNS, url="nats://host:4222/topic"),
+    ],
+)
+
+session = factory.create_app_session(max_sessions=10)
+await (
+    session.add_a2a_card(agent_card, request_handler)
+    .with_factory(factory)
+    .start(keep_alive=True)
+)
+```
+
+---
+
 ## AppContainer Methods Reference
 
 ### set_transport()
@@ -626,6 +673,179 @@ await container.loop_forever()  # Then keep alive
 ---
 
 ## AgntcyFactory Methods Reference
+
+### CardBuilder
+
+Fluent builder that expands an `AgentCard`'s `additional_interfaces` into containers. Constructed via `AppSession.add_a2a_card()`.
+
+The builder reads `agent_card.additional_interfaces`, creates transport/config objects for each, and registers `AppContainer` instances on the session.
+
+#### Methods
+
+##### with_factory()
+
+Use an existing `AgntcyFactory` instead of auto-creating one.
+
+```python
+def with_factory(factory: AgntcyFactory) -> CardBuilder
+```
+
+**Parameters:**
+
+| Parameter | Type            | Required | Description               |
+| --------- | --------------- | -------- | ------------------------- |
+| `factory` | `AgntcyFactory` | Yes      | Factory instance to reuse |
+
+**Returns:** `CardBuilder` (for chaining)
+
+---
+
+##### skip()
+
+Exclude an interface type from being started.
+
+```python
+def skip(transport_type: str) -> CardBuilder
+```
+
+**Parameters:**
+
+| Parameter        | Type  | Required | Description                                        |
+| ---------------- | ----- | -------- | -------------------------------------------------- |
+| `transport_type` | `str` | Yes      | Transport to skip (e.g., `"jsonrpc"`, `"slimrpc"`) |
+
+**Returns:** `CardBuilder` (for chaining)
+
+---
+
+##### override()
+
+Provide a pre-built config or transport for a specific interface type.
+
+```python
+def override(transport_type: str, target: object) -> CardBuilder
+```
+
+**Parameters:**
+
+| Parameter        | Type     | Required | Description                                          |
+| ---------------- | -------- | -------- | ---------------------------------------------------- |
+| `transport_type` | `str`    | Yes      | Transport to override                                |
+| `target`         | `object` | Yes      | Pre-built transport or config for the interface type |
+
+**Override targets by transport:**
+
+- `slimrpc`: pass a pre-built `A2ASlimRpcServerConfig`
+- `slimpatterns` / `natspatterns`: pass a pre-built `BaseTransport`
+- `jsonrpc` / `http`: pass a pre-built `A2AStarletteApplication`
+
+**Returns:** `CardBuilder` (for chaining)
+
+---
+
+##### dry_run()
+
+Return a plan describing what would be started, without actually starting anything.
+
+```python
+async def dry_run() -> ServeCardPlan
+```
+
+**Returns:** `ServeCardPlan` instance
+
+**Example:**
+
+```python
+plan = await (
+    session.add_a2a_card(agent_card, handler)
+    .with_factory(factory)
+    .dry_run()
+)
+print(plan)
+# serve_card plan:
+#   [slim-0] slimpatterns -> endpoint=http://localhost:46357, topic=my_topic, name=my_topic
+#   [nats-1] natspatterns -> endpoint=nats://localhost:4222, topic=my_topic
+```
+
+---
+
+##### start()
+
+Build all containers and start sessions.
+
+```python
+async def start(*, keep_alive: bool = False) -> None
+```
+
+**Parameters:**
+
+| Parameter    | Type   | Default | Description                                     |
+| ------------ | ------ | ------- | ----------------------------------------------- |
+| `keep_alive` | `bool` | `False` | Keep all sessions running until shutdown signal |
+
+---
+
+### InterfaceTransport
+
+Valid transport identifiers for `AgentInterface.transport`. Use these constants instead of hard-coded strings when building `AgentCard.additional_interfaces`.
+
+```python
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
+```
+
+**Canonical Types:**
+
+| Constant                           | Value            | Description                             |
+| ---------------------------------- | ---------------- | --------------------------------------- |
+| `InterfaceTransport.SLIM_RPC`      | `"slimrpc"`      | SLIM-RPC (protobuf-over-SLIM) transport |
+| `InterfaceTransport.SLIM_PATTERNS` | `"slimpatterns"` | SLIM pub/sub patterns transport         |
+| `InterfaceTransport.NATS_PATTERNS` | `"natspatterns"` | NATS pub/sub patterns transport         |
+| `InterfaceTransport.JSONRPC`       | `"jsonrpc"`      | HTTP JSON-RPC transport (standard A2A)  |
+| `InterfaceTransport.HTTP`          | `"http"`         | Alias for `jsonrpc`                     |
+
+**Convenience Aliases:**
+
+| Alias                              | Resolves To      |
+| ---------------------------------- | ---------------- |
+| `InterfaceTransport.SLIM`          | `"slimpatterns"` |
+| `InterfaceTransport.NATS`          | `"natspatterns"` |
+| `InterfaceTransport.SLIM_EXTENDED` | `"slimpatterns"` |
+
+**Class Methods:**
+
+- `InterfaceTransport.all_types()` — Returns the full set of accepted strings (canonical + aliases)
+- `InterfaceTransport.canonical_types()` — Returns only canonical (non-alias) transport types
+
+---
+
+### ServeCardPlan
+
+Describes what `CardBuilder.start()` _would_ start (dry-run output).
+
+```python
+@dataclass
+class ServeCardPlan:
+    containers: list[dict[str, str]]
+```
+
+Each entry in `containers` is a dict with the following keys:
+
+| Key          | Type  | Description                                           |
+| ------------ | ----- | ----------------------------------------------------- |
+| `session_id` | `str` | The session ID that would be assigned                 |
+| `transport`  | `str` | The canonical transport type (e.g., `"slimpatterns"`) |
+| `detail`     | `str` | Human-readable config summary (endpoint, topic, etc.) |
+
+**Example output:**
+
+```
+serve_card plan:
+  [slim-0] slimpatterns -> endpoint=http://localhost:46357, topic=default/default/My_Agent_1.0.0, name=default/default/My_Agent_1.0.0
+  [nats-1] natspatterns -> endpoint=nats://localhost:4222, topic=default/default/My_Agent_1.0.0
+  [http-2] jsonrpc -> host=0.0.0.0, port=9000
+```
+
+---
 
 ### registered_protocols()
 
@@ -880,6 +1100,60 @@ class CustomTransport(BaseTransport):
 
 ## Usage Examples
 
+### Card-Driven Multi-Transport Server
+
+```python
+import asyncio
+import os
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
+
+os.environ["SLIM_SHARED_SECRET"] = "my-secret-at-least-32-chars-long-xxxxx"
+
+agent_card = AgentCard(
+    name="My Agent",
+    description="Multi-transport agent",
+    url="http://localhost:9000",
+    version="1.0.0",
+    defaultInputModes=["text"],
+    defaultOutputModes=["text"],
+    capabilities=AgentCapabilities(streaming=True),
+    skills=[AgentSkill(id="hello", name="Hello", description="Says hello",
+                       tags=["hello"], examples=["hi"])],
+    preferredTransport=InterfaceTransport.SLIM_PATTERNS,
+    additional_interfaces=[
+        AgentInterface(transport=InterfaceTransport.SLIM_PATTERNS,
+                       url="slim://localhost:46357/default/default/My_Agent_1.0.0"),
+        AgentInterface(transport=InterfaceTransport.NATS_PATTERNS,
+                       url="nats://localhost:4222/default/default/My_Agent_1.0.0"),
+        AgentInterface(transport=InterfaceTransport.JSONRPC,
+                       url="http://0.0.0.0:9000"),
+    ],
+    supportsAuthenticatedExtendedCard=False,
+)
+
+async def main():
+    factory = AgntcyFactory()
+    handler = DefaultRequestHandler(
+        agent_executor=MyAgentExecutor(),
+        task_store=InMemoryTaskStore(),
+    )
+
+    session = factory.create_app_session(max_sessions=10)
+    await (
+        session.add_a2a_card(agent_card, handler)
+        .with_factory(factory)
+        .start(keep_alive=True)
+    )
+
+asyncio.run(main())
+```
+
+---
+
 ### Basic Client Creation
 
 ```python
@@ -904,7 +1178,7 @@ response = client.send_message("Hello, agent!")
 slim_transport = factory.create_transport(
     transport="SLIM",
     endpoint="http://localhost:46357",
-    name=f"org/namespace/{A2AExperimentalServer.create_agent_topic(A2A_CARD)}"
+    name="org/namespace/my_agent_topic"
 )
 
 # Create NATS transport
@@ -972,7 +1246,7 @@ async def main():
     transport = factory.create_transport(
         transport="SLIM",
         endpoint="http://localhost:46357",
-        name=f"org/namespace/{A2AExperimentalServer.create_agent_topic(A2A_CARD)}"
+        name="org/namespace/my_agent_topic"
     )
 
     # Create app container
@@ -1015,7 +1289,7 @@ async def main():
     slim_transport = factory.create_transport(
         transport="SLIM",
         endpoint="http://localhost:46357",
-        name=f"org/namespace/{A2AExperimentalServer.create_agent_topic(A2A_CARD)}"
+        name="org/namespace/my_agent_topic"
     )
 
     # Create multiple app containers

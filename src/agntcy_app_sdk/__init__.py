@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from agntcy_app_sdk.app_sessions import AppContainer, AppSession
+from agntcy_app_sdk.common.logging_config import configure_logging
 from agntcy_app_sdk.directory.base import BaseAgentDirectory, RecordVisibility
 from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -14,6 +15,12 @@ from agntcy_app_sdk.semantic.a2a.client.config import (
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from agntcy_app_sdk.semantic.fast_mcp.client_factory import FastMCPClientFactory
 from agntcy_app_sdk.semantic.mcp.client_factory import MCPClientFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
+    CardBuilder,
+    ServeCardPlan,
+)
+from agntcy_app_sdk.semantic.a2a.transport_types import InterfaceTransport
+from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
 
 __all__ = [
     "AgntcyFactory",
@@ -29,4 +36,9 @@ __all__ = [
     "AgentDirectory",
     "BaseAgentDirectory",
     "RecordVisibility",
+    "CardBuilder",
+    "InterfaceTransport",
+    "ServeCardPlan",
+    "get_agent_identifier",
+    "configure_logging",
 ]

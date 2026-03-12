@@ -7,7 +7,7 @@ import os
 from typing import Any, Dict, Protocol, Type
 
 from agntcy_app_sdk.app_sessions import AppSession
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
 from agntcy_app_sdk.semantic.client_factory_base import BaseClientFactory
@@ -22,7 +22,6 @@ from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.fast_mcp.client_factory import FastMCPClientFactory
 from agntcy_app_sdk.semantic.mcp.client_factory import MCPClientFactory
 
-configure_logging()
 logger = get_logger(__name__)
 
 
@@ -108,14 +107,12 @@ class AgntcyFactory:
         self.name = name
         self.enable_tracing = enable_tracing
 
-        # Configure logging
+        # Validate and store log level
         self.log_level = log_level
-        try:
-            logger.setLevel(log_level.upper())
-        except ValueError:
-            logger.error(f"Invalid log level '{log_level}'. Defaulting to INFO.")
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if log_level.upper() not in valid_levels:
+            logger.error("Invalid log level, defaulting to INFO", requested=log_level)
             self.log_level = "INFO"
-            logger.setLevel(self.log_level)
 
         self._transport_registry: Dict[str, Type[BaseTransport]] = {}
         self._protocol_registry: Dict[str, type] = {}
@@ -142,7 +139,7 @@ class AgntcyFactory:
             api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
         )
 
-        logger.info(f"Tracing enabled for {self.name} via ioa_observe.sdk")
+        logger.debug(f"Tracing enabled for {self.name} via ioa_observe.sdk")
 
     # ------------------------------------------------------------------
     # Introspection

@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.directory.base import BaseAgentDirectory
 from agntcy_app_sdk.semantic.base import ServerHandler
 from agntcy_app_sdk.transport.base import BaseTransport
+
+if TYPE_CHECKING:
+    from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import CardBuilder
 
 logger = get_logger(__name__)
 
@@ -70,8 +73,8 @@ class ContainerBuilder:
         self._topic: Optional[str] = None
         self._directory: Optional[BaseAgentDirectory] = None
         self._session_id: Optional[str] = None
-        self._host: str = "0.0.0.0"
-        self._port: int = 9000
+        self._host: Optional[str] = None
+        self._port: Optional[int] = None
 
     def with_transport(self, transport: BaseTransport) -> ContainerBuilder:
         self._transport = transport
@@ -113,6 +116,12 @@ class ContainerBuilder:
         )
 
         if handler_class is A2AExperimentalServerHandler and self._transport is None:
+            if self._host is None or self._port is None:
+                raise ValueError(
+                    "host and port are required when serving A2A over HTTP "
+                    "(no transport). Use .with_host() and .with_port() on "
+                    "the builder."
+                )
             handler = A2AJsonRpcServerHandler(
                 self._target,
                 host=self._host,
@@ -197,11 +206,11 @@ class AppContainer:
             if record is not None:
                 cid = await self._directory.push_agent_record(record)
                 self._directory_cid = cid
-                logger.info("Agent record pushed to directory with CID: %s", cid)
+                logger.debug("Agent record pushed to directory with CID: %s", cid)
 
         self.is_running = True
 
-        logger.info("App session started.")
+        logger.debug("App session started.")
 
         if keep_alive:
             await self.loop_forever()
@@ -222,12 +231,12 @@ class AppContainer:
         except NotImplementedError:
             logger.warning("Signal handlers not supported in this environment.")
 
-        logger.info("App started. Waiting for shutdown signal (Ctrl+C)...")
+        logger.debug("App started. Waiting for shutdown signal (Ctrl+C)...")
 
         try:
             await self._shutdown_event.wait()
         except asyncio.CancelledError:
-            logger.info("Event loop cancelled; shutting down gracefully...")
+            logger.debug("Event loop cancelled; shutting down gracefully...")
         finally:
             await self.stop()
 
@@ -241,12 +250,12 @@ class AppContainer:
 
     async def stop(self):
         """Stop all components of the app container."""
-        logger.info("Stopping app session...")
+        logger.debug("Stopping app session...")
         await self.handler.teardown()
         if self._directory:
             await self._directory.teardown()
         self.is_running = False
-        logger.info("App session stopped. Exiting event loop.")
+        logger.debug("App session stopped. Exiting event loop.")
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +276,24 @@ class AppSession:
     def add(self, target: Any) -> ContainerBuilder:
         """Begin building an AppContainer for the given target (server or config)."""
         return ContainerBuilder(self, target)
+
+    def add_a2a_card(self, agent_card: Any, request_handler: Any) -> CardBuilder:
+        """Begin building containers from an A2A AgentCard's interfaces.
+
+        Returns a :class:`~agntcy_app_sdk.semantic.a2a.server.card_bootstrap.CardBuilder`
+        for fluent configuration.
+
+        Example::
+
+            await (
+                session.add_a2a_card(agent_card, handler)
+                .with_factory(factory)
+                .start(keep_alive=True)
+            )
+        """
+        from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import CardBuilder
+
+        return CardBuilder(self, agent_card, request_handler)
 
     # -- Internal registration (called by ContainerBuilder.build()) ---------
 
@@ -318,12 +345,22 @@ class AppSession:
             await container.stop()
 
     async def start_all_sessions(self, keep_alive: bool = False):
-        """Start all app containers."""
+        """Start all app containers.
+
+        Each container's ``setup()`` is called sequentially.  When
+        *keep_alive* is ``True``, **all** containers are started first and
+        then the session blocks on a shutdown signal — otherwise only the
+        first container would block and the rest would never start.
+        """
         for container in self.app_containers.values():
             if not container.is_running:
-                await container.run(
-                    keep_alive=keep_alive,
-                )
+                await container.run(keep_alive=False)
+
+        if keep_alive and self.app_containers:
+            # Pick any running container to wait on — they all share the
+            # same event loop, so blocking on one keeps everything alive.
+            first = next(iter(self.app_containers.values()))
+            await first.loop_forever()
 
     async def stop_all_sessions(self):
         """Stop all running app containers."""

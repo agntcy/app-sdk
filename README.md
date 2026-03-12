@@ -104,13 +104,14 @@ pip install -e app-sdk
 
 The Application SDK provides a single factory interface that abstracts over multiple semantic protocols and transports, so you can switch between them without rewriting your agent logic. Full usage guides: **[A2A](docs/A2A_USAGE_GUIDE.md)** · **[MCP / FastMCP](docs/MCP_USAGE_GUIDE.md)**
 
-|                    | Protocol | Transport                     | Client Type             | Patterns                                  |
-| ------------------ | -------- | ----------------------------- | ----------------------- | ----------------------------------------- |
-| **Sections 1 & 2** | A2A      | SlimRPC                       | `a2a.client.Client`     | Point-to-point                            |
-| **Section 3**      | A2A      | SLIM patterns / NATS patterns | `A2AExperimentalClient` | Point-to-point, broadcast                 |
-| **Section 4**      | A2A      | SLIM patterns                 | `A2AExperimentalClient` | Group chat                                |
-| **Section 5**      | MCP      | SLIM / NATS                   | `MCPClientSession`      | Point-to-point                            |
-|                    | FastMCP  | SLIM / NATS                   | `FastMCPClient`         | [Point-to-point](docs/MCP_USAGE_GUIDE.md) |
+|               | Protocol | Transport                     | Client Type             | Patterns                                  |
+| ------------- | -------- | ----------------------------- | ----------------------- | ----------------------------------------- |
+| **Section 1** | A2A      | Card-driven (multi-transport) | —                       | All (via `add_a2a_card()`)                |
+| **Section 2** | A2A      | SlimRPC                       | `a2a.client.Client`     | Point-to-point                            |
+| **Section 3** | A2A      | SLIM patterns / NATS patterns | `A2AExperimentalClient` | Point-to-point, broadcast                 |
+| **Section 4** | A2A      | SLIM patterns                 | `A2AExperimentalClient` | Group chat                                |
+| **Section 5** | MCP      | SLIM / NATS                   | `MCPClientSession`      | Point-to-point                            |
+|               | FastMCP  | SLIM / NATS                   | `FastMCPClient`         | [Point-to-point](docs/MCP_USAGE_GUIDE.md) |
 
 **SlimRPC** is the native A2A-over-SLIM RPC transport — simplest setup for 1:1 request/response. **SLIM patterns** and **NATS patterns** are experimental transports that unlock pub/sub fan-out and moderated group chat via the same `AgntcyFactory` interface. The factory negotiates the best transport automatically from the agent card.
 
@@ -120,7 +121,44 @@ The Application SDK provides a single factory interface that abstracts over mult
 
 ## 1. Serve an A2A Agent
 
-Stand up an A2A agent over **SlimRPC** (native RPC transport) in ~10 lines:
+Declare your agent's transports in the card and serve over all of them with a single call:
+
+```python
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
+
+# Declare transports in the card — this is the single source of truth
+agent_card = AgentCard(
+    name="My Agent", url="", version="1.0.0",
+    defaultInputModes=["text"], defaultOutputModes=["text"],
+    capabilities=AgentCapabilities(streaming=True), skills=[...],
+    preferredTransport=InterfaceTransport.SLIM_PATTERNS,
+    additional_interfaces=[
+        AgentInterface(transport=InterfaceTransport.SLIM_RPC,
+                       url="slim://localhost:46357/default/default/My_Agent_rpc"),
+        AgentInterface(transport=InterfaceTransport.SLIM_PATTERNS,
+                       url="slim://localhost:46357/default/default/My_Agent_slimpatterns"),
+        AgentInterface(transport=InterfaceTransport.NATS_PATTERNS,
+                       url="nats://localhost:4222/default/default/My_Agent_natspatterns"),
+    ],
+    description="My agent description",
+)
+
+# One call does it all — add_a2a_card() reads the card's interfaces
+factory = AgntcyFactory()
+session = factory.create_app_session(max_sessions=10)
+await (
+    session.add_a2a_card(agent_card, DefaultRequestHandler(
+        agent_executor=MyAgentExecutor(), task_store=InMemoryTaskStore()))
+    .start(keep_alive=True)
+)
+```
+
+<details>
+<summary><b>Alternative: Serve a single transport manually (SlimRPC)</b></summary>
 
 ```python
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -128,7 +166,6 @@ from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig, Slim
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 
-# Bundle agent card, handler, and SLIM connection into one config
 config = A2ASlimRpcServerConfig(
     agent_card=agent_card,
     request_handler=DefaultRequestHandler(
@@ -142,18 +179,67 @@ config = A2ASlimRpcServerConfig(
     ),
 )
 
-# Serve via fluent session API — no transport/topic needed
 factory = AgntcyFactory()
 session = factory.create_app_session(max_sessions=1)
 session.add(config).with_session_id("default").build()
 await session.start_all_sessions(keep_alive=True)
 ```
 
+</details>
+
 📖 [More serving options →](docs/A2A_USAGE_GUIDE.md)
 
 ## 2. Connect to an Agent
 
-Send a message and stream the response using **SlimRPC** (native RPC transport):
+Configure all transports once, then let the factory negotiate the best one from the agent card:
+
+```python
+from a2a.types import Message, Part, Role, TextPart
+from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+from agntcy_app_sdk.semantic.a2a.client.config import (
+    ClientConfig, SlimRpcConfig, SlimTransportConfig, NatsTransportConfig,
+)
+
+# Multi-transport config — factory picks the right one from the agent card
+config = ClientConfig(
+    slimrpc_config=SlimRpcConfig(
+        namespace="default",
+        group="default",
+        name="my_client",
+        slim_url="http://localhost:46357",
+        secret="my-shared-secret-at-least-32-characters-long",
+    ),
+    slim_config=SlimTransportConfig(
+        endpoint="http://localhost:46357",
+        name="default/default/my_client",
+        shared_secret_identity="my-shared-secret-at-least-32-characters-long",
+    ),
+    nats_config=NatsTransportConfig(
+        endpoint="nats://localhost:4222",
+    ),
+)
+
+# Create the factory — supports slimrpc, slimpatterns, natspatterns, and JSONRPC
+a2a = A2AClientFactory(config)
+
+# Create a client — factory reads the card's preferred_transport and negotiates
+client = await a2a.create(agent_card)
+
+# Send a message and stream the response
+request = Message(
+    role=Role.user,
+    message_id="msg-001",
+    parts=[Part(root=TextPart(text="Hello, agent!"))],
+)
+async for event in client.send_message(request=request):
+    if isinstance(event, Message):
+        for part in event.parts:
+            if isinstance(part.root, TextPart):
+                print(part.root.text)
+```
+
+<details>
+<summary><b>Alternative: Connect with a single transport (SlimRPC only)</b></summary>
 
 ```python
 from a2a.client import ClientFactory, minimal_agent_card
@@ -181,19 +267,9 @@ client_factory.register("slimrpc", SRPCTransport.create)
 
 card = minimal_agent_card("default/default/my_agent", ["slimrpc"])
 client = client_factory.create(card=card)
-
-# Send a message
-request = Message(
-    role=Role.user,
-    message_id="msg-001",
-    parts=[Part(root=TextPart(text="Hello, agent!"))],
-)
-async for event in client.send_message(request=request):
-    if isinstance(event, Message):
-        for part in event.parts:
-            if isinstance(part.root, TextPart):
-                print(part.root.text)
 ```
+
+</details>
 
 📖 [Complete A2A guide →](docs/A2A_USAGE_GUIDE.md)
 
@@ -212,6 +288,7 @@ from a2a.types import (
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig, SlimTransportConfig
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 factory = AgntcyFactory()
 
@@ -231,7 +308,7 @@ card = AgentCard(
     default_output_modes=["text"],
     capabilities=AgentCapabilities(),
     skills=[],
-    preferred_transport="slimpatterns",
+    preferred_transport=InterfaceTransport.SLIM_PATTERNS,
     description="Agent 1",
 )
 
@@ -282,7 +359,7 @@ async for resp in client.broadcast_message_streaming(
 
 Start a moderated multi-party conversation between agents. Each participant processes the message and forwards it to the next. Group chat uses the **SLIM patterns** transport — the same `A2AExperimentalClient` from above.
 
-> **Note:** Group chat currently requires SLIM transport. NATS support is not yet available.
+> **Note:** Group chat currently requires SLIM transport.
 
 <details>
 <summary><b>Group chat example (SLIM patterns)</b></summary>
@@ -295,6 +372,7 @@ from a2a.types import (
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig, SlimTransportConfig
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 factory = AgntcyFactory()
 
@@ -313,7 +391,7 @@ card = AgentCard(
     default_output_modes=["text"],
     capabilities=AgentCapabilities(),
     skills=[],
-    preferred_transport="slimpatterns",
+    preferred_transport=InterfaceTransport.SLIM_PATTERNS,
     description="Agent A",
 )
 
@@ -446,9 +524,43 @@ The SDK negotiates the best transport automatically by intersecting the server's
 └──────────────┘
 ```
 
-### Fluent Session Builder
+### Card-Driven Bootstrap (Recommended)
 
-The `AppSession` builder chains configuration into a single readable expression. The SDK auto-detects the handler type from the target you pass to `add()`:
+`add_a2a_card()` reads the agent card's `additional_interfaces` and creates all transports automatically — no manual builder chains required:
+
+```python
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
+
+agent_card = AgentCard(
+    ...,
+    additional_interfaces=[
+        AgentInterface(transport=InterfaceTransport.SLIM_PATTERNS, url="slim://host:46357/topic"),
+        AgentInterface(transport=InterfaceTransport.NATS_PATTERNS, url="nats://host:4222/topic"),
+        AgentInterface(transport=InterfaceTransport.JSONRPC, url="http://0.0.0.0:9000"),
+    ],
+)
+
+session = factory.create_app_session(max_sessions=10)
+await (
+    session.add_a2a_card(agent_card, request_handler)
+    .with_factory(factory)
+    .skip("jsonrpc")              # optionally skip a transport
+    .start(keep_alive=True)
+)
+```
+
+| Method                           | Description                                                              |
+| -------------------------------- | ------------------------------------------------------------------------ |
+| `.with_factory(factory)`         | Reuse an existing `AgntcyFactory` (auto-created if omitted)              |
+| `.with_shared_secret(secret)`    | Provide SLIM shared secret directly (falls back to `SLIM_SHARED_SECRET`) |
+| `.skip(transport_type)`          | Exclude a specific transport from being started                          |
+| `.override(transport_type, obj)` | Supply a pre-built transport or config for an interface                  |
+| `.dry_run()`                     | Return a `ServeCardPlan` describing what _would_ start                   |
+| `.start(keep_alive=False)`       | Build all containers and start sessions                                  |
+
+### Manual Session Builder
+
+The `AppSession` builder chains configuration into a single readable expression for fine-grained single-transport control. The SDK auto-detects the handler type from the target you pass to `add()`:
 
 | Target Type                  | Handler Created                | Transport Required? |
 | ---------------------------- | ------------------------------ | :-----------------: |

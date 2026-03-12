@@ -4,7 +4,7 @@
 import asyncio
 from typing import Dict
 import datetime
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 import slim_bindings
 from slim_bindings import (
     Name,
@@ -13,7 +13,6 @@ from slim_bindings import (
     SessionType,
 )
 
-configure_logging()
 logger = get_logger(__name__)
 
 
@@ -82,7 +81,7 @@ class SessionManager:
         # use the same lock for session creation and lookup
         async with self._lock:
             if session_key in self._sessions:
-                logger.info(f"Reusing existing group broadcast session: {session_key}")
+                logger.debug(f"Reusing existing group broadcast session: {session_key}")
                 return session_key, self._sessions[session_key]
 
             logger.debug(f"Creating new group broadcast session: {session_key}")
@@ -143,7 +142,7 @@ class SessionManager:
             delete_session_handle = await self._slim.delete_session_async(session)
             await delete_session_handle.wait_async()
 
-            logger.info(f"Session {session_id} deleted successfully.")
+            logger.debug(f"Session {session_id} deleted successfully.")
         except asyncio.TimeoutError:
             logger.warning(
                 f"Timed out while trying to delete session {session_id}. "
@@ -165,7 +164,7 @@ class SessionManager:
 
             if session_key:
                 del self._sessions[session_key]
-                logger.info(f"Locally cleaned up session: {session_id}")
+                logger.debug(f"Locally cleaned up session: {session_id}")
             else:
                 logger.warning(
                     f"Session {session_id} cannot be removed from "

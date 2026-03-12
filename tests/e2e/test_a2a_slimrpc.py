@@ -15,7 +15,9 @@ from slima2a.client_transport import (
     slimrpc_channel_factory,
 )
 
-from agntcy_app_sdk.semantic.a2a import A2AClientConfig, A2AClientFactory
+from agntcy_app_sdk.semantic.a2a import ClientConfig as A2AClientConfig
+from agntcy_app_sdk.semantic.a2a import A2AClientFactory
+from agntcy_app_sdk.semantic.a2a.client.config import SlimRpcConfig
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
@@ -160,3 +162,69 @@ async def test_client_factory(run_a2a_slimrpc_server):
     print(f"Agent responded: {output}")
 
     print("=== test_client_factory passed for SlimRPC ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_client_factory_deferred — A2AClientFactory with deferred SlimRpcConfig
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_client_factory_deferred(run_a2a_slimrpc_server):
+    """Point-to-point A2A request using deferred SlimRpcConfig.
+
+    Unlike test_client_factory (which pre-builds the channel factory eagerly),
+    this test passes only a SlimRpcConfig and lets the factory call
+    setup_slim_client lazily during create().
+    """
+    endpoint = TRANSPORT_CONFIGS["SLIM"]
+    agent_name = "default/default/Hello_World_Agent_1.0.0"
+
+    print(f"\n--- test_client_factory_deferred | SlimRPC | {endpoint} ---")
+
+    # 1. Spawn SlimRPC server
+    run_a2a_slimrpc_server(endpoint, name=agent_name)
+    await asyncio.sleep(2)
+
+    # 2. Build SDK ClientConfig with deferred SlimRpcConfig — no manual
+    #    setup_slim_client call needed.
+    config = A2AClientConfig(
+        slimrpc_config=SlimRpcConfig(
+            namespace="default",
+            group="default",
+            name="test_client_factory_deferred",
+            slim_url=endpoint,
+        ),
+    )
+
+    # Verify supported_transports was auto-derived
+    assert "slimrpc" in config.supported_transports, (
+        f"Expected 'slimrpc' in supported_transports, got: {config.supported_transports}"
+    )
+
+    # 3. Create client via A2AClientFactory — factory handles async setup
+    factory = A2AClientFactory(config)
+    agent_card = minimal_agent_card(agent_name, ["slimrpc"])
+    client = await factory.create(card=agent_card)
+
+    # 4. Send message and validate response
+    request = _make_send_message()
+    output = ""
+    async for event in client.send_message(request=request):
+        if isinstance(event, Message):
+            for part in event.parts:
+                if isinstance(part.root, TextPart):
+                    output += part.root.text
+        else:
+            task, update = event
+            if task.status.state == "completed" and task.artifacts:
+                for artifact in task.artifacts:
+                    for part in artifact.parts:
+                        if isinstance(part.root, TextPart):
+                            output += part.root.text
+
+    assert output, "Response was empty"
+    assert "Hello from" in output, f"Expected 'Hello from' in response, got: {output}"
+    print(f"Agent responded: {output}")
+
+    print("=== test_client_factory_deferred passed for SlimRPC ===\n")

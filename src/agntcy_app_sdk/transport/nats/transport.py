@@ -10,12 +10,11 @@ from nats.aio.client import Client as NATS
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.transport.base import BaseTransport
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
 from typing import Callable, List, Optional, Any, Awaitable, AsyncIterator
 from uuid import uuid4
 
-configure_logging()
 logger = get_logger(__name__)
 
 """
@@ -45,6 +44,7 @@ class NatsTransport(BaseTransport):
         self.endpoint = endpoint
         self._callback = None
         self.subscriptions = []
+        self._ephemeral_subs: dict[str, Any] = {}
 
         # connection options
         self.connect_timeout = kwargs.get("connect_timeout", 5)
@@ -53,7 +53,7 @@ class NatsTransport(BaseTransport):
         self.drain_timeout = kwargs.get("drain_timeout", 2)
 
         if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            logger.info("NatsTransport initialized with tracing enabled")
+            logger.debug("NatsTransport initialized with tracing enabled")
             from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
 
             NATSInstrumentor().instrument()
@@ -161,6 +161,11 @@ class NatsTransport(BaseTransport):
     ) -> AsyncIterator[Message]:
         """
         Publish a message and yield responses from multiple subscribers as they arrive.
+
+        For a single recipient the message is published directly (no invite
+        protocol overhead).  For multiple recipients an ephemeral invite
+        protocol is used so that each recipient only needs to be subscribed
+        to its own unique name – no shared broadcast topic is required.
         """
 
         if self._nc is None:
@@ -173,8 +178,66 @@ class NatsTransport(BaseTransport):
                 "recipients list must be provided for NATS COLLECT_ALL mode."
             )
 
-        publish_topic = self.santize_topic(topic)
+        # -----------------------------------------------------------------
+        # Single-recipient: skip invite protocol (backward compat)
+        # -----------------------------------------------------------------
+        if len(recipients) == 1:
+            publish_topic = self.santize_topic(topic)
+            reply_topic = uuid4().hex
+            message.reply_to = reply_topic
+
+            if is_identity_auth_enabled():
+                try:
+                    access_token = IdentityServiceSdk().access_token()
+                    if access_token:
+                        message.headers["Authorization"] = f"Bearer {access_token}"
+                except Exception as e:
+                    logger.error(f"Failed to get access token for agent: {e}")
+
+            logger.debug(
+                f"Publishing to: {publish_topic} and receiving from: {reply_topic}"
+            )
+
+            response_queue: asyncio.Queue = asyncio.Queue()
+            effective_limit = (
+                message_limit if message_limit is not None else float("inf")
+            )
+
+            async def _single_response_handler(nats_msg) -> None:
+                msg = Message.deserialize(nats_msg.data)
+                await response_queue.put(msg)
+
+            sub = None
+            try:
+                sub = await self._nc.subscribe(reply_topic, cb=_single_response_handler)
+                await self.publish(topic, message)
+
+                received = 0
+                while received < effective_limit:
+                    try:
+                        msg = await asyncio.wait_for(
+                            response_queue.get(), timeout=timeout
+                        )
+                        received += 1
+                        logger.debug(f"Received {received} response")
+                        yield msg
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"Timeout reached after {timeout}s; "
+                            f"collected {received} response(s)"
+                        )
+                        break
+            finally:
+                if sub is not None:
+                    await sub.unsubscribe()
+            return
+
+        # -----------------------------------------------------------------
+        # Multi-recipient: invite protocol
+        # -----------------------------------------------------------------
+        ephemeral_topic = uuid4().hex
         reply_topic = uuid4().hex
+        ack_topic = uuid4().hex
         message.reply_to = reply_topic
 
         if is_identity_auth_enabled():
@@ -185,39 +248,89 @@ class NatsTransport(BaseTransport):
             except Exception as e:
                 logger.error(f"Failed to get access token for agent: {e}")
 
-        logger.info(f"Publishing to: {publish_topic} and receiving from: {reply_topic}")
+        logger.debug(
+            f"Invite protocol: ephemeral={ephemeral_topic}, "
+            f"reply={reply_topic}, ack={ack_topic}"
+        )
 
         response_queue: asyncio.Queue = asyncio.Queue()
-        if message_limit is None:
-            message_limit = float("inf")
+        ack_queue: asyncio.Queue = asyncio.Queue()
 
         async def _response_handler(nats_msg) -> None:
             msg = Message.deserialize(nats_msg.data)
             await response_queue.put(msg)
 
-        sub = None
+        async def _ack_handler(nats_msg) -> None:
+            msg = Message.deserialize(nats_msg.data)
+            if msg.headers.get("x-nats-invite-type") == "invite_ack":
+                await ack_queue.put(msg)
+
+        reply_sub = None
+        ack_sub = None
         try:
-            # Subscribe to the reply topic to collect responses
-            sub = await self._nc.subscribe(reply_topic, cb=_response_handler)
+            reply_sub = await self._nc.subscribe(reply_topic, cb=_response_handler)
+            ack_sub = await self._nc.subscribe(ack_topic, cb=_ack_handler)
 
-            # Publish the message
-            await self.publish(topic, message)
+            # Phase 2: Send invites to each recipient's unique name
+            for recipient in recipients:
+                invite = Message(
+                    type="invite",
+                    payload=b"",
+                    headers={
+                        "x-nats-invite-type": "invite",
+                        "x-nats-broadcast-topic": ephemeral_topic,
+                        "x-nats-ack-topic": ack_topic,
+                    },
+                )
+                await self.publish(self.santize_topic(recipient), invite)
 
+            # Phase 3: Wait for ACKs
+            acks_received = 0
+            while acks_received < len(recipients):
+                try:
+                    await asyncio.wait_for(ack_queue.get(), timeout=10)
+                    acks_received += 1
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"ACK timeout: got {acks_received}/{len(recipients)}"
+                    )
+                    break
+
+            # Phase 4: Publish actual message to ephemeral topic
+            await self.publish(ephemeral_topic, message)
+
+            # Phase 5: Collect responses
             received = 0
-            while received < message_limit:
+            effective_limit = (
+                message_limit if message_limit is not None else len(recipients)
+            )
+            while received < effective_limit:
                 try:
                     msg = await asyncio.wait_for(response_queue.get(), timeout=timeout)
                     received += 1
-                    logger.debug(f"Received {received} response")
                     yield msg
                 except asyncio.TimeoutError:
                     logger.warning(
-                        f"Timeout reached after {timeout}s; collected {received} response(s)"
+                        f"Timeout reached after {timeout}s; "
+                        f"collected {received} response(s)"
                     )
                     break
+
+            # Phase 6: Teardown
+            teardown = Message(
+                type="teardown",
+                payload=b"",
+                headers={
+                    "x-nats-invite-type": "teardown",
+                    "x-nats-broadcast-topic": ephemeral_topic,
+                },
+            )
+            await self.publish(ephemeral_topic, teardown)
         finally:
-            if sub is not None:
-                await sub.unsubscribe()
+            if reply_sub:
+                await reply_sub.unsubscribe()
+            if ack_sub:
+                await ack_sub.unsubscribe()
 
     # -----------------------------------------------------------------------------
     # Group Chat / Multi-Party Conversation
@@ -283,7 +396,7 @@ class NatsTransport(BaseTransport):
     async def _connect(self):
         """Connect to the NATS server."""
         if self._nc is not None and self._nc.is_connected:
-            logger.info("Already connected to NATS server")
+            logger.debug("Already connected to NATS server")
             return
 
         self._nc = await nats.connect(
@@ -297,15 +410,23 @@ class NatsTransport(BaseTransport):
             connect_timeout=self.connect_timeout,
             drain_timeout=self.drain_timeout,
         )
-        logger.info("Connected to NATS server")
+        logger.debug("Connected to NATS server")
 
     async def close(self) -> None:
         """Close the NATS connection."""
+        # Clean up any lingering ephemeral subscriptions
+        for _topic, sub in self._ephemeral_subs.items():
+            try:
+                await sub.unsubscribe()
+            except Exception:
+                pass
+        self._ephemeral_subs.clear()
+
         if self._nc:
             try:
                 await self._nc.drain()
                 await self._nc.close()
-                logger.info("NATS connection closed")
+                logger.debug("NATS connection closed")
             except Exception as e:
                 logger.error(f"Error closing NATS connection: {e}")
         else:
@@ -330,9 +451,35 @@ class NatsTransport(BaseTransport):
             sub = await self._nc.subscribe(topic, cb=self._message_handler)
 
             self.subscriptions.append(sub)
-            logger.info(f"Subscribed to topic: {topic}")
+            logger.debug(f"Subscribed to topic: {topic}")
         except Exception as e:
             logger.error(f"Error subscribe to topic '{topic}': {e}")
+
+    async def _handle_invite(self, message: Message) -> None:
+        """Handle an incoming invite message by subscribing to the ephemeral
+        broadcast topic and sending an ACK back to the caller."""
+        broadcast_topic = message.headers["x-nats-broadcast-topic"]
+        ack_topic = message.headers["x-nats-ack-topic"]
+
+        # Subscribe to the ephemeral broadcast topic using existing _message_handler
+        sub = await self._nc.subscribe(broadcast_topic, cb=self._message_handler)
+        self._ephemeral_subs[broadcast_topic] = sub
+
+        # Send ACK back
+        ack = Message(
+            type="ack",
+            payload=b"",
+            headers={"x-nats-invite-type": "invite_ack"},
+        )
+        await self.publish(ack_topic, ack)
+
+    async def _handle_teardown(self, message: Message) -> None:
+        """Handle a teardown message by unsubscribing from the ephemeral
+        broadcast topic."""
+        broadcast_topic = message.headers.get("x-nats-broadcast-topic", "")
+        sub = self._ephemeral_subs.pop(broadcast_topic, None)
+        if sub:
+            await sub.unsubscribe()
 
     async def _message_handler(self, nats_msg):
         """
@@ -343,6 +490,15 @@ class NatsTransport(BaseTransport):
         # Add reply_to from NATS message if not in payload
         if nats_msg.reply and not message.reply_to:
             message.reply_to = nats_msg.reply
+
+        # Intercept invite protocol messages
+        invite_type = message.headers.get("x-nats-invite-type")
+        if invite_type == "invite":
+            await self._handle_invite(message)
+            return
+        if invite_type == "teardown":
+            await self._handle_teardown(message)
+            return
 
         # Process the message with the registered handler
         if self._callback:
@@ -370,4 +526,4 @@ class NatsTransport(BaseTransport):
         logger.warning("Disconnected from NATS.")
 
     async def reconnected_cb(self):
-        logger.info(f"Reconnected to NATS at {self._nc.connected_url.netloc}...")
+        logger.debug(f"Reconnected to NATS at {self._nc.connected_url.netloc}...")

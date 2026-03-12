@@ -60,12 +60,17 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         """Build the ASGI app and start Uvicorn in the background.
 
         Steps:
-        1. Stamp ``preferred_transport`` on the agent card.
+        1. Stamp ``preferred_transport`` on the agent card (if not already set).
         2. Build the ASGI application from the ``A2AStarletteApplication``.
         3. Create a ``uvicorn.Server`` and launch it as a background task.
         4. Push to directory if available.
         """
-        self._set_preferred_transport("JSONRPC")
+        # Only stamp preferred_transport when it is unset.  When
+        # CardBuilder registers multiple handlers on the same card, the
+        # user-declared preferredTransport must not be overwritten.
+        current = self.agent_card.preferred_transport
+        if current is None:
+            self._set_preferred_transport("JSONRPC")
 
         app = self._server.build()
         config = uvicorn.Config(
@@ -81,7 +86,7 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
             self._uvicorn_server.serve(),
             name="jsonrpc-server",
         )
-        logger.info(f"JSONRPC A2A handler started on {self._host}:{self._port}")
+        logger.debug(f"JSONRPC A2A handler started on {self._host}:{self._port}")
 
     async def teardown(self) -> None:
         """Stop the Uvicorn server."""
@@ -93,4 +98,4 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
                 await self._server_task
             except asyncio.CancelledError:
                 pass
-            logger.info("JSONRPC server task finished.")
+            logger.debug("JSONRPC server task finished.")

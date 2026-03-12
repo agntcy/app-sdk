@@ -2,17 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import uuid
-from typing import Any
 
 import pytest
 from a2a.types import (
-    AgentCapabilities,
-    AgentCard,
     Message,
-    MessageSendParams,
     Role,
-    SendMessageRequest,
     TextPart,
 )
 from ioa_observe.sdk.tracing import session_start
@@ -20,60 +14,14 @@ from ioa_observe.sdk.tracing import session_start
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
-    A2AExperimentalServer,
+from tests.e2e.conftest import (
+    TRANSPORT_CONFIGS,
+    make_agent_card,
+    make_message,
+    make_send_request,
 )
-from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_message(text: str = "how much is 10 USD in INR?") -> Message:
-    """Build a simple A2A Message for ``client.send_message()``."""
-    return Message(
-        role="user",
-        parts=[{"type": "text", "text": text}],
-        messageId=str(uuid.uuid4()),
-    )
-
-
-def _make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageRequest:
-    """Build a simple A2A SendMessageRequest (for broadcast/groupchat)."""
-    payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": text}],
-            "messageId": str(uuid.uuid4()),
-        },
-    }
-    return SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
-
-
-def _make_transport_card(topic: str, transport_type: str) -> AgentCard:
-    """Synthesise a minimal AgentCard for transport-based tests.
-
-    Uses ``A2AExperimentalServer.create_client_card`` with an explicit
-    *topic* so the topic string is stamped as-is (no ``name_version``
-    derivation).
-    """
-    base_card = AgentCard(
-        name=topic,
-        url="",
-        version="1.0.0",
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
-        capabilities=AgentCapabilities(),
-        skills=[],
-        description="Test agent",
-    )
-    return A2AExperimentalServer.create_client_card(
-        base_card, transport_type, topic=topic
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,14 +66,17 @@ async def test_client(run_a2a_server, transport):
         elif transport == "NATS":
             config_kwargs["nats_transport"] = transport_instance
 
-        card = _make_transport_card("Hello_World_Agent_1.0.0", transport)
+        # The name must match what the server subscribes to.  The fixture
+        # default name is "default/default/Hello_World_Agent_1.0.0" and the
+        # server uses that as its subscription topic (via ``topic or name``).
+        card = make_agent_card("default/default/Hello_World_Agent_1.0.0", transport)
         a2a = factory.a2a(ClientConfig(**config_kwargs))
         client = await a2a.create(card)
 
     assert client is not None, "Client was not created"
     print(f"Agent: {(await client.get_card()).name}")
 
-    request = _make_message()
+    request = make_message()
     output = ""
     async for event in client.send_message(request):
         if isinstance(event, Message):
@@ -181,14 +132,10 @@ async def test_broadcast(run_a2a_server, transport):
         "default/default/agent3",
     ]
     for name in agent_names:
-        run_a2a_server(transport, endpoint, name=name, topic="broadcast")
+        run_a2a_server(transport, endpoint, name=name)
 
     # Allow extra time for all agents to subscribe (CI runners can be slow)
     await asyncio.sleep(5)
-
-    handshake_topic = (
-        "default/default/agent1" if transport_instance.type() == "SLIM" else "broadcast"
-    )
 
     config_kwargs = {}
     if transport == "SLIM":
@@ -196,15 +143,16 @@ async def test_broadcast(run_a2a_server, transport):
     elif transport == "NATS":
         config_kwargs["nats_transport"] = transport_instance
 
-    card = _make_transport_card(handshake_topic, transport)
+    # Card points at the first agent — used for client negotiation only.
+    # The invite protocol reaches all agents via their individual names.
+    card = make_agent_card(agent_names[0], transport)
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
-    request = _make_send_request()
+    request = make_send_request()
     responses = await client.broadcast_message(
         request,
-        broadcast_topic="broadcast",
         recipients=agent_names,
     )
 
@@ -247,14 +195,10 @@ async def test_broadcast_streaming(run_a2a_server, transport):
         "default/default/agent3",
     ]
     for name in agent_names:
-        run_a2a_server(transport, endpoint, name=name, topic="broadcast")
+        run_a2a_server(transport, endpoint, name=name)
 
     # Allow extra time for all agents to subscribe (CI runners can be slow)
     await asyncio.sleep(5)
-
-    handshake_topic = (
-        "default/default/agent1" if transport_instance.type() == "SLIM" else "broadcast"
-    )
 
     config_kwargs = {}
     if transport == "SLIM":
@@ -262,17 +206,17 @@ async def test_broadcast_streaming(run_a2a_server, transport):
     elif transport == "NATS":
         config_kwargs["nats_transport"] = transport_instance
 
-    card = _make_transport_card(handshake_topic, transport)
+    # Card points at the first agent — used for client negotiation only.
+    card = make_agent_card(agent_names[0], transport)
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
-    request = _make_send_request()
+    request = make_send_request()
     responses = []
     async for resp in client.broadcast_message_streaming(
         request,
         message_limit=3,
-        broadcast_topic="broadcast",
         recipients=agent_names,
     ):
         print(f"Streaming response: {resp}")
@@ -319,22 +263,18 @@ async def test_groupchat(run_a2a_server, transport):
         transport, endpoint=endpoint, name="default/default/default"
     )
 
-    handshake_topic = (
-        "default/default/foo" if transport_instance.type() == "SLIM" else "broadcast"
-    )
-
     config_kwargs = {}
     if transport == "SLIM":
         config_kwargs["slim_transport"] = transport_instance
     elif transport == "NATS":
         config_kwargs["nats_transport"] = transport_instance
 
-    card = _make_transport_card(handshake_topic, transport)
+    card = make_agent_card(participants[0], transport)
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
-    request = _make_send_request("This is a groupchat message")
+    request = make_send_request("This is a groupchat message")
     responses = await client.start_groupchat(
         init_message=request,
         group_channel="zoo",
@@ -375,7 +315,7 @@ async def test_groupchat_streaming(run_a2a_server, transport):
 
     participants = ["default/default/foo", "default/default/bar"]
     for name in participants:
-        run_a2a_server(transport, endpoint, name=name, topic="zoo")
+        run_a2a_server(transport, endpoint, name=name)
 
     await asyncio.sleep(3)
 
@@ -384,22 +324,18 @@ async def test_groupchat_streaming(run_a2a_server, transport):
         transport, endpoint=endpoint, name="default/default/default"
     )
 
-    handshake_topic = (
-        "default/default/foo" if transport_instance.type() == "SLIM" else "broadcast"
-    )
-
     config_kwargs = {}
     if transport == "SLIM":
         config_kwargs["slim_transport"] = transport_instance
     elif transport == "NATS":
         config_kwargs["nats_transport"] = transport_instance
 
-    card = _make_transport_card(handshake_topic, transport)
+    card = make_agent_card(participants[0], transport)
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
-    request = _make_send_request("This is a groupchat message")
+    request = make_send_request("This is a groupchat message")
     messages = []
     async for message in client.start_streaming_groupchat(
         init_message=request,

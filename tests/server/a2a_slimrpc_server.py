@@ -15,9 +15,10 @@ import asyncio
 
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 from agntcy_app_sdk.semantic.a2a.server.srpc import (
     A2ASlimRpcServerConfig,
     SlimRpcConnectionConfig,
@@ -42,6 +43,15 @@ def _build_a2a_slimrpc_config(
     version: str = "1.0.0",
 ) -> A2ASlimRpcServerConfig:
     """Build an A2ASlimRpcServerConfig with a HelloWorld agent."""
+    # Build the interface URL in the format expected by card_bootstrap:
+    # slim://host:port/identity
+    from urllib.parse import urlparse
+
+    p = urlparse(endpoint)
+    host = p.hostname or "localhost"
+    port = p.port or 46357
+    interface_url = f"slim://{host}:{port}/{name}"
+
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
@@ -52,6 +62,12 @@ def _build_a2a_slimrpc_config(
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
         supportsAuthenticatedExtendedCard=False,
+        additional_interfaces=[
+            AgentInterface(
+                transport=InterfaceTransport.SLIM_RPC,
+                url=interface_url,
+            ),
+        ],
     )
     request_handler = DefaultRequestHandler(
         agent_executor=HelloWorldAgentExecutor(name),

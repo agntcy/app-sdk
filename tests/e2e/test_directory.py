@@ -17,7 +17,13 @@ import pytest_asyncio
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentProvider, AgentSkill
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    AgentProvider,
+    AgentSkill,
+)
 
 from agntcy_app_sdk.app_sessions import AppContainer
 from agntcy_app_sdk.directory import (
@@ -27,6 +33,7 @@ from agntcy_app_sdk.directory import (
 )
 from agntcy_app_sdk.directory.oasf_converter import MODULE_NAME_A2A
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 from tests.server.agent_executor import HelloWorldAgentExecutor
 
 pytest_plugins = "pytest_asyncio"
@@ -215,6 +222,12 @@ def _build_a2a_server(name: str = "dir-pipeline-agent") -> A2AStarletteApplicati
         description="E2E directory pipeline agent",
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
+        additional_interfaces=[
+            AgentInterface(
+                transport=InterfaceTransport.JSONRPC,
+                url="http://0.0.0.0:9000",
+            ),
+        ],
     )
     request_handler = DefaultRequestHandler(
         agent_executor=HelloWorldAgentExecutor(name),
@@ -245,6 +258,7 @@ async def test_app_container_pushes_record_to_directory():
     container = (
         session.add(server)
         .with_directory(directory)
+        .with_host("0.0.0.0")
         .with_port(9020)
         .with_session_id("dir-pipeline-test")
         .build()
@@ -312,12 +326,12 @@ async def test_app_session_start_all_pushes_records():
 
     # Wire both through the same AppSession (different ports to avoid conflict)
     session = factory.create_app_session(max_sessions=5)
-    session.add(server_a).with_directory(directory).with_port(9010).with_session_id(
-        "dir-a"
-    ).build()
-    session.add(server_b).with_directory(directory).with_port(9011).with_session_id(
-        "dir-b"
-    ).build()
+    session.add(server_a).with_directory(directory).with_host("0.0.0.0").with_port(
+        9010
+    ).with_session_id("dir-a").build()
+    session.add(server_b).with_directory(directory).with_host("0.0.0.0").with_port(
+        9011
+    ).with_session_id("dir-b").build()
     print("  2. Built 2 AppContainers with shared directory")
 
     # Start all
@@ -369,7 +383,11 @@ async def test_app_container_no_directory_skips_push():
 
     session = factory.create_app_session()
     container = (
-        session.add(server).with_port(9030).with_session_id("no-dir-test").build()
+        session.add(server)
+        .with_host("0.0.0.0")
+        .with_port(9030)
+        .with_session_id("no-dir-test")
+        .build()
     )
 
     assert container.directory is None
@@ -408,6 +426,7 @@ async def test_factory_create_directory_in_pipeline():
     container = (
         session.add(server)
         .with_directory(directory)
+        .with_host("0.0.0.0")
         .with_port(9040)
         .with_session_id("factory-dir-test")
         .build()

@@ -7,11 +7,10 @@ from mcp import ClientSession
 
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.transport.streamable_http.models import StreamsContextProtocol
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
 from typing import Callable, Dict, Optional
 
-configure_logging()
 logger = get_logger(__name__)
 
 

@@ -4,12 +4,11 @@
 import json
 from typing import Any, Dict, Optional
 
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
 from identityservice.sdk import IdentityServiceSdk
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
-configure_logging()
 logger = get_logger(__name__)
 
 

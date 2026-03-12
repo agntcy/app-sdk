@@ -13,14 +13,13 @@ from .common import (
     get_or_create_slim_instance,
     split_id,
 )
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
-configure_logging()
 logger = get_logger(__name__)
 
 """
@@ -63,15 +62,16 @@ class SLIMTransport(BaseTransport):
 
         try:
             org, namespace, local_name = routable_name.split("/", 2)
-            self.name = self.build_name(routable_name)
         except ValueError:
             raise ValueError(
                 "routable_name must be in the form 'org/namespace/local_name'"
             )
-        # Name encrypts the components so we need to store the original values separately
+        # Name encrypts the components so we need to store the original values separately.
+        # These must be assigned before build_name() which may fall back to self.org/namespace.
         self.org = org
         self.namespace = namespace
         self.local_name = local_name
+        self.name = self.build_name(routable_name)
         self._endpoint = endpoint
         self._slim_service = slim_service
         self._slim_app = slim_app
@@ -97,9 +97,9 @@ class SLIMTransport(BaseTransport):
             from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
 
             SLIMInstrumentor().instrument()
-            logger.info("SLIMTransport initialized with tracing enabled")
+            logger.debug("SLIMTransport initialized with tracing enabled")
 
-        logger.info(f"SLIMTransport initialized with endpoint: {endpoint}")
+        logger.debug(f"SLIMTransport initialized with endpoint: {endpoint}")
 
     # -----------------------------------------------------------------------------
     # BaseTransport method implementations
@@ -506,7 +506,7 @@ class SLIMTransport(BaseTransport):
         Store the subscription information for a given topic, org, and namespace
         to be used for receive filtering.
         """
-        logger.warning(
+        logger.debug(
             "SLIMTransport.subscribe is a no-op since SLIM does not require explicit subscriptions."
         )
 
@@ -518,7 +518,7 @@ class SLIMTransport(BaseTransport):
                     received_session = await self._slim_app.listen_for_session_async(
                         timeout=self.message_timeout
                     )
-                    logger.info(
+                    logger.debug(
                         f"Received new session with id: {received_session.session_id()}, "
                         f"type: {received_session.session_type()}, "
                         f"destination: {received_session.destination()},"
@@ -541,7 +541,7 @@ class SLIMTransport(BaseTransport):
                     logger.error(f"Error receiving session info: {e}")
                     await asyncio.sleep(1)  # prevent busy loop
         except asyncio.CancelledError:
-            logger.info("Listener cancelled")
+            logger.debug("Listener cancelled")
             raise
 
     async def _handle_session_receive(self, session: Session) -> None:
@@ -566,7 +566,7 @@ class SLIMTransport(BaseTransport):
                         or "session closed" in msg
                         or "session already closed"
                     ):
-                        logger.info(
+                        logger.debug(
                             f"Session {session_id} closed remotely (likely by moderator), stopping listener"
                         )
                         break
@@ -591,10 +591,10 @@ class SLIMTransport(BaseTransport):
                     )
                     await asyncio.sleep(0.5)  # backoff to avoid spin
         except asyncio.CancelledError:
-            logger.info(f"Session {session_id} handler cancelled")
+            logger.debug(f"Session {session_id} handler cancelled")
             raise
         finally:
-            logger.info(f"Session {session_id} receive loop terminated")
+            logger.debug(f"Session {session_id} receive loop terminated")
 
     async def _process_received_message(self, session: Session, msg):
         """Process a single received message and handle response logic."""
@@ -613,7 +613,7 @@ class SLIMTransport(BaseTransport):
             return
 
         if output is None:
-            logger.info("Received empty output from callback, skipping response.")
+            logger.debug("Received empty output from callback, skipping response.")
             return
 
         # Handle response logic
@@ -668,7 +668,7 @@ class SLIMTransport(BaseTransport):
                 # TODO: Revisit with SLIM team if this still exists in 0.5.0
                 logger.debug(f"Error handling response: {e}")
             elif "session closed" in msg:
-                logger.info(
+                logger.warn(
                     f"Unable to process incoming message, session {session_id} closed remotely (likely by moderator)"
                 )
             else:

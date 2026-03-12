@@ -6,14 +6,129 @@ import signal
 import socket
 import subprocess
 import time
+import uuid
+from typing import Any
 
 import pytest
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    Message,
+    MessageSendParams,
+    SendMessageRequest,
+)
+
+from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 TRANSPORT_CONFIGS = {
     "NATS": "localhost:4222",
     "SLIM": "http://localhost:46357",
     "JSONRPC": "http://localhost:9999",
 }
+
+# Well-known test-service endpoints (must match docker-compose)
+SLIM_ENDPOINT = "slim://localhost:46357"
+NATS_ENDPOINT = "nats://localhost:4222"
+
+# Map CLI/test transport labels → InterfaceTransport preferred_transport values
+PREFERRED_TRANSPORT: dict[str, str] = {
+    "SLIM": InterfaceTransport.SLIM_PATTERNS,
+    "NATS": InterfaceTransport.NATS_PATTERNS,
+    "JSONRPC": InterfaceTransport.JSONRPC,
+    "SLIMRPC": InterfaceTransport.SLIM_RPC,
+}
+
+
+# ---------------------------------------------------------------------------
+# Shared A2A message / card helpers
+# ---------------------------------------------------------------------------
+
+
+def make_message(text: str = "how much is 10 USD in INR?") -> Message:
+    """Build a simple A2A Message for ``client.send_message()``."""
+    return Message(
+        role="user",
+        parts=[{"type": "text", "text": text}],
+        messageId=str(uuid.uuid4()),
+    )
+
+
+def make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageRequest:
+    """Build a simple A2A SendMessageRequest (for broadcast/groupchat)."""
+    payload: dict[str, Any] = {
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": text}],
+            "messageId": str(uuid.uuid4()),
+        },
+    }
+    return SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
+
+
+def make_agent_card(
+    name: str,
+    transport_type: str = "JSONRPC",
+    http_port: int = 9999,
+) -> AgentCard:
+    """Build a single AgentCard that declares all transports.
+
+    The card lists SLIM, NATS, HTTP, and SlimRPC in ``additional_interfaces``
+    and sets ``preferredTransport`` based on *transport_type*.  Both client and
+    server can share this card — the only thing that varies per test is
+    the *name* (the agent's routable identity, stamped into SLIM/NATS
+    interface URLs) and which transport is preferred.
+
+    Args:
+        name: The agent's routable identity, stamped into SLIM/NATS
+            interface URLs and used as the card ``name``.
+        transport_type: ``"SLIM"``, ``"NATS"``, ``"JSONRPC"``, or
+            ``"SLIMRPC"`` — sets ``preferredTransport`` so the client
+            negotiation picks this transport first.
+        http_port: Port for the JSONRPC interface (default 9999).
+    """
+    preferred = PREFERRED_TRANSPORT[transport_type]
+
+    # card.url is set per the preferred transport so that negotiation
+    # finds the right entry in {preferred_transport: card.url}
+    if transport_type == "SLIM":
+        url = f"{SLIM_ENDPOINT}/{name}"
+    elif transport_type == "NATS":
+        url = f"{NATS_ENDPOINT}/{name}"
+    elif transport_type == "SLIMRPC":
+        url = f"{SLIM_ENDPOINT}/{name}"
+    else:
+        url = f"http://localhost:{http_port}/"
+
+    return AgentCard(
+        name=name,
+        description="Test agent",
+        url=url,
+        version="1.0.0",
+        defaultInputModes=["text"],
+        defaultOutputModes=["text"],
+        capabilities=AgentCapabilities(),
+        skills=[],
+        preferredTransport=preferred,
+        additional_interfaces=[
+            AgentInterface(
+                transport=InterfaceTransport.SLIM_PATTERNS,
+                url=f"{SLIM_ENDPOINT}/{name}",
+            ),
+            AgentInterface(
+                transport=InterfaceTransport.NATS_PATTERNS,
+                url=f"{NATS_ENDPOINT}/{name}",
+            ),
+            AgentInterface(
+                transport=InterfaceTransport.JSONRPC,
+                url=f"http://0.0.0.0:{http_port}",
+            ),
+            AgentInterface(
+                transport=InterfaceTransport.SLIM_RPC,
+                url=f"{SLIM_ENDPOINT}/{name}",
+            ),
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +254,45 @@ def run_a2a_server():
 
             parsed = urlparse(endpoint)
             _wait_for_port(parsed.hostname or "localhost", parsed.port or 9999)
+        return proc
+
+    yield _run
+    _cleanup_procs(procs)
+
+
+@pytest.fixture
+def run_card_bootstrap_server():
+    """Spawn an A2A server that uses add_a2a_card() for bootstrap."""
+    procs = []
+
+    def _run(
+        transport,
+        endpoint,
+        version="1.0.0",
+        name="default/default/Hello_World_Agent_1.0.0",
+        port=9999,
+    ):
+        extra_args = [
+            "--name",
+            name,
+            "--version",
+            version,
+            "--port",
+            str(port),
+        ]
+        proc = _spawn_server(
+            procs,
+            "tests/server/a2a_card_bootstrap_server.py",
+            transport,
+            endpoint,
+            extra_args=extra_args,
+        )
+        # For JSONRPC (HTTP), wait until the server is accepting connections
+        if transport == "JSONRPC":
+            from urllib.parse import urlparse
+
+            parsed = urlparse(endpoint)
+            _wait_for_port(parsed.hostname or "localhost", parsed.port or port)
         return proc
 
     yield _run

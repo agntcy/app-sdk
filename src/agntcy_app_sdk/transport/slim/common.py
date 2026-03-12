@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
-import logging
 
 import click
 import datetime
 import json
 import slim_bindings
+
+from agntcy_app_sdk.common.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 # Split an ID into its components
@@ -187,7 +190,7 @@ async def get_or_create_slim_instance(
     slim_app = slim_service.create_app(local, provider, verifier)
 
     if not slim_insecure_client:
-        logging.warning("Only insecure client is supported at the moment.")
+        logger.warning("Only insecure client is supported at the moment.")
 
     client_config = slim_bindings.new_insecure_client_config(slim_endpoint)
     slim_conn_id = await slim_service.connect_async(client_config)

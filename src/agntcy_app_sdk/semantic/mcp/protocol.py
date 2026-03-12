@@ -5,7 +5,7 @@ from typing import Any, Callable
 import os
 import json
 
-from agntcy_app_sdk.common.logging_config import configure_logging, get_logger
+from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 
@@ -20,7 +20,6 @@ import asyncio
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-configure_logging()
 logger = get_logger(__name__)
 
 
@@ -92,11 +91,6 @@ class MCPProtocol:
                 read_stream, write_stream, **kwargs
             ) as mcp_session:
                 yield mcp_session
-
-    def create_agent_topic(self):
-        raise NotImplementedError(
-            "MCPProtocol does not implement create_agent_topic yet."
-        )
 
     @asynccontextmanager
     async def new_streams(self, send_method: Callable, **kwargs):
