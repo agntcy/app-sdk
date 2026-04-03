@@ -35,6 +35,7 @@ from a2a.types import (
     TaskIdParams,
     TaskPushNotificationConfig,
     TaskQueryParams,
+    TaskStatusUpdateEvent,
 )
 
 from agntcy_app_sdk.common.logging_config import get_logger
@@ -202,7 +203,13 @@ class A2AExperimentalClient(Client):
         broadcast_topic: str | None = None,
         timeout: float = 60.0,
     ) -> List[SendMessageResponse]:
-        """Broadcast a message to multiple recipients via transport."""
+        """Broadcast a message to multiple recipients via transport.
+
+        When used with streaming agents the transport may deliver
+        intermediate ``A2AStatusUpdate`` messages before the final
+        ``A2AResponse``.  This method filters those out and returns
+        only the final responses (one per recipient).
+        """
         if not request.id:
             request.id = str(uuid4())
 
@@ -213,13 +220,33 @@ class A2AExperimentalClient(Client):
         if not broadcast_topic:
             broadcast_topic = self._topic
 
+        expected = len(recipients) if recipients else 1
+
         try:
-            responses = await self._transport.gather(
+            broadcast_responses: List[SendMessageResponse] = []
+            async for raw_resp in self._transport.gather_stream(
                 broadcast_topic,
                 msg,
                 recipients=recipients,
                 timeout=timeout,
-            )
+            ):
+                try:
+                    # Only collect final A2AResponse messages; skip
+                    # intermediate A2AStatusUpdate messages that streaming
+                    # agents emit.
+                    if raw_resp.type == "A2AStatusUpdate":
+                        continue
+
+                    resp = json.loads(raw_resp.payload.decode("utf-8"))
+                    broadcast_responses.append(SendMessageResponse(resp))
+
+                    if len(broadcast_responses) >= expected:
+                        break
+                except Exception as e:
+                    logger.error(f"Error decoding JSON response: {e}")
+                    continue
+
+            return broadcast_responses
         except (TimeoutError, asyncio.CancelledError):
             raise
         except Exception as e:
@@ -228,17 +255,6 @@ class A2AExperimentalClient(Client):
             )
             return []
 
-        broadcast_responses = []
-        for raw_resp in responses:
-            try:
-                resp = json.loads(raw_resp.payload.decode("utf-8"))
-                broadcast_responses.append(SendMessageResponse(resp))
-            except Exception as e:
-                logger.error(f"Error decoding JSON response: {e}")
-                continue
-
-        return broadcast_responses
-
     async def broadcast_message_streaming(
         self,
         request: SendStreamingMessageRequest,
@@ -246,8 +262,14 @@ class A2AExperimentalClient(Client):
         broadcast_topic: str | None = None,
         message_limit: int | None = None,
         timeout: float = 60.0,
-    ) -> AsyncIterator[SendMessageResponse]:
-        """Broadcast with streaming responses."""
+    ) -> AsyncIterator[SendMessageResponse | TaskStatusUpdateEvent | Task]:
+        """Broadcast with streaming responses, including intermediate status events.
+
+        Yields intermediate ``TaskStatusUpdateEvent`` and ``Task`` objects as
+        they arrive from each recipient, plus a final ``SendMessageResponse``
+        per recipient.  The stream ends after *message_limit* final responses
+        have been received (defaults to ``len(recipients)``).
+        """
         if not request.id:
             request.id = str(uuid4())
 
@@ -258,29 +280,71 @@ class A2AExperimentalClient(Client):
         if not broadcast_topic:
             broadcast_topic = self._topic
 
-        # determine how many messages to stream until we break out
-        # if none, set strict number of recipients messages
-        if message_limit is None:
-            message_limit = len(recipients)
+        # How many *final* responses we expect before stopping the stream.
+        expected_finals = (
+            message_limit
+            if message_limit is not None
+            else (len(recipients) if recipients else 1)
+        )
 
+        # Do NOT pass message_limit to the transport — let it stream
+        # everything (intermediates + finals).  We manage the stop
+        # condition here based on final response count.
         try:
+            finals_received = 0
             async for raw_resp in self._transport.gather_stream(
                 broadcast_topic,
                 msg,
                 recipients=recipients,
-                message_limit=message_limit,
                 timeout=timeout,
             ):
                 try:
                     logger.debug(raw_resp)
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
+
                     if resp.get("error") == "forbidden" or raw_resp.status_code == 403:
                         logger.warning(
                             f"Received forbidden error in broadcast streaming response: {resp}"
                         )
                         yield SendMessageResponse(get_identity_auth_error())
+                        finals_received += 1
+                    elif raw_resp.type == "A2AStatusUpdate":
+                        # Intermediate status event — parse the same way
+                        # PatternsClientTransport.send_message_streaming does.
+                        result = resp.get("result", resp)
+                        if isinstance(result, dict):
+                            kind = result.get("kind")
+                            if kind == "status-update":
+                                yield TaskStatusUpdateEvent.model_validate(result)
+                            elif kind == "task" or "status" in result:
+                                yield Task.model_validate(result)
+                            else:
+                                # Unrecognised intermediate — skip
+                                logger.debug(
+                                    f"Unrecognised A2AStatusUpdate kind: {kind}"
+                                )
+                        continue  # intermediates don't count toward finals
                     else:
-                        yield SendMessageResponse(resp)
+                        # Final A2AResponse.  For streaming handlers the payload
+                        # is a raw A2A result (e.g. TaskStatusUpdateEvent dump)
+                        # without a JSON-RPC envelope.  For non-streaming
+                        # handlers the payload IS a JSON-RPC response.  Try the
+                        # envelope first; fall back to kind-based parsing.
+                        result = resp.get("result", resp)
+                        if isinstance(result, dict):
+                            kind = result.get("kind")
+                            if kind == "status-update":
+                                yield TaskStatusUpdateEvent.model_validate(result)
+                            elif kind == "task" or "status" in result:
+                                yield Task.model_validate(result)
+                            else:
+                                yield SendMessageResponse(resp)
+                        else:
+                            yield SendMessageResponse(resp)
+                        finals_received += 1
+
+                    if finals_received >= expected_finals:
+                        break
                 except Exception as e:
                     logger.error(f"Error decoding JSON response: {e}")
                     continue

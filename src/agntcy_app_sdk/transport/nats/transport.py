@@ -302,7 +302,7 @@ class NatsTransport(BaseTransport):
             # Phase 5: Collect responses
             received = 0
             effective_limit = (
-                message_limit if message_limit is not None else len(recipients)
+                message_limit if message_limit is not None else float("inf")
             )
             while received < effective_limit:
                 try:
@@ -508,14 +508,10 @@ class NatsTransport(BaseTransport):
                     try:
                         await self.publish(message.reply_to, intermediate_msg)
                     except Exception as e:
-                        logger.error(
-                            f"Error publishing intermediate message: {e}"
-                        )
+                        logger.error(f"Error publishing intermediate message: {e}")
 
             try:
-                resp = await self._callback(
-                    message, publish_fn=_publish_intermediate
-                )
+                resp = await self._callback(message, publish_fn=_publish_intermediate)
             except TypeError:
                 # Fallback: callback does not accept publish_fn (e.g. tests
                 # or custom handlers).  Call without the extra kwarg.

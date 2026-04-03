@@ -17,6 +17,7 @@ from a2a.types import (
     Message,
     MessageSendParams,
     SendMessageRequest,
+    SendStreamingMessageRequest,
 )
 
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
@@ -64,6 +65,22 @@ def make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageRe
         },
     }
     return SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
+
+
+def make_streaming_send_request(
+    text: str = "how much is 10 USD in INR?",
+) -> SendStreamingMessageRequest:
+    """Build a SendStreamingMessageRequest (for broadcast streaming with status events)."""
+    payload: dict[str, Any] = {
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": text}],
+            "messageId": str(uuid.uuid4()),
+        },
+    }
+    return SendStreamingMessageRequest(
+        id=str(uuid.uuid4()), params=MessageSendParams(**payload)
+    )
 
 
 def make_agent_card(
