@@ -32,7 +32,7 @@ telemetry = [
 
 [[package]]
 name = "agntcy-app-sdk"
-version = "0.5.3"
+version = "0.5.4"
 source = { editable = "." }
 dependencies = [
     { name = "a2a-sdk" },

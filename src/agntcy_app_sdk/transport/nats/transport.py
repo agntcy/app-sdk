@@ -502,7 +502,25 @@ class NatsTransport(BaseTransport):
 
         # Process the message with the registered handler
         if self._callback:
-            resp = await self._callback(message)
+            # Build publish_fn for intermediate streaming messages
+            async def _publish_intermediate(intermediate_msg):
+                if message.reply_to:
+                    try:
+                        await self.publish(message.reply_to, intermediate_msg)
+                    except Exception as e:
+                        logger.error(
+                            f"Error publishing intermediate message: {e}"
+                        )
+
+            try:
+                resp = await self._callback(
+                    message, publish_fn=_publish_intermediate
+                )
+            except TypeError:
+                # Fallback: callback does not accept publish_fn (e.g. tests
+                # or custom handlers).  Call without the extra kwarg.
+                resp = await self._callback(message)
+
             if not resp and message.reply_to:
                 logger.warning("Handler returned no response for message.")
                 err_msg = Message(
@@ -512,7 +530,7 @@ class NatsTransport(BaseTransport):
                 )
                 await self.publish(message.reply_to, err_msg)
 
-            # publish response to the reply topic
+            # publish final response to the reply topic
             await self.publish(message.reply_to, resp)
 
     # Callbacks and error handling

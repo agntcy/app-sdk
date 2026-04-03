@@ -70,6 +70,7 @@ def make_agent_card(
     name: str,
     transport_type: str = "JSONRPC",
     http_port: int = 9999,
+    streaming: bool = False,
 ) -> AgentCard:
     """Build a single AgentCard that declares all transports.
 
@@ -86,6 +87,9 @@ def make_agent_card(
             ``"SLIMRPC"`` — sets ``preferredTransport`` so the client
             negotiation picks this transport first.
         http_port: Port for the JSONRPC interface (default 9999).
+        streaming: If ``True``, set ``capabilities.streaming = True`` on
+            the card so the upstream ``BaseClient`` takes the streaming
+            code path.
     """
     preferred = PREFERRED_TRANSPORT[transport_type]
 
@@ -107,7 +111,9 @@ def make_agent_card(
         version="1.0.0",
         defaultInputModes=["text"],
         defaultOutputModes=["text"],
-        capabilities=AgentCapabilities(),
+        capabilities=AgentCapabilities(streaming=True)
+        if streaming
+        else AgentCapabilities(),
         skills=[],
         preferredTransport=preferred,
         additional_interfaces=[
@@ -233,20 +239,24 @@ def run_a2a_server():
         version="1.0.0",
         name="default/default/Hello_World_Agent_1.0.0",
         topic="",
+        streaming=False,
     ):
+        extra_args = [
+            "--name",
+            name,
+            "--topic",
+            topic,
+            "--version",
+            version,
+        ]
+        if streaming:
+            extra_args.append("--streaming")
         proc = _spawn_server(
             procs,
             "tests/server/a2a_starlette_server.py",
             transport,
             endpoint,
-            extra_args=[
-                "--name",
-                name,
-                "--topic",
-                topic,
-                "--version",
-                version,
-            ],
+            extra_args=extra_args,
         )
         # For JSONRPC (HTTP), wait until the server is accepting connections
         if transport == "JSONRPC":
@@ -351,18 +361,22 @@ def run_a2a_slimrpc_server():
         endpoint,
         name="default/default/Hello_World_Agent_1.0.0",
         version="1.0.0",
+        streaming=False,
     ):
+        extra_args = [
+            "--name",
+            name,
+            "--version",
+            version,
+        ]
+        if streaming:
+            extra_args.append("--streaming")
         return _spawn_server(
             procs,
             "tests/server/a2a_slimrpc_server.py",
             transport=None,
             endpoint=endpoint,
-            extra_args=[
-                "--name",
-                name,
-                "--version",
-                version,
-            ],
+            extra_args=extra_args,
         )
 
     yield _run

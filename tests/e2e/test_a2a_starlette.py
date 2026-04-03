@@ -7,6 +7,9 @@ import pytest
 from a2a.types import (
     Message,
     Role,
+    Task,
+    TaskState,
+    TaskStatusUpdateEvent,
     TextPart,
 )
 from ioa_observe.sdk.tracing import session_start
@@ -355,3 +358,135 @@ async def test_groupchat_streaming(run_a2a_server, transport):
         await transport_instance.close()
 
     print(f"=== ✅ test_groupchat_streaming passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_task_status_events — streaming TaskStatusUpdateEvent lifecycle
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
+)
+@pytest.mark.asyncio
+async def test_task_status_events(run_a2a_server, transport):
+    """Verify the client receives streaming TaskStatusUpdateEvent objects.
+
+    The HelloWorldStreamingAgentExecutor produces:
+      1. An initial Task event
+      2. N × TaskStatusUpdateEvent with state=working (one per token)
+      3. 1 × TaskStatusUpdateEvent with state=completed, final=True
+    """
+    endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_task_status_events | {transport} | {endpoint} ---")
+
+    run_a2a_server(transport, endpoint, streaming=True)
+    await asyncio.sleep(1)
+
+    transport_instance = None
+
+    if transport == "JSONRPC":
+        # Native HTTP JSONRPC — no transport instance needed.
+        client = await A2AClientFactory.connect(
+            endpoint, config=ClientConfig(streaming=True)
+        )
+    else:
+        factory = AgntcyFactory(enable_tracing=True)
+        transport_instance = factory.create_transport(
+            transport, endpoint=endpoint, name="default/default/default"
+        )
+
+        config_kwargs: dict = {"streaming": True}
+        if transport == "SLIM":
+            config_kwargs["slim_transport"] = transport_instance
+        elif transport == "NATS":
+            config_kwargs["nats_transport"] = transport_instance
+
+        card = make_agent_card(
+            "default/default/Hello_World_Agent_1.0.0",
+            transport,
+            streaming=True,
+        )
+        a2a = factory.a2a(ClientConfig(**config_kwargs))
+        client = await a2a.create(card)
+
+    assert client is not None, "Client was not created"
+
+    request = make_message()
+
+    # Collect all events from the streaming response
+    events: list[tuple[Task, TaskStatusUpdateEvent | None]] = []
+    async for event in client.send_message(request):
+        if isinstance(event, Message):
+            # Streaming executor should produce Task events, not bare Messages
+            pytest.fail(
+                f"Expected (Task, update) tuples but got a bare Message: {event}"
+            )
+        events.append(event)
+
+    print(f"Received {len(events)} events")
+
+    # --- Assertion 1: multiple events received (not collapsed) ---
+    assert len(events) >= 3, (
+        f"Expected at least 3 events (initial + working + completed), got {len(events)}"
+    )
+
+    # --- Assertion 2: first event is the initial Task ---
+    first_task, first_update = events[0]
+    assert isinstance(first_task, Task), "First event should contain a Task"
+    assert first_update is None, "First event update should be None (initial Task)"
+
+    # Separate status update events (skip the initial Task event)
+    status_events = [update for _, update in events[1:] if update is not None]
+    assert len(status_events) >= 2, (
+        f"Expected at least 2 status updates (working + completed), got {len(status_events)}"
+    )
+
+    # --- Assertion 3: all status updates have correct kind ---
+    for se in status_events:
+        assert isinstance(se, TaskStatusUpdateEvent), (
+            f"Expected TaskStatusUpdateEvent, got {type(se)}"
+        )
+        assert se.kind == "status-update", (
+            f"Expected kind='status-update', got '{se.kind}'"
+        )
+
+    # --- Assertion 4: at least one working state ---
+    working_events = [
+        se for se in status_events if se.status.state == TaskState.working
+    ]
+    assert len(working_events) >= 1, "Expected at least one working status update"
+
+    # --- Assertion 5: exactly one completed state ---
+    completed_events = [
+        se for se in status_events if se.status.state == TaskState.completed
+    ]
+    assert len(completed_events) == 1, (
+        f"Expected exactly 1 completed status update, got {len(completed_events)}"
+    )
+
+    # --- Assertion 6: last status event is completed + final ---
+    last_status = status_events[-1]
+    assert last_status.status.state == TaskState.completed, (
+        f"Last status should be completed, got {last_status.status.state}"
+    )
+    assert last_status.final is True, "Last status event should have final=True"
+
+    # --- Assertion 7: working events are not final ---
+    for we in working_events:
+        assert we.final is False, (
+            f"Working status events should have final=False, got final={we.final}"
+        )
+
+    # --- Assertion 8: working events carry a message ---
+    for we in working_events:
+        assert we.status.message is not None, (
+            "Working status events should carry a message with the streamed token"
+        )
+
+    print(f"Status transitions: {[se.status.state.value for se in status_events]}")
+
+    if transport_instance:
+        await transport_instance.close()
+
+    print(f"=== ✅ test_task_status_events passed for {transport} ===\n")

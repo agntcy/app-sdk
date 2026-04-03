@@ -44,7 +44,6 @@ class SLIMTransport(BaseTransport):
         endpoint: Optional[str] = None,
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         message_retries: int = 2,
-        # SLIM v0.7+ requires shared secret to be at lease 32 chars
         shared_secret_identity: str = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS",
         tls_insecure: bool = True,
         jwt: str = None,
@@ -169,9 +168,54 @@ class SLIMTransport(BaseTransport):
         self, recipient: str, message: Message, timeout: int = 90, **kwargs
     ) -> AsyncIterator[Message]:
         """
-        Send a request and receive a continuous stream of responses.
+        Send a request and receive a stream of responses over a single
+        SLIM point-to-point session.
+
+        The session stays open across multiple ``get_message_async()``
+        calls and yields each response as it arrives.  The caller is
+        responsible for terminating iteration (e.g. by breaking out of
+        the ``async for`` loop); the ``finally`` block ensures the
+        session is always closed.
         """
-        raise NotImplementedError("Streaming not supported for SLIM point-to-point.")
+        topic = self.sanitize_topic(recipient)
+        remote_name = self.build_name(topic)
+
+        if not self._slim_app:
+            logger.warning("SLIM client is not initialized, calling setup() ...")
+            await self.setup()
+
+        logger.debug(f"request_stream: opening session to {remote_name}")
+
+        await self._slim_app.set_route_async(remote_name, self._slim_connection_id)
+
+        session = await self._session_manager.point_to_point_session(
+            remote_name, timeout=datetime.timedelta(seconds=timeout)
+        )
+
+        if not message.headers:
+            message.headers = {}
+        message.headers["x-respond-to-source"] = "true"
+
+        try:
+            await session.publish_async(message.serialize(), None, None)
+            logger.debug(
+                f"request_stream: published to {remote_name}, waiting for stream."
+            )
+
+            while True:
+                reply_raw = await session.get_message_async(
+                    timeout=datetime.timedelta(seconds=timeout)
+                )
+                reply = Message.deserialize(reply_raw.payload)
+                logger.debug(f"request_stream: received message type={reply.type}")
+                yield reply
+        except asyncio.TimeoutError:
+            logger.warning(f"request_stream timed out after {timeout}s")
+        except Exception:
+            logger.exception("Failed in request_stream")
+        finally:
+            logger.debug(f"Closing request_stream session: {session.session_id()}")
+            await self._session_manager.close_session(session)
 
     # -----------------------------------------------------------------------------
     # Fan-Out / Publish-Subscribe
@@ -605,9 +649,31 @@ class SLIMTransport(BaseTransport):
             logger.error(f"Failed to deserialize message: {e}")
             return
 
+        # Build a closure that publishes intermediate messages back to the
+        # client over the same session.  This is passed as ``publish_fn``
+        # to the callback so that streaming handlers can emit status
+        # updates before the final response.
+        async def _publish_intermediate(intermediate_msg: Message):
+            try:
+                await session.publish_to_async(
+                    msg.context, intermediate_msg.serialize(), None, None
+                )
+            except Exception as pub_err:
+                logger.error(f"Error publishing intermediate message: {pub_err}")
+
         # Call the callback function
         try:
-            output = await self._callback(deserialized_msg)
+            output = await self._callback(
+                deserialized_msg, publish_fn=_publish_intermediate
+            )
+        except TypeError:
+            # Fallback: callback does not accept publish_fn (e.g. tests
+            # or custom handlers).  Call without the extra kwarg.
+            try:
+                output = await self._callback(deserialized_msg)
+            except Exception as e:
+                logger.error(f"Error in callback function: {e}")
+                return
         except Exception as e:
             logger.error(f"Error in callback function: {e}")
             return
