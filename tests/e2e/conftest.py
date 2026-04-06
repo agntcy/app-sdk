@@ -209,21 +209,24 @@ def _reset_slim_globals():
     import slim_bindings
     from agntcy_app_sdk.transport.slim import common as slim_common
 
-    # Disconnect ALL connections from SLIM service
+    # Disconnect ALL connections from SLIM service.
+    # Tests may create multiple connections (the global singleton connection
+    # at "http://…:46357" AND a dedicated slimrpc connection at
+    # "http://…:46357/").  The dedicated connection ID is not stored in any
+    # global, so we brute-force disconnect IDs 0..9 to cover all possible
+    # open connections.
     try:
         service = slim_bindings.get_global_service()
-        # Disconnect connection 0 (typically client connection)
-        try:
-            service.disconnect(0)
-        except Exception:
-            pass
-        # Disconnect connection 1 (typically server connection)
-        try:
-            service.disconnect(1)
-        except Exception:
-            pass
-        # Disconnect our cached connection if it exists
-        if slim_common.global_connection_id is not None:
+        for conn_id in range(10):
+            try:
+                service.disconnect(conn_id)
+            except Exception:
+                pass
+        # Also disconnect our cached connection if it falls outside 0..9
+        if (
+            slim_common.global_connection_id is not None
+            and slim_common.global_connection_id >= 10
+        ):
             try:
                 service.disconnect(slim_common.global_connection_id)
             except Exception:
