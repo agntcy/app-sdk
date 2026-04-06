@@ -119,7 +119,9 @@ class A2AClientFactory:
             # upstream ClientFactory.create() is sync and cannot call
             # await transport.setup().
             base_transport = await self._build_patterns_transport(transport_label_lower)
-            patterns_transport = PatternsClientTransport(base_transport, card, topic)
+            patterns_transport = PatternsClientTransport(
+                base_transport, card, topic, interceptors
+            )
             upstream_client = BaseClient(
                 card,
                 self._config,
@@ -132,6 +134,7 @@ class A2AClientFactory:
                 agent_card=card,
                 transport=base_transport,
                 topic=topic,
+                interceptors=interceptors,
             )
         elif transport_label_lower == "slimrpc":
             # Deferred slimrpc — lazily build the channel factory from

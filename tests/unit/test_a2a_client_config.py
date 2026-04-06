@@ -1235,3 +1235,535 @@ class TestBuildSlimrpcIfNeeded:
 
         # Should not have changed the factory
         assert config.slimrpc_channel_factory is eager_factory
+
+
+# ---------------------------------------------------------------------------
+# Interceptor test helper
+# ---------------------------------------------------------------------------
+
+
+class _RecordingInterceptor:
+    """Test interceptor that records calls and optionally modifies payloads.
+
+    Implements the ``ClientCallInterceptor`` interface without importing it
+    at module level — the ABC is imported lazily inside each test that needs
+    it.  For duck-typing purposes, only the ``intercept`` coroutine is
+    required.
+    """
+
+    def __init__(self, modify_key=None, modify_value=None):
+        self.calls: list[tuple] = []
+        self._modify_key = modify_key
+        self._modify_value = modify_value
+
+    async def intercept(
+        self, method_name, request_payload, http_kwargs, agent_card, context
+    ):
+        self.calls.append((method_name, dict(request_payload), dict(http_kwargs)))
+        if self._modify_key:
+            request_payload[self._modify_key] = self._modify_value
+        return request_payload, http_kwargs
+
+
+def _make_json_rpc_response(result: dict | None = None) -> MagicMock:
+    """Create a mock transport response with a JSON-RPC payload."""
+    resp = MagicMock()
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "result": result
+        or {
+            "kind": "message",
+            "messageId": str(uuid4()),
+            "role": "agent",
+            "parts": [{"kind": "text", "text": "Hello"}],
+        },
+    }
+    resp.payload = json.dumps(payload).encode("utf-8")
+    resp.status_code = 200
+    resp.type = "A2AResponse"
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# PatternsClientTransport interceptor tests
+# ---------------------------------------------------------------------------
+
+
+class TestPatternsClientTransportInterceptors:
+    @pytest.mark.asyncio
+    async def test_send_message_calls_interceptor(self):
+        """send_message should invoke the interceptor with method_name='message/send'."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response()
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+        await pct.send_message(params)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_send_message_uses_modified_payload(self):
+        """Interceptor modifications should reach the underlying transport."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        interceptor = _RecordingInterceptor(
+            modify_key="x-custom", modify_value="injected"
+        )
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response()
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+        await pct.send_message(params)
+
+        # Verify the interceptor was invoked
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+        # Verify the transport received the modified payload by inspecting
+        # the Message object passed to transport.request().  The second
+        # positional arg is the transport Message built from the intercepted
+        # payload.
+        call_args = mock_transport.request.call_args
+        transport_msg = call_args[0][1]  # second positional arg
+        payload_data = transport_msg.payload
+        import json as _json
+
+        # payload may be str or bytes depending on message_translator
+        if isinstance(payload_data, bytes):
+            payload_data = payload_data.decode("utf-8")
+        sent_payload = _json.loads(payload_data)
+        assert sent_payload.get("x-custom") == "injected"
+
+    @pytest.mark.asyncio
+    async def test_get_task_calls_interceptor(self):
+        """get_task should invoke the interceptor with method_name='tasks/get'."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        from a2a.types import TaskQueryParams
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response(
+            result={
+                "kind": "task",
+                "id": "task-1",
+                "contextId": "ctx-1",
+                "status": {"state": "completed"},
+            }
+        )
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        await pct.get_task(TaskQueryParams(id="task-1"))
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "tasks/get"
+
+    @pytest.mark.asyncio
+    async def test_cancel_task_calls_interceptor(self):
+        """cancel_task should invoke the interceptor with method_name='tasks/cancel'."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        from a2a.types import TaskIdParams
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response(
+            result={
+                "kind": "task",
+                "id": "task-1",
+                "contextId": "ctx-1",
+                "status": {"state": "canceled"},
+            }
+        )
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        await pct.cancel_task(TaskIdParams(id="task-1"))
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "tasks/cancel"
+
+    @pytest.mark.asyncio
+    async def test_set_task_callback_calls_interceptor(self):
+        """set_task_callback should invoke the interceptor with the correct method_name."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        from a2a.types import TaskPushNotificationConfig
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response(
+            result={
+                "taskId": "task-1",
+                "pushNotificationConfig": {"url": "http://example.com/callback"},
+            }
+        )
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        await pct.set_task_callback(
+            TaskPushNotificationConfig(
+                taskId="task-1",
+                pushNotificationConfig={"url": "http://example.com/callback"},
+            )
+        )
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "tasks/pushNotificationConfig/set"
+
+    @pytest.mark.asyncio
+    async def test_get_task_callback_calls_interceptor(self):
+        """get_task_callback should invoke the interceptor with the correct method_name."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        from a2a.types import GetTaskPushNotificationConfigParams
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response(
+            result={
+                "taskId": "task-1",
+                "pushNotificationConfig": {"url": "http://example.com/callback"},
+            }
+        )
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        await pct.get_task_callback(GetTaskPushNotificationConfigParams(id="task-1"))
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "tasks/pushNotificationConfig/get"
+
+    @pytest.mark.asyncio
+    async def test_send_message_streaming_calls_interceptor(self):
+        """send_message_streaming should invoke the interceptor with 'message/stream'."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        card = _make_agent_card()
+
+        # Mock request_stream as an async generator
+        stream_response = _make_json_rpc_response()
+
+        async def mock_request_stream(topic, msg):
+            yield stream_response
+
+        mock_transport.request_stream = mock_request_stream
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+
+        # Consume the async generator
+        results = []
+        async for event in pct.send_message_streaming(params):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/stream"
+
+    @pytest.mark.asyncio
+    async def test_interceptor_chaining_order(self):
+        """Multiple interceptors should be applied in order, composing modifications."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        first = _RecordingInterceptor(modify_key="step", modify_value="first")
+        second = _RecordingInterceptor(modify_key="step", modify_value="second")
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response()
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [first, second])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+        await pct.send_message(params)
+
+        # Both interceptors called
+        assert len(first.calls) == 1
+        assert len(second.calls) == 1
+        # Second interceptor sees the modification from the first
+        assert second.calls[0][1].get("step") == "first"
+
+    @pytest.mark.asyncio
+    async def test_no_interceptors_passthrough(self):
+        """With no interceptors, send_message should still work normally."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response()
+        card = _make_agent_card()
+
+        # No interceptors — empty list
+        pct = PatternsClientTransport(mock_transport, card, "topic", [])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+        await pct.send_message(params)
+        assert mock_transport.request.called
+
+    def test_create_forwards_interceptors(self):
+        """PatternsClientTransport.create() should store interceptors."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport("SLIM")
+        config = ClientConfig(slim_transport=mock_transport)
+        card = _make_agent_card(preferred_transport="slimpatterns")
+
+        pct = PatternsClientTransport.create(
+            card, "slim://topic_1", config, [interceptor]
+        )
+        assert pct._interceptors == [interceptor]
+
+
+# ---------------------------------------------------------------------------
+# A2AExperimentalClient interceptor tests
+# ---------------------------------------------------------------------------
+
+
+class TestA2AExperimentalClientInterceptors:
+    def _make_experimental_client(self, interceptors=None):
+        """Helper to construct an A2AExperimentalClient with mocks."""
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+            A2AExperimentalClient,
+        )
+
+        mock_client = MagicMock()
+        mock_client._consumers = []
+        mock_client._middleware = []
+        card = _make_agent_card()
+        mock_transport = _make_mock_transport()
+
+        return (
+            A2AExperimentalClient(
+                client=mock_client,
+                agent_card=card,
+                transport=mock_transport,
+                topic="test_topic",
+                interceptors=interceptors,
+            ),
+            mock_transport,
+            card,
+        )
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_calls_interceptor(self):
+        """broadcast_message should apply the interceptor to the payload."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        # Mock gather_stream to return an empty async iterator
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        await client.broadcast_message(request, recipients=["agent-1"])
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_calls_interceptor(self):
+        """broadcast_message_streaming should apply the interceptor to the payload."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendStreamingMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendStreamingMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        # Mock gather_stream to return an empty async iterator
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        results = []
+        async for event in client.broadcast_message_streaming(
+            request, recipients=["agent-1"]
+        ):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_start_groupchat_calls_interceptor(self):
+        """start_groupchat should apply the interceptor to the init message."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        # Mock start_conversation to return empty list
+        mock_transport.start_conversation = AsyncMock(return_value=[])
+
+        await client.start_groupchat(
+            request, group_channel="group", participants=["a", "b"]
+        )
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_start_streaming_groupchat_calls_interceptor(self):
+        """start_streaming_groupchat should apply the interceptor to the init message."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        # Mock start_streaming_conversation to return empty async iterator
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.start_streaming_conversation = empty_stream
+
+        results = []
+        async for event in client.start_streaming_groupchat(
+            request, group_channel="group", participants=["a", "b"]
+        ):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"

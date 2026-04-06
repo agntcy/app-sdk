@@ -23,7 +23,7 @@ from typing import Any, AsyncIterator, List
 from uuid import uuid4
 
 from a2a.client.client import Client, ClientEvent
-from a2a.client.middleware import ClientCallContext
+from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
 from a2a.types import (
     AgentCard,
     GetTaskPushNotificationConfigParams,
@@ -66,6 +66,7 @@ class A2AExperimentalClient(Client):
         agent_card: AgentCard,
         transport: BaseTransport,
         topic: str,
+        interceptors: list[ClientCallInterceptor] | None = None,
     ) -> None:
         # Initialise the ABC with the inner client's consumers/middleware
         super().__init__(
@@ -76,6 +77,7 @@ class A2AExperimentalClient(Client):
         self._agent_card = agent_card
         self._transport = transport
         self._topic = topic
+        self._interceptors = interceptors or []
 
     # ------------------------------------------------------------------
     # Properties
@@ -100,6 +102,32 @@ class A2AExperimentalClient(Client):
     def topic(self) -> str:
         """The topic used for transport operations."""
         return self._topic
+
+    # ------------------------------------------------------------------
+    # Interceptor support
+    # ------------------------------------------------------------------
+
+    async def _apply_interceptors(
+        self,
+        method_name: str,
+        request_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Apply the interceptor chain to the request payload.
+
+        Experimental operations don't use HTTP, so ``http_kwargs`` is
+        passed as an empty dict to satisfy the interceptor ABC contract.
+        """
+        current_payload = request_payload
+        http_kwargs: dict[str, Any] = {}
+        for interceptor in self._interceptors:
+            current_payload, http_kwargs = await interceptor.intercept(
+                method_name,
+                current_payload,
+                http_kwargs,
+                self._agent_card,
+                None,
+            )
+        return current_payload
 
     # ------------------------------------------------------------------
     # Client ABC — delegate to upstream Client
@@ -213,9 +241,9 @@ class A2AExperimentalClient(Client):
         if not request.id:
             request.id = str(uuid4())
 
-        msg = message_translator(
-            request=request.model_dump(mode="json", exclude_none=True)
-        )
+        payload = request.model_dump(mode="json", exclude_none=True)
+        payload = await self._apply_interceptors("message/send", payload)
+        msg = message_translator(request=payload)
 
         if not broadcast_topic:
             broadcast_topic = self._topic
@@ -273,9 +301,9 @@ class A2AExperimentalClient(Client):
         if not request.id:
             request.id = str(uuid4())
 
-        msg = message_translator(
-            request=request.model_dump(mode="json", exclude_none=True)
-        )
+        payload = request.model_dump(mode="json", exclude_none=True)
+        payload = await self._apply_interceptors("message/send", payload)
+        msg = message_translator(request=payload)
 
         if not broadcast_topic:
             broadcast_topic = self._topic
@@ -368,9 +396,9 @@ class A2AExperimentalClient(Client):
         if not init_message.id:
             init_message.id = str(uuid4())
 
-        msg = message_translator(
-            request=init_message.model_dump(mode="json", exclude_none=True)
-        )
+        payload = init_message.model_dump(mode="json", exclude_none=True)
+        payload = await self._apply_interceptors("message/send", payload)
+        msg = message_translator(request=payload)
         try:
             member_messages = await self._transport.start_conversation(
                 group_channel=group_channel,
@@ -409,9 +437,9 @@ class A2AExperimentalClient(Client):
         if not init_message.id:
             init_message.id = str(uuid4())
 
-        msg = message_translator(
-            request=init_message.model_dump(mode="json", exclude_none=True)
-        )
+        payload = init_message.model_dump(mode="json", exclude_none=True)
+        payload = await self._apply_interceptors("message/send", payload)
+        msg = message_translator(request=payload)
 
         async for raw_member_message in self._transport.start_streaming_conversation(
             group_channel=group_channel,
