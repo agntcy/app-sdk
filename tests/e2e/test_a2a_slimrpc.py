@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from typing import Any
 from uuid import uuid4
 
 import pytest
 from a2a.client import ClientFactory, minimal_agent_card
+from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
 from a2a.types import (
     AgentCapabilities,
+    AgentCard,
     Message,
     Part,
     Role,
@@ -30,6 +33,29 @@ from agntcy_app_sdk.semantic.a2a.client.config import SlimRpcConfig
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+class _RecordingInterceptor(ClientCallInterceptor):
+    """Interceptor that records every call for assertion in tests."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, dict, dict]] = []
+
+    async def intercept(
+        self,
+        method_name: str,
+        request_payload: dict[str, Any],
+        http_kwargs: dict[str, Any],
+        agent_card: AgentCard | None,
+        context: ClientCallContext | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        self.calls.append((method_name, dict(request_payload), dict(http_kwargs)))
+        return request_payload, http_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -355,3 +381,61 @@ async def test_task_status_events(run_a2a_slimrpc_server):
 
     print(f"Status transitions: {[se.status.state.value for se in status_events]}")
     print("=== test_task_status_events passed for SlimRPC ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_interceptor — verify interceptors fire over SlimRPC
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skip(
+    reason="SRPCTransport silently drops interceptors. "
+    "Blocked on https://github.com/agntcy/slim-a2a-python/issues/13"
+)
+@pytest.mark.asyncio
+async def test_interceptor(run_a2a_slimrpc_server):
+    """Interceptor middleware should be invoked on send_message over SlimRPC."""
+    endpoint = TRANSPORT_CONFIGS["SLIM"]
+    agent_name = "default/default/Hello_World_Agent_1.0.0"
+
+    print(f"\n--- test_interceptor | SlimRPC | {endpoint} ---")
+
+    run_a2a_slimrpc_server(endpoint, name=agent_name)
+    await asyncio.sleep(2)
+
+    interceptor = _RecordingInterceptor()
+
+    config = A2AClientConfig(
+        slimrpc_config=SlimRpcConfig(
+            namespace="default",
+            group="default",
+            name="test_interceptor",
+            slim_url=endpoint,
+        ),
+    )
+
+    factory = A2AClientFactory(config)
+    agent_card = minimal_agent_card(agent_name, ["slimrpc"])
+    client = await factory.create(card=agent_card, interceptors=[interceptor])
+
+    request = _make_send_message()
+    async for _event in client.send_message(request=request):
+        pass
+
+    # --- Core assertion: interceptor was called ---
+    assert len(interceptor.calls) >= 1, (
+        "Interceptor was never called for SlimRPC transport. "
+        "Interceptors are likely being dropped by SRPCTransport."
+    )
+
+    method_names = [call[0] for call in interceptor.calls]
+    assert "message/send" in method_names or "message/stream" in method_names, (
+        f"Interceptor called with unexpected methods: {method_names}"
+    )
+
+    print(
+        f"Interceptor called {len(interceptor.calls)} time(s): "
+        f"{[c[0] for c in interceptor.calls]}"
+    )
+
+    print("=== test_interceptor passed for SlimRPC ===\n")

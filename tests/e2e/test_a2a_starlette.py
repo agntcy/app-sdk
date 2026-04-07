@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from typing import Any
 
 import pytest
+from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
 from a2a.types import (
+    AgentCard,
     Message,
     Role,
     SendMessageResponse,
@@ -25,6 +28,25 @@ from tests.e2e.conftest import (
     make_send_request,
     make_streaming_send_request,
 )
+
+
+class _RecordingInterceptor(ClientCallInterceptor):
+    """Interceptor that records every call for assertion in tests."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, dict, dict]] = []
+
+    async def intercept(
+        self,
+        method_name: str,
+        request_payload: dict[str, Any],
+        http_kwargs: dict[str, Any],
+        agent_card: AgentCard | None,
+        context: ClientCallContext | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        self.calls.append((method_name, dict(request_payload), dict(http_kwargs)))
+        return request_payload, http_kwargs
+
 
 pytest_plugins = "pytest_asyncio"
 
@@ -700,3 +722,77 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
         await transport_instance.close()
 
     print(f"=== ✅ test_broadcast_task_status_events passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_interceptor — verify interceptors fire across all transports
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
+)
+@pytest.mark.asyncio
+async def test_interceptor(run_a2a_server, transport):
+    """Interceptor middleware should be invoked on send_message for every transport."""
+    endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_interceptor | {transport} | {endpoint} ---")
+
+    run_a2a_server(transport, endpoint)
+    await asyncio.sleep(1)
+
+    interceptor = _RecordingInterceptor()
+    factory = AgntcyFactory(enable_tracing=True)
+    transport_instance = None
+
+    if transport == "JSONRPC":
+        session_start()
+        client = await A2AClientFactory.connect(
+            endpoint,
+            config=ClientConfig(streaming=False),
+            interceptors=[interceptor],
+        )
+    else:
+        transport_instance = factory.create_transport(
+            transport, endpoint=endpoint, name="default/default/default"
+        )
+
+        session_start()
+
+        config_kwargs = {}
+        if transport == "SLIM":
+            config_kwargs["slim_transport"] = transport_instance
+        elif transport == "NATS":
+            config_kwargs["nats_transport"] = transport_instance
+
+        card = make_agent_card("default/default/Hello_World_Agent_1.0.0", transport)
+        a2a = factory.a2a(ClientConfig(**config_kwargs))
+        client = await a2a.create(card, interceptors=[interceptor])
+
+    assert client is not None, "Client was not created"
+
+    request = make_message()
+    async for _event in client.send_message(request):
+        pass
+
+    # --- Core assertion: interceptor was called ---
+    assert len(interceptor.calls) >= 1, (
+        f"Interceptor was never called for transport {transport}. "
+        f"Interceptors are likely being dropped by the transport layer."
+    )
+
+    # --- Verify it was called with the correct method name ---
+    method_names = [call[0] for call in interceptor.calls]
+    assert "message/send" in method_names or "message/stream" in method_names, (
+        f"Interceptor called with unexpected methods: {method_names}"
+    )
+
+    print(
+        f"Interceptor called {len(interceptor.calls)} time(s): "
+        f"{[c[0] for c in interceptor.calls]}"
+    )
+
+    if transport_instance:
+        await transport_instance.close()
+
+    print(f"=== ✅ test_interceptor passed for {transport} ===\n")

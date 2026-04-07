@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 
 from a2a.client.client import Client
+from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
 from a2a.types import (
     AgentCard,
     AgentInterface,
@@ -1242,13 +1243,11 @@ class TestBuildSlimrpcIfNeeded:
 # ---------------------------------------------------------------------------
 
 
-class _RecordingInterceptor:
+class _RecordingInterceptor(ClientCallInterceptor):
     """Test interceptor that records calls and optionally modifies payloads.
 
-    Implements the ``ClientCallInterceptor`` interface without importing it
-    at module level — the ABC is imported lazily inside each test that needs
-    it.  For duck-typing purposes, only the ``intercept`` coroutine is
-    required.
+    Subclasses the real ``ClientCallInterceptor`` ABC so that tests verify
+    the actual interface contract rather than relying on duck-typing.
     """
 
     def __init__(self, modify_key=None, modify_value=None):
@@ -1257,8 +1256,13 @@ class _RecordingInterceptor:
         self._modify_value = modify_value
 
     async def intercept(
-        self, method_name, request_payload, http_kwargs, agent_card, context
-    ):
+        self,
+        method_name: str,
+        request_payload: dict,
+        http_kwargs: dict,
+        agent_card: AgentCard | None,
+        context: ClientCallContext | None,
+    ) -> tuple[dict, dict]:
         self.calls.append((method_name, dict(request_payload), dict(http_kwargs)))
         if self._modify_key:
             request_payload[self._modify_key] = self._modify_value
@@ -1767,3 +1771,141 @@ class TestA2AExperimentalClientInterceptors:
 
         assert len(interceptor.calls) == 1
         assert interceptor.calls[0][0] == "message/send"
+
+
+# ---------------------------------------------------------------------------
+# Factory-level interceptor integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestFactoryInterceptorIntegration:
+    """Verify interceptors are wired end-to-end through
+    ``A2AClientFactory.create()`` for the patterns transport path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_factory_create_patterns_interceptor_invoked(self):
+        """Interceptor passed to factory.create() should fire on send_message
+        through the full BaseClient -> PatternsClientTransport chain."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport("SLIM")
+        mock_transport.request.return_value = _make_json_rpc_response()
+
+        config = ClientConfig(slim_transport=mock_transport)
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            url="slim://test_topic",
+            preferred_transport="slimpatterns",
+        )
+
+        client = await factory.create(card, interceptors=[interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        msg = A2AMessage(
+            messageId=str(uuid4()),
+            role="user",
+            parts=[Part(root=TextPart(kind="text", text="Hello"))],
+        )
+
+        # send_message is an async iterator; consume it
+        async for _event in client.send_message(msg):
+            pass
+
+        # The interceptor must have been called at least once via
+        # PatternsClientTransport._send_rpc -> _apply_interceptors
+        assert len(interceptor.calls) >= 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_factory_create_patterns_interceptor_modifies_payload(self):
+        """Payload modifications made by the interceptor should reach the
+        underlying transport when going through the full factory path."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        interceptor = _RecordingInterceptor(
+            modify_key="x-trace-id", modify_value="abc-123"
+        )
+        mock_transport = _make_mock_transport("SLIM")
+        mock_transport.request.return_value = _make_json_rpc_response()
+
+        config = ClientConfig(slim_transport=mock_transport)
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            url="slim://test_topic",
+            preferred_transport="slimpatterns",
+        )
+
+        client = await factory.create(card, interceptors=[interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        msg = A2AMessage(
+            messageId=str(uuid4()),
+            role="user",
+            parts=[Part(root=TextPart(kind="text", text="Hello"))],
+        )
+
+        async for _event in client.send_message(msg):
+            pass
+
+        # Verify the interceptor was called
+        assert len(interceptor.calls) == 1
+
+        # Verify the modified payload reached the underlying transport
+        call_args = mock_transport.request.call_args
+        transport_msg = call_args[0][1]
+        payload_data = transport_msg.payload
+        if isinstance(payload_data, bytes):
+            payload_data = payload_data.decode("utf-8")
+        sent_payload = json.loads(payload_data)
+        assert sent_payload.get("x-trace-id") == "abc-123"
+
+    @pytest.mark.asyncio
+    async def test_factory_create_patterns_consumers_wired(self):
+        """Consumers passed to factory.create() should be invoked on
+        send_message responses through the full factory path."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        consumed_events: list = []
+
+        async def recording_consumer(event, card):
+            consumed_events.append((event, card))
+
+        mock_transport = _make_mock_transport("SLIM")
+        mock_transport.request.return_value = _make_json_rpc_response()
+
+        config = ClientConfig(slim_transport=mock_transport)
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            url="slim://test_topic",
+            preferred_transport="slimpatterns",
+        )
+
+        client = await factory.create(
+            card,
+            consumers=[recording_consumer],
+        )
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        msg = A2AMessage(
+            messageId=str(uuid4()),
+            role="user",
+            parts=[Part(root=TextPart(kind="text", text="Hello"))],
+        )
+
+        async for _event in client.send_message(msg):
+            pass
+
+        # The consumer should have been invoked by the inner BaseClient
+        # during send_message processing
+        assert len(consumed_events) >= 1
