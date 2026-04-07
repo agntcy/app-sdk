@@ -405,7 +405,7 @@ async def test_task_status_events(run_a2a_server, transport):
     print(f"\n--- test_task_status_events | {transport} | {endpoint} ---")
 
     run_a2a_server(transport, endpoint, streaming=True)
-    await asyncio.sleep(1)
+    await asyncio.sleep(3)
 
     transport_instance = None
 
@@ -739,7 +739,7 @@ async def test_interceptor(run_a2a_server, transport):
     print(f"\n--- test_interceptor | {transport} | {endpoint} ---")
 
     run_a2a_server(transport, endpoint)
-    await asyncio.sleep(1)
+    await asyncio.sleep(5)
 
     interceptor = _RecordingInterceptor()
     factory = AgntcyFactory(enable_tracing=True)
