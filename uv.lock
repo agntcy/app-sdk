@@ -73,7 +73,7 @@ requires-dist = [
     { name = "agntcy-identity-service-sdk", specifier = "==0.0.7" },
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "ioa-observe-sdk", specifier = "==1.0.34" },
+    { name = "ioa-observe-sdk", specifier = "==1.0.41" },
     { name = "langchain-community", specifier = ">=0.3.24" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.10.1" },
     { name = "nats-py", specifier = ">=2.10.0,<3" },
@@ -1120,7 +1120,7 @@ wheels = [
 
 [[package]]
 name = "ioa-observe-sdk"
-version = "1.0.34"
+version = "1.0.41"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -1163,9 +1163,9 @@ dependencies = [
     { name = "pytest-vcr" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/f1/dec0283da1cda029f6a2ada2f515ae906579b9d65482ac98e969e99f68d7/ioa_observe_sdk-1.0.34.tar.gz", hash = "sha256:f2201730bc47f1dfbe9700e69641a194987f28ec3cc99372d2817368ea548f04", size = 75111, upload-time = "2026-02-12T16:07:30.206Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d1/7d/e0dae4152aca17664814c99771a87ca0ec241dd056ffe4c5e1bd6ec4c8e2/ioa_observe_sdk-1.0.41.tar.gz", hash = "sha256:2b384f6bbc690e8759eed3eab013f5d13a3be70220afab6c5c1207e1332d44bb", size = 83151, upload-time = "2026-04-08T06:44:28.303Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/40/376cd740f07076badf552587a71a84419e5b2f344bc3ce171d330f2f7dc1/ioa_observe_sdk-1.0.34-py3-none-any.whl", hash = "sha256:04e4ac2360af52edb5ec8af04537f1c14844a76fcdf444d3e90a1ae1720860b6", size = 82748, upload-time = "2026-02-12T16:07:28.835Z" },
+    { url = "https://files.pythonhosted.org/packages/13/bc/c2c62f65ba0051787029f7e1071abb457b2d8112b92c10011b92711ba911/ioa_observe_sdk-1.0.41-py3-none-any.whl", hash = "sha256:27e765fc79e63f2cc796556c5f1dcbcceac54f7903b133fe847ea4334bd3c5e9", size = 91325, upload-time = "2026-04-08T06:44:27.091Z" },
 ]
 
 [[package]]
