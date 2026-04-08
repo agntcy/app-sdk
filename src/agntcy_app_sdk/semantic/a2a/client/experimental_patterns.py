@@ -130,6 +130,58 @@ class A2AExperimentalClient(Client):
         return current_payload
 
     # ------------------------------------------------------------------
+    # Consumer support — fire registered consumers for experimental ops
+    # ------------------------------------------------------------------
+
+    async def _consume_response(self, response: SendMessageResponse) -> None:
+        """Extract a consumable event from a ``SendMessageResponse`` and
+        feed it to registered consumers.
+
+        A ``SendMessageResponse`` is a JSON-RPC envelope whose inner
+        result is either a ``Task`` or a ``Message``.  Error responses
+        are silently skipped (no meaningful event to deliver).
+        """
+        from a2a.types import JSONRPCErrorResponse, SendMessageSuccessResponse
+
+        inner = response.root
+        if isinstance(inner, JSONRPCErrorResponse):
+            return
+
+        if isinstance(inner, SendMessageSuccessResponse):
+            result = inner.result
+            if isinstance(result, Task):
+                await self.consume((result, None), self._agent_card)
+            elif isinstance(result, A2AMessage):
+                await self.consume(result, self._agent_card)
+
+    async def _consume_typed_event(
+        self,
+        event: SendMessageResponse | TaskStatusUpdateEvent | Task,
+    ) -> None:
+        """Consume a typed event produced by streaming experimental methods.
+
+        Handles the three object types that ``broadcast_message_streaming``
+        yields:
+
+        * ``Task`` — consumed as ``(task, None)``
+        * ``TaskStatusUpdateEvent`` — a minimal ``Task`` stub is built from
+          the event's ``task_id`` / ``context_id`` / ``status`` so that
+          consumers receive a ``(task_stub, update)`` pair.
+        * ``SendMessageResponse`` — delegates to ``_consume_response()``.
+        """
+        if isinstance(event, Task):
+            await self.consume((event, None), self._agent_card)
+        elif isinstance(event, TaskStatusUpdateEvent):
+            task_stub = Task(
+                id=event.task_id,
+                contextId=event.context_id,
+                status=event.status,
+            )
+            await self.consume((task_stub, event), self._agent_card)
+        elif isinstance(event, SendMessageResponse):
+            await self._consume_response(event)
+
+    # ------------------------------------------------------------------
     # Client ABC — delegate to upstream Client
     # ------------------------------------------------------------------
 
@@ -266,7 +318,9 @@ class A2AExperimentalClient(Client):
                         continue
 
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
-                    broadcast_responses.append(SendMessageResponse(resp))
+                    smr = SendMessageResponse(resp)
+                    await self._consume_response(smr)
+                    broadcast_responses.append(smr)
 
                     if len(broadcast_responses) >= expected:
                         break
@@ -334,7 +388,9 @@ class A2AExperimentalClient(Client):
                         logger.warning(
                             f"Received forbidden error in broadcast streaming response: {resp}"
                         )
-                        yield SendMessageResponse(get_identity_auth_error())
+                        error_resp = SendMessageResponse(get_identity_auth_error())
+                        await self._consume_response(error_resp)
+                        yield error_resp
                         finals_received += 1
                     elif raw_resp.type == "A2AStatusUpdate":
                         # Intermediate status event — parse the same way
@@ -343,9 +399,13 @@ class A2AExperimentalClient(Client):
                         if isinstance(result, dict):
                             kind = result.get("kind")
                             if kind == "status-update":
-                                yield TaskStatusUpdateEvent.model_validate(result)
+                                event = TaskStatusUpdateEvent.model_validate(result)
+                                await self._consume_typed_event(event)
+                                yield event
                             elif kind == "task" or "status" in result:
-                                yield Task.model_validate(result)
+                                event = Task.model_validate(result)
+                                await self._consume_typed_event(event)
+                                yield event
                             else:
                                 # Unrecognised intermediate — skip
                                 logger.debug(
@@ -362,13 +422,21 @@ class A2AExperimentalClient(Client):
                         if isinstance(result, dict):
                             kind = result.get("kind")
                             if kind == "status-update":
-                                yield TaskStatusUpdateEvent.model_validate(result)
+                                event = TaskStatusUpdateEvent.model_validate(result)
+                                await self._consume_typed_event(event)
+                                yield event
                             elif kind == "task" or "status" in result:
-                                yield Task.model_validate(result)
+                                event = Task.model_validate(result)
+                                await self._consume_typed_event(event)
+                                yield event
                             else:
-                                yield SendMessageResponse(resp)
+                                smr = SendMessageResponse(resp)
+                                await self._consume_response(smr)
+                                yield smr
                         else:
-                            yield SendMessageResponse(resp)
+                            smr = SendMessageResponse(resp)
+                            await self._consume_response(smr)
+                            yield smr
                         finals_received += 1
 
                     if finals_received >= expected_finals:
@@ -411,7 +479,9 @@ class A2AExperimentalClient(Client):
             for raw_msg in member_messages:
                 try:
                     resp = json.loads(raw_msg.payload.decode("utf-8"))
-                    groupchat_messages.append(SendMessageResponse(resp))
+                    smr = SendMessageResponse(resp)
+                    await self._consume_response(smr)
+                    groupchat_messages.append(smr)
                 except Exception as e:
                     logger.error(f"Error decoding JSON response: {e}")
                     continue
@@ -449,4 +519,6 @@ class A2AExperimentalClient(Client):
             timeout=timeout,
         ):
             message = json.loads(raw_member_message.payload.decode("utf-8"))
-            yield SendMessageResponse(message)
+            smr = SendMessageResponse(message)
+            await self._consume_response(smr)
+            yield smr

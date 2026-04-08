@@ -796,3 +796,299 @@ async def test_interceptor(run_a2a_server, transport):
         await transport_instance.close()
 
     print(f"=== ✅ test_interceptor passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_broadcast_consumer — consumer callbacks fire for broadcast
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
+)
+@pytest.mark.asyncio
+async def test_broadcast_consumer(run_a2a_server, transport):
+    """Consumer callbacks should fire for broadcast_message on pattern transports."""
+    if transport == "A2A":
+        pytest.skip("Broadcast not applicable for raw A2A transport.")
+    if transport == "JSONRPC":
+        pytest.skip("Broadcast not applicable for JSONRPC transport.")
+
+    endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_broadcast_consumer | {transport} | {endpoint} ---")
+
+    factory = AgntcyFactory(enable_tracing=True)
+    transport_instance = factory.create_transport(
+        transport, endpoint=endpoint, name="default/default/default"
+    )
+
+    agent_names = [
+        "default/default/agent1",
+        "default/default/agent2",
+        "default/default/agent3",
+    ]
+    for name in agent_names:
+        run_a2a_server(transport, endpoint, name=name)
+
+    await asyncio.sleep(5)
+
+    consumed_events: list = []
+
+    async def recording_consumer(event, card):
+        consumed_events.append((event, card))
+
+    config_kwargs = {}
+    if transport == "SLIM":
+        config_kwargs["slim_transport"] = transport_instance
+    elif transport == "NATS":
+        config_kwargs["nats_transport"] = transport_instance
+
+    card = make_agent_card(agent_names[0], transport)
+    a2a = factory.a2a(ClientConfig(**config_kwargs))
+    client = await a2a.create(card, consumers=[recording_consumer])
+    assert client is not None, "Client was not created"
+
+    request = make_send_request()
+    responses = await client.broadcast_message(request, recipients=agent_names)
+
+    print(f"Received {len(responses)} broadcast responses")
+    assert len(responses) == 3, "Did not receive expected number of broadcast responses"
+
+    # --- Core assertion: consumer was invoked for each response ---
+    assert len(consumed_events) == 3, (
+        f"Expected 3 consumer invocations, got {len(consumed_events)}. "
+        f"Consumers are not being called for broadcast_message."
+    )
+    for event, event_card in consumed_events:
+        assert event_card == card
+
+    if transport_instance:
+        await transport_instance.close()
+
+    print(f"=== ✅ test_broadcast_consumer passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_broadcast_streaming_consumer — consumer callbacks fire for streaming broadcast
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
+)
+@pytest.mark.asyncio
+async def test_broadcast_streaming_consumer(run_a2a_server, transport):
+    """Consumer callbacks should fire for broadcast_message_streaming."""
+    if transport == "A2A":
+        pytest.skip("Broadcast not applicable for raw A2A transport.")
+    if transport == "JSONRPC":
+        pytest.skip("Broadcast not applicable for JSONRPC transport.")
+
+    endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_broadcast_streaming_consumer | {transport} | {endpoint} ---")
+
+    factory = AgntcyFactory(enable_tracing=True)
+    transport_instance = factory.create_transport(
+        transport, endpoint=endpoint, name="default/default/default"
+    )
+
+    agent_names = [
+        "default/default/agent1",
+        "default/default/agent2",
+        "default/default/agent3",
+    ]
+    for name in agent_names:
+        run_a2a_server(transport, endpoint, name=name)
+
+    await asyncio.sleep(5)
+
+    consumed_events: list = []
+
+    async def recording_consumer(event, card):
+        consumed_events.append((event, card))
+
+    config_kwargs = {}
+    if transport == "SLIM":
+        config_kwargs["slim_transport"] = transport_instance
+    elif transport == "NATS":
+        config_kwargs["nats_transport"] = transport_instance
+
+    card = make_agent_card(agent_names[0], transport)
+    a2a = factory.a2a(ClientConfig(**config_kwargs))
+    client = await a2a.create(card, consumers=[recording_consumer])
+    assert client is not None, "Client was not created"
+
+    request = make_send_request()
+    responses = []
+    async for resp in client.broadcast_message_streaming(
+        request,
+        message_limit=3,
+        recipients=agent_names,
+    ):
+        responses.append(resp)
+
+    print(f"Received {len(responses)} streaming responses")
+    assert len(responses) == 3, "Did not receive expected number of broadcast responses"
+
+    # --- Core assertion: consumer was invoked for each yielded event ---
+    assert len(consumed_events) >= 3, (
+        f"Expected at least 3 consumer invocations, got {len(consumed_events)}. "
+        f"Consumers are not being called for broadcast_message_streaming."
+    )
+    for event, event_card in consumed_events:
+        assert event_card == card
+
+    if transport_instance:
+        await transport_instance.close()
+
+    print(f"=== ✅ test_broadcast_streaming_consumer passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_groupchat_consumer — consumer callbacks fire for groupchat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
+)
+@pytest.mark.asyncio
+async def test_groupchat_consumer(run_a2a_server, transport):
+    """Consumer callbacks should fire for start_groupchat."""
+    if transport == "A2A":
+        pytest.skip("Group chat not applicable for raw A2A transport.")
+    if transport == "JSONRPC":
+        pytest.skip("Group chat not applicable for JSONRPC transport.")
+    if transport == "NATS":
+        pytest.skip("Group chat not applicable for NATS transport.")
+
+    endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_groupchat_consumer | {transport} | {endpoint} ---")
+
+    participants = ["default/default/foo", "default/default/bar"]
+    for name in participants:
+        run_a2a_server(transport, endpoint, name=name)
+
+    await asyncio.sleep(3)
+
+    factory = AgntcyFactory(enable_tracing=True)
+    transport_instance = factory.create_transport(
+        transport, endpoint=endpoint, name="default/default/default"
+    )
+
+    consumed_events: list = []
+
+    async def recording_consumer(event, card):
+        consumed_events.append((event, card))
+
+    config_kwargs = {}
+    if transport == "SLIM":
+        config_kwargs["slim_transport"] = transport_instance
+    elif transport == "NATS":
+        config_kwargs["nats_transport"] = transport_instance
+
+    card = make_agent_card(participants[0], transport)
+    a2a = factory.a2a(ClientConfig(**config_kwargs))
+    client = await a2a.create(card, consumers=[recording_consumer])
+    assert client is not None, "Client was not created"
+
+    request = make_send_request("This is a groupchat message")
+    responses = await client.start_groupchat(
+        init_message=request,
+        group_channel="zoo",
+        participants=participants,
+        end_message="DELIVERED",
+        timeout=30,
+    )
+
+    assert len(responses) > 0, "No group chat responses received (possible timeout)"
+
+    # --- Core assertion: consumer was invoked for each response ---
+    assert len(consumed_events) == len(responses), (
+        f"Expected {len(responses)} consumer invocations, got {len(consumed_events)}. "
+        f"Consumers are not being called for start_groupchat."
+    )
+    for event, event_card in consumed_events:
+        assert event_card == card
+
+    if transport_instance:
+        await transport_instance.close()
+
+    print(f"=== ✅ test_groupchat_consumer passed for {transport} ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_streaming_groupchat_consumer — consumer callbacks fire for streaming groupchat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
+)
+@pytest.mark.asyncio
+async def test_streaming_groupchat_consumer(run_a2a_server, transport):
+    """Consumer callbacks should fire for start_streaming_groupchat."""
+    if transport == "A2A":
+        pytest.skip("Group chat not applicable for raw A2A transport.")
+    if transport == "JSONRPC":
+        pytest.skip("Group chat not applicable for JSONRPC transport.")
+    if transport == "NATS":
+        pytest.skip("Group chat not applicable for NATS transport.")
+
+    endpoint = TRANSPORT_CONFIGS[transport]
+    print(f"\n--- test_streaming_groupchat_consumer | {transport} | {endpoint} ---")
+
+    participants = ["default/default/foo", "default/default/bar"]
+    for name in participants:
+        run_a2a_server(transport, endpoint, name=name)
+
+    await asyncio.sleep(3)
+
+    factory = AgntcyFactory(enable_tracing=True)
+    transport_instance = factory.create_transport(
+        transport, endpoint=endpoint, name="default/default/default"
+    )
+
+    consumed_events: list = []
+
+    async def recording_consumer(event, card):
+        consumed_events.append((event, card))
+
+    config_kwargs = {}
+    if transport == "SLIM":
+        config_kwargs["slim_transport"] = transport_instance
+    elif transport == "NATS":
+        config_kwargs["nats_transport"] = transport_instance
+
+    card = make_agent_card(participants[0], transport)
+    a2a = factory.a2a(ClientConfig(**config_kwargs))
+    client = await a2a.create(card, consumers=[recording_consumer])
+    assert client is not None, "Client was not created"
+
+    request = make_send_request("This is a groupchat message")
+    messages = []
+    async for message in client.start_streaming_groupchat(
+        init_message=request,
+        group_channel="zoo",
+        participants=participants,
+        end_message="DELIVERED",
+        timeout=30,
+    ):
+        messages.append(message)
+
+    assert len(messages) > 0, (
+        "No streaming group chat messages received (possible timeout)"
+    )
+
+    # --- Core assertion: consumer was invoked for each yielded message ---
+    assert len(consumed_events) == len(messages), (
+        f"Expected {len(messages)} consumer invocations, got {len(consumed_events)}. "
+        f"Consumers are not being called for start_streaming_groupchat."
+    )
+    for event, event_card in consumed_events:
+        assert event_card == card
+
+    if transport_instance:
+        await transport_instance.close()
+
+    print(f"=== ✅ test_streaming_groupchat_consumer passed for {transport} ===\n")
