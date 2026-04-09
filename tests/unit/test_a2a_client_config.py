@@ -1263,7 +1263,9 @@ class _RecordingInterceptor(ClientCallInterceptor):
         agent_card: AgentCard | None,
         context: ClientCallContext | None,
     ) -> tuple[dict, dict]:
-        self.calls.append((method_name, dict(request_payload), dict(http_kwargs)))
+        self.calls.append(
+            (method_name, dict(request_payload), dict(http_kwargs), context)
+        )
         if self._modify_key:
             request_payload[self._modify_key] = self._modify_value
         return request_payload, http_kwargs
@@ -1771,6 +1773,195 @@ class TestA2AExperimentalClientInterceptors:
 
         assert len(interceptor.calls) == 1
         assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_forwards_context(self):
+        """broadcast_message should forward context to the interceptor."""
+        from a2a.client.middleware import ClientCallContext
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        ctx = ClientCallContext()
+        await client.broadcast_message(request, context=ctx, recipients=["agent-1"])
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is ctx
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_forwards_context(self):
+        """broadcast_message_streaming should forward context to the interceptor."""
+        from a2a.client.middleware import ClientCallContext
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendStreamingMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendStreamingMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        ctx = ClientCallContext()
+        results = []
+        async for event in client.broadcast_message_streaming(
+            request, context=ctx, recipients=["agent-1"]
+        ):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is ctx
+
+    @pytest.mark.asyncio
+    async def test_start_groupchat_forwards_context(self):
+        """start_groupchat should forward context to the interceptor."""
+        from a2a.client.middleware import ClientCallContext
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        mock_transport.start_conversation = AsyncMock(return_value=[])
+
+        ctx = ClientCallContext()
+        await client.start_groupchat(
+            request, context=ctx, group_channel="group", participants=["a", "b"]
+        )
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is ctx
+
+    @pytest.mark.asyncio
+    async def test_start_streaming_groupchat_forwards_context(self):
+        """start_streaming_groupchat should forward context to the interceptor."""
+        from a2a.client.middleware import ClientCallContext
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.start_streaming_conversation = empty_stream
+
+        ctx = ClientCallContext()
+        results = []
+        async for event in client.start_streaming_groupchat(
+            request, context=ctx, group_channel="group", participants=["a", "b"]
+        ):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is ctx
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_context_defaults_to_none(self):
+        """broadcast_message without context= should pass None to interceptor."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        await client.broadcast_message(request, recipients=["agent-1"])
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is None
 
 
 # ---------------------------------------------------------------------------

@@ -111,6 +111,7 @@ class A2AExperimentalClient(Client):
         self,
         method_name: str,
         request_payload: dict[str, Any],
+        context: ClientCallContext | None = None,
     ) -> dict[str, Any]:
         """Apply the interceptor chain to the request payload.
 
@@ -125,7 +126,7 @@ class A2AExperimentalClient(Client):
                 current_payload,
                 http_kwargs,
                 self._agent_card,
-                None,
+                context,
             )
         return current_payload
 
@@ -279,6 +280,8 @@ class A2AExperimentalClient(Client):
     async def broadcast_message(
         self,
         request: SendMessageRequest | SendStreamingMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
         recipients: List[str] | None = None,
         broadcast_topic: str | None = None,
         timeout: float = 60.0,
@@ -294,7 +297,7 @@ class A2AExperimentalClient(Client):
             request.id = str(uuid4())
 
         payload = request.model_dump(mode="json", exclude_none=True)
-        payload = await self._apply_interceptors("message/send", payload)
+        payload = await self._apply_interceptors("message/send", payload, context)
         msg = message_translator(request=payload)
 
         if not broadcast_topic:
@@ -340,6 +343,8 @@ class A2AExperimentalClient(Client):
     async def broadcast_message_streaming(
         self,
         request: SendStreamingMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
         recipients: List[str] | None = None,
         broadcast_topic: str | None = None,
         message_limit: int | None = None,
@@ -356,7 +361,7 @@ class A2AExperimentalClient(Client):
             request.id = str(uuid4())
 
         payload = request.model_dump(mode="json", exclude_none=True)
-        payload = await self._apply_interceptors("message/send", payload)
+        payload = await self._apply_interceptors("message/send", payload, context)
         msg = message_translator(request=payload)
 
         if not broadcast_topic:
@@ -455,6 +460,8 @@ class A2AExperimentalClient(Client):
     async def start_groupchat(
         self,
         init_message: SendMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
         group_channel: str,
         participants: List[str],
         timeout: float = 60,
@@ -465,7 +472,7 @@ class A2AExperimentalClient(Client):
             init_message.id = str(uuid4())
 
         payload = init_message.model_dump(mode="json", exclude_none=True)
-        payload = await self._apply_interceptors("message/send", payload)
+        payload = await self._apply_interceptors("message/send", payload, context)
         msg = message_translator(request=payload)
         try:
             member_messages = await self._transport.start_conversation(
@@ -498,6 +505,8 @@ class A2AExperimentalClient(Client):
     async def start_streaming_groupchat(
         self,
         init_message: SendMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
         group_channel: str,
         participants: List[str],
         timeout: float = 60,
@@ -508,7 +517,7 @@ class A2AExperimentalClient(Client):
             init_message.id = str(uuid4())
 
         payload = init_message.model_dump(mode="json", exclude_none=True)
-        payload = await self._apply_interceptors("message/send", payload)
+        payload = await self._apply_interceptors("message/send", payload, context)
         msg = message_translator(request=payload)
 
         async for raw_member_message in self._transport.start_streaming_conversation(
