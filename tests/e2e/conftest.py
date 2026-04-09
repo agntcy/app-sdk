@@ -17,6 +17,7 @@ from a2a.types import (
     Message,
     MessageSendParams,
     SendMessageRequest,
+    SendStreamingMessageRequest,
 )
 
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
@@ -66,10 +67,27 @@ def make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageRe
     return SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
 
 
+def make_streaming_send_request(
+    text: str = "how much is 10 USD in INR?",
+) -> SendStreamingMessageRequest:
+    """Build a SendStreamingMessageRequest (for broadcast streaming with status events)."""
+    payload: dict[str, Any] = {
+        "message": {
+            "role": "user",
+            "parts": [{"type": "text", "text": text}],
+            "messageId": str(uuid.uuid4()),
+        },
+    }
+    return SendStreamingMessageRequest(
+        id=str(uuid.uuid4()), params=MessageSendParams(**payload)
+    )
+
+
 def make_agent_card(
     name: str,
     transport_type: str = "JSONRPC",
     http_port: int = 9999,
+    streaming: bool = False,
 ) -> AgentCard:
     """Build a single AgentCard that declares all transports.
 
@@ -86,6 +104,9 @@ def make_agent_card(
             ``"SLIMRPC"`` — sets ``preferredTransport`` so the client
             negotiation picks this transport first.
         http_port: Port for the JSONRPC interface (default 9999).
+        streaming: If ``True``, set ``capabilities.streaming = True`` on
+            the card so the upstream ``BaseClient`` takes the streaming
+            code path.
     """
     preferred = PREFERRED_TRANSPORT[transport_type]
 
@@ -107,7 +128,9 @@ def make_agent_card(
         version="1.0.0",
         defaultInputModes=["text"],
         defaultOutputModes=["text"],
-        capabilities=AgentCapabilities(),
+        capabilities=AgentCapabilities(streaming=True)
+        if streaming
+        else AgentCapabilities(),
         skills=[],
         preferredTransport=preferred,
         additional_interfaces=[
@@ -186,21 +209,24 @@ def _reset_slim_globals():
     import slim_bindings
     from agntcy_app_sdk.transport.slim import common as slim_common
 
-    # Disconnect ALL connections from SLIM service
+    # Disconnect ALL connections from SLIM service.
+    # Tests may create multiple connections (the global singleton connection
+    # at "http://…:46357" AND a dedicated slimrpc connection at
+    # "http://…:46357/").  The dedicated connection ID is not stored in any
+    # global, so we brute-force disconnect IDs 0..9 to cover all possible
+    # open connections.
     try:
         service = slim_bindings.get_global_service()
-        # Disconnect connection 0 (typically client connection)
-        try:
-            service.disconnect(0)
-        except Exception:
-            pass
-        # Disconnect connection 1 (typically server connection)
-        try:
-            service.disconnect(1)
-        except Exception:
-            pass
-        # Disconnect our cached connection if it exists
-        if slim_common.global_connection_id is not None:
+        for conn_id in range(10):
+            try:
+                service.disconnect(conn_id)
+            except Exception:
+                pass
+        # Also disconnect our cached connection if it falls outside 0..9
+        if (
+            slim_common.global_connection_id is not None
+            and slim_common.global_connection_id >= 10
+        ):
             try:
                 service.disconnect(slim_common.global_connection_id)
             except Exception:
@@ -233,20 +259,24 @@ def run_a2a_server():
         version="1.0.0",
         name="default/default/Hello_World_Agent_1.0.0",
         topic="",
+        streaming=False,
     ):
+        extra_args = [
+            "--name",
+            name,
+            "--topic",
+            topic,
+            "--version",
+            version,
+        ]
+        if streaming:
+            extra_args.append("--streaming")
         proc = _spawn_server(
             procs,
             "tests/server/a2a_starlette_server.py",
             transport,
             endpoint,
-            extra_args=[
-                "--name",
-                name,
-                "--topic",
-                topic,
-                "--version",
-                version,
-            ],
+            extra_args=extra_args,
         )
         # For JSONRPC (HTTP), wait until the server is accepting connections
         if transport == "JSONRPC":
@@ -351,18 +381,22 @@ def run_a2a_slimrpc_server():
         endpoint,
         name="default/default/Hello_World_Agent_1.0.0",
         version="1.0.0",
+        streaming=False,
     ):
+        extra_args = [
+            "--name",
+            name,
+            "--version",
+            version,
+        ]
+        if streaming:
+            extra_args.append("--streaming")
         return _spawn_server(
             procs,
             "tests/server/a2a_slimrpc_server.py",
             transport=None,
             endpoint=endpoint,
-            extra_args=[
-                "--name",
-                name,
-                "--version",
-                version,
-            ],
+            extra_args=extra_args,
         )
 
     yield _run

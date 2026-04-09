@@ -326,8 +326,17 @@ class A2AExperimentalServer:
             "utf-8"
         )
 
-    async def handle_message(self, message: Message) -> Message:
-        """Handle an incoming request by calling JSONRPCHandler directly."""
+    async def handle_message(self, message: Message, *, publish_fn=None) -> Message:
+        """Handle an incoming request by calling JSONRPCHandler directly.
+
+        Args:
+            message: The incoming transport-level message.
+            publish_fn: Optional async callable to publish intermediate
+                messages (e.g. ``A2AStatusUpdate``) back to the client
+                *before* returning the final response.  When ``None``,
+                streaming handlers are drained to their last item
+                (backward-compatible behaviour).
+        """
         assert self._handler is not None, "JSONRPCHandler is not set up"
 
         logger.debug(f"Handling A2A message with payload: {message}")
@@ -437,15 +446,38 @@ class A2AExperimentalServer:
                 )
 
             handler_method = getattr(self._handler, handler_method_name)
-            handler_result = await handler_method(typed_request, context=context)
+
+            # Some handler methods are async generators (message/stream,
+            # tasks/resubscribe) — calling them returns an AsyncIterable
+            # without ``await``.  Coroutine-based handlers need ``await``.
+            handler_result = handler_method(typed_request, context=context)
+            if inspect.isawaitable(handler_result):
+                handler_result = await handler_result
 
             # ---- Handle streaming responses --------------------------------
-            # message/stream and tasks/resubscribe return AsyncIterable;
-            # drain the generator and return the final item since
-            # transport doesn't support streaming.
+            # message/stream and tasks/resubscribe return AsyncIterable.
+            # When a ``publish_fn`` is provided (SLIM streaming), each
+            # intermediate item is published as an ``A2AStatusUpdate``
+            # message back to the client; only the final item is returned
+            # as the ``A2AResponse``.
+            # When ``publish_fn`` is None (backward compat / NATS), the
+            # generator is drained to its last item and returned directly.
             if isinstance(handler_result, AsyncIterable):
                 last_item = None
                 async for item in handler_result:
+                    if publish_fn is not None and last_item is not None:
+                        # Publish the *previous* item as an intermediate
+                        # status update before replacing it.
+                        intermediate_payload = json.dumps(
+                            last_item.root.model_dump(mode="json", exclude_none=True)
+                        ).encode("utf-8")
+                        await publish_fn(
+                            Message(
+                                type="A2AStatusUpdate",
+                                payload=intermediate_payload,
+                                reply_to=message.reply_to,
+                            )
+                        )
                     last_item = item
                 if last_item is None:
                     return Message(

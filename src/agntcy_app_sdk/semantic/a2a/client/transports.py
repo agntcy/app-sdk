@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
@@ -84,10 +84,12 @@ class PatternsClientTransport(ClientTransport):
         transport: BaseTransport,
         agent_card: AgentCard,
         topic: str,
+        interceptors: list[ClientCallInterceptor] | None = None,
     ) -> None:
         self._transport = transport
         self._agent_card = agent_card
         self._topic = topic
+        self._interceptors = interceptors or []
 
     # ------------------------------------------------------------------
     # Factory method — matches ``TransportProducer`` signature
@@ -131,14 +133,48 @@ class PatternsClientTransport(ClientTransport):
                 f"or use A2AClientFactory.create() for deferred construction."
             )
 
-        return cls(base_transport, card, topic)
+        return cls(base_transport, card, topic, interceptors)
+
+    # ------------------------------------------------------------------
+    # Interceptor support
+    # ------------------------------------------------------------------
+
+    async def _apply_interceptors(
+        self,
+        method_name: str,
+        request_payload: dict[str, Any],
+        context: ClientCallContext | None,
+    ) -> dict[str, Any]:
+        """Apply the interceptor chain to the request payload.
+
+        Patterns transports don't use HTTP, so ``http_kwargs`` is passed
+        as an empty dict to satisfy the interceptor ABC contract.  Only
+        the (potentially modified) payload is returned.
+        """
+        current_payload = request_payload
+        http_kwargs: dict[str, Any] = {}
+        for interceptor in self._interceptors:
+            current_payload, http_kwargs = await interceptor.intercept(
+                method_name,
+                current_payload,
+                http_kwargs,
+                self._agent_card,
+                context,
+            )
+        return current_payload
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _send_rpc(self, rpc_payload: dict) -> dict:
+    async def _send_rpc(
+        self,
+        rpc_payload: dict,
+        method_name: str = "",
+        context: ClientCallContext | None = None,
+    ) -> dict:
         """Send an A2A JSON-RPC payload through the underlying transport."""
+        rpc_payload = await self._apply_interceptors(method_name, rpc_payload, context)
         headers: dict[str, str] = {}
 
         if is_identity_auth_enabled():
@@ -195,7 +231,7 @@ class PatternsClientTransport(ClientTransport):
 
         rpc_request = SendMessageRequest(id=str(uuid4()), params=request)
         rpc_payload = rpc_request.model_dump(mode="json", exclude_none=True)
-        response = await self._send_rpc(rpc_payload)
+        response = await self._send_rpc(rpc_payload, "message/send", context)
 
         # Parse result from JSON-RPC response
         result = response.get("result", response)
@@ -214,12 +250,84 @@ class PatternsClientTransport(ClientTransport):
     ) -> AsyncGenerator[
         Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None
     ]:
-        """Streaming falls back to a single send_message for patterns
-        transports (they are inherently request/reply)."""
-        result = await self.send_message(
-            request, context=context, extensions=extensions
+        """Stream A2A events from the server over the patterns transport.
+
+        Uses ``request_stream()`` on the underlying transport, which keeps
+        a SLIM point-to-point session open across multiple messages.
+        Each intermediate ``A2AStatusUpdate`` message is parsed and
+        yielded as a ``TaskStatusUpdateEvent``; the final
+        ``A2AResponse`` is yielded as a ``Task`` or ``Message``.
+
+        Falls back to a single ``send_message()`` if the transport
+        does not implement ``request_stream()``.
+        """
+        from uuid import uuid4
+
+        from a2a.types import SendStreamingMessageRequest
+
+        rpc_request = SendStreamingMessageRequest(id=str(uuid4()), params=request)
+        rpc_payload = rpc_request.model_dump(mode="json", exclude_none=True)
+        rpc_payload = await self._apply_interceptors(
+            "message/stream", rpc_payload, context
         )
-        yield result
+
+        headers: dict[str, str] = {}
+        if is_identity_auth_enabled():
+            try:
+                from identityservice.sdk import IdentityServiceSdk
+
+                access_token = IdentityServiceSdk().access_token()
+                if access_token:
+                    headers["Authorization"] = f"Bearer {access_token}"
+            except Exception as e:
+                logger.error("Failed to get access token: %s", e)
+
+        transport_msg = message_translator(request=rpc_payload, headers=headers)
+
+        try:
+            async for response in self._transport.request_stream(
+                self._topic, transport_msg
+            ):
+                response_payload = json.loads(response.payload.decode("utf-8"))
+
+                # Handle JSON-RPC error responses
+                if "error" in response_payload:
+                    error_data = response_payload.get("error", {})
+                    logger.error(
+                        "Server returned JSON-RPC error in streaming response: %s",
+                        error_data,
+                    )
+                    raise RuntimeError(
+                        f"Server error: {error_data.get('message', error_data)}"
+                    )
+
+                result = response_payload.get("result", response_payload)
+
+                if isinstance(result, dict):
+                    kind = result.get("kind")
+                    if kind == "status-update":
+                        yield TaskStatusUpdateEvent.model_validate(result)
+                    elif kind == "task" or "status" in result:
+                        yield Task.model_validate(result)
+                    else:
+                        yield Message.model_validate(result)
+                else:
+                    yield Message.model_validate(response_payload)
+
+                # The transport Message.type distinguishes intermediate
+                # ("A2AStatusUpdate") from final ("A2AResponse") messages.
+                # Stop reading once the final response has been yielded,
+                # mirroring how SSE/gRPC transports end when the server
+                # closes the stream.
+                if response.type == "A2AResponse":
+                    break
+        except NotImplementedError:
+            # Transport doesn't support streaming — fall back to single
+            # request/reply.
+            result = await self.send_message(
+                request, context=context, extensions=extensions
+            )
+            yield result
 
     async def get_task(
         self,
@@ -235,7 +343,7 @@ class PatternsClientTransport(ClientTransport):
             "method": "tasks/get",
             "params": request.model_dump(mode="json", exclude_none=True),
         }
-        response = await self._send_rpc(rpc_payload)
+        response = await self._send_rpc(rpc_payload, "tasks/get", context)
         return Task.model_validate(response.get("result", response))
 
     async def cancel_task(
@@ -252,7 +360,7 @@ class PatternsClientTransport(ClientTransport):
             "method": "tasks/cancel",
             "params": request.model_dump(mode="json", exclude_none=True),
         }
-        response = await self._send_rpc(rpc_payload)
+        response = await self._send_rpc(rpc_payload, "tasks/cancel", context)
         return Task.model_validate(response.get("result", response))
 
     async def set_task_callback(
@@ -269,7 +377,9 @@ class PatternsClientTransport(ClientTransport):
             "method": "tasks/pushNotificationConfig/set",
             "params": request.model_dump(mode="json", exclude_none=True),
         }
-        response = await self._send_rpc(rpc_payload)
+        response = await self._send_rpc(
+            rpc_payload, "tasks/pushNotificationConfig/set", context
+        )
         return TaskPushNotificationConfig.model_validate(
             response.get("result", response)
         )
@@ -288,7 +398,9 @@ class PatternsClientTransport(ClientTransport):
             "method": "tasks/pushNotificationConfig/get",
             "params": request.model_dump(mode="json", exclude_none=True),
         }
-        response = await self._send_rpc(rpc_payload)
+        response = await self._send_rpc(
+            rpc_payload, "tasks/pushNotificationConfig/get", context
+        )
         return TaskPushNotificationConfig.model_validate(
             response.get("result", response)
         )

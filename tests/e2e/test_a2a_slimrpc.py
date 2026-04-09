@@ -2,11 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from typing import Any
 from uuid import uuid4
 
 import pytest
 from a2a.client import ClientFactory, minimal_agent_card
-from a2a.types import Message, Part, Role, TextPart
+from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    Message,
+    Part,
+    Role,
+    Task,
+    TaskState,
+    TaskStatusUpdateEvent,
+    TextPart,
+)
 
 from slima2a import setup_slim_client
 from slima2a.client_transport import (
@@ -21,6 +33,29 @@ from agntcy_app_sdk.semantic.a2a.client.config import SlimRpcConfig
 from tests.e2e.conftest import TRANSPORT_CONFIGS
 
 pytest_plugins = "pytest_asyncio"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+class _RecordingInterceptor(ClientCallInterceptor):
+    """Interceptor that records every call for assertion in tests."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, dict, dict]] = []
+
+    async def intercept(
+        self,
+        method_name: str,
+        request_payload: dict[str, Any],
+        http_kwargs: dict[str, Any],
+        agent_card: AgentCard | None,
+        context: ClientCallContext | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        self.calls.append((method_name, dict(request_payload), dict(http_kwargs)))
+        return request_payload, http_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -228,3 +263,179 @@ async def test_client_factory_deferred(run_a2a_slimrpc_server):
     print(f"Agent responded: {output}")
 
     print("=== test_client_factory_deferred passed for SlimRPC ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_task_status_events — streaming TaskStatusUpdateEvent lifecycle
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_status_events(run_a2a_slimrpc_server):
+    """Verify the client receives streaming TaskStatusUpdateEvent objects over SlimRPC.
+
+    Uses deferred SlimRpcConfig (matching test_client_factory_deferred pattern).
+    The HelloWorldStreamingAgentExecutor produces:
+      1. An initial Task event
+      2. N × TaskStatusUpdateEvent with state=working (one per token)
+      3. 1 × TaskStatusUpdateEvent with state=completed, final=True
+    """
+    endpoint = TRANSPORT_CONFIGS["SLIM"]
+    agent_name = "default/default/Hello_World_Agent_1.0.0"
+
+    print(f"\n--- test_task_status_events | SlimRPC | {endpoint} ---")
+
+    # 1. Spawn SlimRPC server with streaming executor
+    run_a2a_slimrpc_server(endpoint, name=agent_name, streaming=True)
+    await asyncio.sleep(2)
+
+    # 2. Build SDK ClientConfig with streaming enabled + deferred SlimRpcConfig
+    config = A2AClientConfig(
+        streaming=True,
+        slimrpc_config=SlimRpcConfig(
+            namespace="default",
+            group="default",
+            name="test_task_status_events",
+            slim_url=endpoint,
+        ),
+    )
+
+    # 3. Create client via A2AClientFactory
+    #    Use a card with capabilities.streaming=True so BaseClient uses the
+    #    streaming path (minimal_agent_card leaves streaming=None which
+    #    upstream treats as "no streaming").
+    factory = A2AClientFactory(config)
+    agent_card = minimal_agent_card(agent_name, ["slimrpc"])
+    agent_card.capabilities = AgentCapabilities(streaming=True)
+    client = await factory.create(card=agent_card)
+
+    # 4. Collect all events from the streaming response
+    request = _make_send_message()
+    events: list[tuple[Task, TaskStatusUpdateEvent | None]] = []
+    async for event in client.send_message(request=request):
+        if isinstance(event, Message):
+            pytest.fail(
+                f"Expected (Task, update) tuples but got a bare Message: {event}"
+            )
+        events.append(event)
+
+    print(f"Received {len(events)} events")
+
+    # --- Assertion 1: multiple events received (not collapsed) ---
+    assert len(events) >= 3, (
+        f"Expected at least 3 events (initial + working + completed), got {len(events)}"
+    )
+
+    # --- Assertion 2: first event is the initial Task ---
+    first_task, first_update = events[0]
+    assert isinstance(first_task, Task), "First event should contain a Task"
+    assert first_update is None, "First event update should be None (initial Task)"
+
+    # Separate status update events (skip the initial Task event)
+    status_events = [update for _, update in events[1:] if update is not None]
+    assert len(status_events) >= 2, (
+        f"Expected at least 2 status updates (working + completed), got {len(status_events)}"
+    )
+
+    # --- Assertion 3: all status updates have correct kind ---
+    for se in status_events:
+        assert isinstance(se, TaskStatusUpdateEvent), (
+            f"Expected TaskStatusUpdateEvent, got {type(se)}"
+        )
+        assert se.kind == "status-update", (
+            f"Expected kind='status-update', got '{se.kind}'"
+        )
+
+    # --- Assertion 4: at least one working state ---
+    working_events = [
+        se for se in status_events if se.status.state == TaskState.working
+    ]
+    assert len(working_events) >= 1, "Expected at least one working status update"
+
+    # --- Assertion 5: exactly one completed state ---
+    completed_events = [
+        se for se in status_events if se.status.state == TaskState.completed
+    ]
+    assert len(completed_events) == 1, (
+        f"Expected exactly 1 completed status update, got {len(completed_events)}"
+    )
+
+    # --- Assertion 6: last status event is completed + final ---
+    last_status = status_events[-1]
+    assert last_status.status.state == TaskState.completed, (
+        f"Last status should be completed, got {last_status.status.state}"
+    )
+    assert last_status.final is True, "Last status event should have final=True"
+
+    # --- Assertion 7: working events are not final ---
+    for we in working_events:
+        assert we.final is False, (
+            f"Working status events should have final=False, got final={we.final}"
+        )
+
+    # --- Assertion 8: working events carry a message ---
+    for we in working_events:
+        assert we.status.message is not None, (
+            "Working status events should carry a message with the streamed token"
+        )
+
+    print(f"Status transitions: {[se.status.state.value for se in status_events]}")
+    print("=== test_task_status_events passed for SlimRPC ===\n")
+
+
+# ---------------------------------------------------------------------------
+# test_interceptor — verify interceptors fire over SlimRPC
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skip(
+    reason="SRPCTransport silently drops interceptors. "
+    "Blocked on https://github.com/agntcy/slim-a2a-python/issues/13"
+)
+@pytest.mark.asyncio
+async def test_interceptor(run_a2a_slimrpc_server):
+    """Interceptor middleware should be invoked on send_message over SlimRPC."""
+    endpoint = TRANSPORT_CONFIGS["SLIM"]
+    agent_name = "default/default/Hello_World_Agent_1.0.0"
+
+    print(f"\n--- test_interceptor | SlimRPC | {endpoint} ---")
+
+    run_a2a_slimrpc_server(endpoint, name=agent_name)
+    await asyncio.sleep(2)
+
+    interceptor = _RecordingInterceptor()
+
+    config = A2AClientConfig(
+        slimrpc_config=SlimRpcConfig(
+            namespace="default",
+            group="default",
+            name="test_interceptor",
+            slim_url=endpoint,
+        ),
+    )
+
+    factory = A2AClientFactory(config)
+    agent_card = minimal_agent_card(agent_name, ["slimrpc"])
+    client = await factory.create(card=agent_card, interceptors=[interceptor])
+
+    request = _make_send_message()
+    async for _event in client.send_message(request=request):
+        pass
+
+    # --- Core assertion: interceptor was called ---
+    assert len(interceptor.calls) >= 1, (
+        "Interceptor was never called for SlimRPC transport. "
+        "Interceptors are likely being dropped by SRPCTransport."
+    )
+
+    method_names = [call[0] for call in interceptor.calls]
+    assert "message/send" in method_names or "message/stream" in method_names, (
+        f"Interceptor called with unexpected methods: {method_names}"
+    )
+
+    print(
+        f"Interceptor called {len(interceptor.calls)} time(s): "
+        f"{[c[0] for c in interceptor.calls]}"
+    )
+
+    print("=== test_interceptor passed for SlimRPC ===\n")

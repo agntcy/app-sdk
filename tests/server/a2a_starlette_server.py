@@ -4,10 +4,12 @@
 try:
     from tests.server.agent_executor import (
         HelloWorldAgentExecutor,  # type: ignore[import-untyped]
+        HelloWorldStreamingAgentExecutor,  # type: ignore[import-untyped]
     )
 except ImportError:
     from agent_executor import (
         HelloWorldAgentExecutor,  # type: ignore[import-untyped]
+        HelloWorldStreamingAgentExecutor,  # type: ignore[import-untyped]
     )
 
 import argparse
@@ -42,6 +44,7 @@ def _build_a2a_server(
     transport_type: str | None = None,
     topic: str | None = None,
     endpoint: str | None = None,
+    streaming: bool = False,
 ) -> A2AStarletteApplication:
     """Build an A2A server with a HelloWorld agent.
 
@@ -67,8 +70,13 @@ def _build_a2a_server(
         supportsAuthenticatedExtendedCard=False,
         additional_interfaces=additional_interfaces,
     )
+    executor = (
+        HelloWorldStreamingAgentExecutor(name)
+        if streaming
+        else HelloWorldAgentExecutor(name)
+    )
     request_handler = DefaultRequestHandler(
-        agent_executor=HelloWorldAgentExecutor(name),
+        agent_executor=executor,
         task_store=InMemoryTaskStore(),
     )
     return A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler)
@@ -146,6 +154,7 @@ async def main(
     endpoint: str,
     version: str = "1.0.0",
     block: bool = True,
+    streaming: bool = False,
 ):
     """Create a bridge between an A2A server and a transport."""
     server = _build_a2a_server(
@@ -154,6 +163,7 @@ async def main(
         transport_type=transport_type,
         topic=topic or None,
         endpoint=endpoint,
+        streaming=streaming,
     )
 
     if transport_type == "JSONRPC":
@@ -224,6 +234,12 @@ if __name__ == "__main__":
         dest="block",
         help="Run the server in non-blocking mode (default: blocking)",
     )
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        default=False,
+        help="Use the streaming agent executor (default: non-streaming)",
+    )
 
     args = parser.parse_args()
     asyncio.run(
@@ -234,5 +250,6 @@ if __name__ == "__main__":
             args.endpoint,
             args.version,
             args.block,
+            args.streaming,
         )
     )

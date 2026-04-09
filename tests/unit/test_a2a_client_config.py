@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 
 from a2a.client.client import Client
+from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
 from a2a.types import (
     AgentCard,
     AgentInterface,
@@ -1235,3 +1236,1331 @@ class TestBuildSlimrpcIfNeeded:
 
         # Should not have changed the factory
         assert config.slimrpc_channel_factory is eager_factory
+
+
+# ---------------------------------------------------------------------------
+# Interceptor test helper
+# ---------------------------------------------------------------------------
+
+
+class _RecordingInterceptor(ClientCallInterceptor):
+    """Test interceptor that records calls and optionally modifies payloads.
+
+    Subclasses the real ``ClientCallInterceptor`` ABC so that tests verify
+    the actual interface contract rather than relying on duck-typing.
+    """
+
+    def __init__(self, modify_key=None, modify_value=None):
+        self.calls: list[tuple] = []
+        self._modify_key = modify_key
+        self._modify_value = modify_value
+
+    async def intercept(
+        self,
+        method_name: str,
+        request_payload: dict,
+        http_kwargs: dict,
+        agent_card: AgentCard | None,
+        context: ClientCallContext | None,
+    ) -> tuple[dict, dict]:
+        self.calls.append(
+            (method_name, dict(request_payload), dict(http_kwargs), context)
+        )
+        if self._modify_key:
+            request_payload[self._modify_key] = self._modify_value
+        return request_payload, http_kwargs
+
+
+def _make_json_rpc_response(result: dict | None = None) -> MagicMock:
+    """Create a mock transport response with a JSON-RPC payload."""
+    resp = MagicMock()
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "result": result
+        or {
+            "kind": "message",
+            "messageId": str(uuid4()),
+            "role": "agent",
+            "parts": [{"kind": "text", "text": "Hello"}],
+        },
+    }
+    resp.payload = json.dumps(payload).encode("utf-8")
+    resp.status_code = 200
+    resp.type = "A2AResponse"
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# PatternsClientTransport interceptor tests
+# ---------------------------------------------------------------------------
+
+
+class TestPatternsClientTransportInterceptors:
+    @pytest.mark.asyncio
+    async def test_send_message_calls_interceptor(self):
+        """send_message should invoke the interceptor with method_name='message/send'."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response()
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+        await pct.send_message(params)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_send_message_uses_modified_payload(self):
+        """Interceptor modifications should reach the underlying transport."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        interceptor = _RecordingInterceptor(
+            modify_key="x-custom", modify_value="injected"
+        )
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response()
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+        await pct.send_message(params)
+
+        # Verify the interceptor was invoked
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+        # Verify the transport received the modified payload by inspecting
+        # the Message object passed to transport.request().  The second
+        # positional arg is the transport Message built from the intercepted
+        # payload.
+        call_args = mock_transport.request.call_args
+        transport_msg = call_args[0][1]  # second positional arg
+        payload_data = transport_msg.payload
+        import json as _json
+
+        # payload may be str or bytes depending on message_translator
+        if isinstance(payload_data, bytes):
+            payload_data = payload_data.decode("utf-8")
+        sent_payload = _json.loads(payload_data)
+        assert sent_payload.get("x-custom") == "injected"
+
+    @pytest.mark.asyncio
+    async def test_get_task_calls_interceptor(self):
+        """get_task should invoke the interceptor with method_name='tasks/get'."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        from a2a.types import TaskQueryParams
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response(
+            result={
+                "kind": "task",
+                "id": "task-1",
+                "contextId": "ctx-1",
+                "status": {"state": "completed"},
+            }
+        )
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        await pct.get_task(TaskQueryParams(id="task-1"))
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "tasks/get"
+
+    @pytest.mark.asyncio
+    async def test_cancel_task_calls_interceptor(self):
+        """cancel_task should invoke the interceptor with method_name='tasks/cancel'."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        from a2a.types import TaskIdParams
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response(
+            result={
+                "kind": "task",
+                "id": "task-1",
+                "contextId": "ctx-1",
+                "status": {"state": "canceled"},
+            }
+        )
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        await pct.cancel_task(TaskIdParams(id="task-1"))
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "tasks/cancel"
+
+    @pytest.mark.asyncio
+    async def test_set_task_callback_calls_interceptor(self):
+        """set_task_callback should invoke the interceptor with the correct method_name."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        from a2a.types import TaskPushNotificationConfig
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response(
+            result={
+                "taskId": "task-1",
+                "pushNotificationConfig": {"url": "http://example.com/callback"},
+            }
+        )
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        await pct.set_task_callback(
+            TaskPushNotificationConfig(
+                taskId="task-1",
+                pushNotificationConfig={"url": "http://example.com/callback"},
+            )
+        )
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "tasks/pushNotificationConfig/set"
+
+    @pytest.mark.asyncio
+    async def test_get_task_callback_calls_interceptor(self):
+        """get_task_callback should invoke the interceptor with the correct method_name."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        from a2a.types import GetTaskPushNotificationConfigParams
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response(
+            result={
+                "taskId": "task-1",
+                "pushNotificationConfig": {"url": "http://example.com/callback"},
+            }
+        )
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        await pct.get_task_callback(GetTaskPushNotificationConfigParams(id="task-1"))
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "tasks/pushNotificationConfig/get"
+
+    @pytest.mark.asyncio
+    async def test_send_message_streaming_calls_interceptor(self):
+        """send_message_streaming should invoke the interceptor with 'message/stream'."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport()
+        card = _make_agent_card()
+
+        # Mock request_stream as an async generator
+        stream_response = _make_json_rpc_response()
+
+        async def mock_request_stream(topic, msg):
+            yield stream_response
+
+        mock_transport.request_stream = mock_request_stream
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+
+        # Consume the async generator
+        results = []
+        async for event in pct.send_message_streaming(params):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/stream"
+
+    @pytest.mark.asyncio
+    async def test_interceptor_chaining_order(self):
+        """Multiple interceptors should be applied in order, composing modifications."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        first = _RecordingInterceptor(modify_key="step", modify_value="first")
+        second = _RecordingInterceptor(modify_key="step", modify_value="second")
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response()
+        card = _make_agent_card()
+
+        pct = PatternsClientTransport(mock_transport, card, "topic", [first, second])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+        await pct.send_message(params)
+
+        # Both interceptors called
+        assert len(first.calls) == 1
+        assert len(second.calls) == 1
+        # Second interceptor sees the modification from the first
+        assert second.calls[0][1].get("step") == "first"
+
+    @pytest.mark.asyncio
+    async def test_no_interceptors_passthrough(self):
+        """With no interceptors, send_message should still work normally."""
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _make_json_rpc_response()
+        card = _make_agent_card()
+
+        # No interceptors — empty list
+        pct = PatternsClientTransport(mock_transport, card, "topic", [])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        params = MessageSendParams(
+            message=A2AMessage(
+                messageId=str(uuid4()),
+                role="user",
+                parts=[Part(root=TextPart(kind="text", text="Hi"))],
+            )
+        )
+        await pct.send_message(params)
+        assert mock_transport.request.called
+
+    def test_create_forwards_interceptors(self):
+        """PatternsClientTransport.create() should store interceptors."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.transports import (
+            PatternsClientTransport,
+        )
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport("SLIM")
+        config = ClientConfig(slim_transport=mock_transport)
+        card = _make_agent_card(preferred_transport="slimpatterns")
+
+        pct = PatternsClientTransport.create(
+            card, "slim://topic_1", config, [interceptor]
+        )
+        assert pct._interceptors == [interceptor]
+
+
+# ---------------------------------------------------------------------------
+# A2AExperimentalClient interceptor tests
+# ---------------------------------------------------------------------------
+
+
+class TestA2AExperimentalClientInterceptors:
+    def _make_experimental_client(self, interceptors=None):
+        """Helper to construct an A2AExperimentalClient with mocks."""
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+            A2AExperimentalClient,
+        )
+
+        mock_client = MagicMock()
+        mock_client._consumers = []
+        mock_client._middleware = []
+        card = _make_agent_card()
+        mock_transport = _make_mock_transport()
+
+        return (
+            A2AExperimentalClient(
+                client=mock_client,
+                agent_card=card,
+                transport=mock_transport,
+                topic="test_topic",
+                interceptors=interceptors,
+            ),
+            mock_transport,
+            card,
+        )
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_calls_interceptor(self):
+        """broadcast_message should apply the interceptor to the payload."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        # Mock gather_stream to return an empty async iterator
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        await client.broadcast_message(request, recipients=["agent-1"])
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_calls_interceptor(self):
+        """broadcast_message_streaming should apply the interceptor to the payload."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendStreamingMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendStreamingMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        # Mock gather_stream to return an empty async iterator
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        results = []
+        async for event in client.broadcast_message_streaming(
+            request, recipients=["agent-1"]
+        ):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_start_groupchat_calls_interceptor(self):
+        """start_groupchat should apply the interceptor to the init message."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        # Mock start_conversation to return empty list
+        mock_transport.start_conversation = AsyncMock(return_value=[])
+
+        await client.start_groupchat(
+            request, group_channel="group", participants=["a", "b"]
+        )
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_start_streaming_groupchat_calls_interceptor(self):
+        """start_streaming_groupchat should apply the interceptor to the init message."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        # Mock start_streaming_conversation to return empty async iterator
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.start_streaming_conversation = empty_stream
+
+        results = []
+        async for event in client.start_streaming_groupchat(
+            request, group_channel="group", participants=["a", "b"]
+        ):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_forwards_context(self):
+        """broadcast_message should forward context to the interceptor."""
+        from a2a.client.middleware import ClientCallContext
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        ctx = ClientCallContext()
+        await client.broadcast_message(request, context=ctx, recipients=["agent-1"])
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is ctx
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_forwards_context(self):
+        """broadcast_message_streaming should forward context to the interceptor."""
+        from a2a.client.middleware import ClientCallContext
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendStreamingMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendStreamingMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        ctx = ClientCallContext()
+        results = []
+        async for event in client.broadcast_message_streaming(
+            request, context=ctx, recipients=["agent-1"]
+        ):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is ctx
+
+    @pytest.mark.asyncio
+    async def test_start_groupchat_forwards_context(self):
+        """start_groupchat should forward context to the interceptor."""
+        from a2a.client.middleware import ClientCallContext
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        mock_transport.start_conversation = AsyncMock(return_value=[])
+
+        ctx = ClientCallContext()
+        await client.start_groupchat(
+            request, context=ctx, group_channel="group", participants=["a", "b"]
+        )
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is ctx
+
+    @pytest.mark.asyncio
+    async def test_start_streaming_groupchat_forwards_context(self):
+        """start_streaming_groupchat should forward context to the interceptor."""
+        from a2a.client.middleware import ClientCallContext
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.start_streaming_conversation = empty_stream
+
+        ctx = ClientCallContext()
+        results = []
+        async for event in client.start_streaming_groupchat(
+            request, context=ctx, group_channel="group", participants=["a", "b"]
+        ):
+            results.append(event)
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is ctx
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_context_defaults_to_none(self):
+        """broadcast_message without context= should pass None to interceptor."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = self._make_experimental_client([interceptor])
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        await client.broadcast_message(request, recipients=["agent-1"])
+
+        assert len(interceptor.calls) == 1
+        assert interceptor.calls[0][3] is None
+
+
+# ---------------------------------------------------------------------------
+# Factory-level interceptor integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestFactoryInterceptorIntegration:
+    """Verify interceptors are wired end-to-end through
+    ``A2AClientFactory.create()`` for the patterns transport path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_factory_create_patterns_interceptor_invoked(self):
+        """Interceptor passed to factory.create() should fire on send_message
+        through the full BaseClient -> PatternsClientTransport chain."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        interceptor = _RecordingInterceptor()
+        mock_transport = _make_mock_transport("SLIM")
+        mock_transport.request.return_value = _make_json_rpc_response()
+
+        config = ClientConfig(slim_transport=mock_transport)
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            url="slim://test_topic",
+            preferred_transport="slimpatterns",
+        )
+
+        client = await factory.create(card, interceptors=[interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        msg = A2AMessage(
+            messageId=str(uuid4()),
+            role="user",
+            parts=[Part(root=TextPart(kind="text", text="Hello"))],
+        )
+
+        # send_message is an async iterator; consume it
+        async for _event in client.send_message(msg):
+            pass
+
+        # The interceptor must have been called at least once via
+        # PatternsClientTransport._send_rpc -> _apply_interceptors
+        assert len(interceptor.calls) >= 1
+        assert interceptor.calls[0][0] == "message/send"
+
+    @pytest.mark.asyncio
+    async def test_factory_create_patterns_interceptor_modifies_payload(self):
+        """Payload modifications made by the interceptor should reach the
+        underlying transport when going through the full factory path."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        interceptor = _RecordingInterceptor(
+            modify_key="x-trace-id", modify_value="abc-123"
+        )
+        mock_transport = _make_mock_transport("SLIM")
+        mock_transport.request.return_value = _make_json_rpc_response()
+
+        config = ClientConfig(slim_transport=mock_transport)
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            url="slim://test_topic",
+            preferred_transport="slimpatterns",
+        )
+
+        client = await factory.create(card, interceptors=[interceptor])
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        msg = A2AMessage(
+            messageId=str(uuid4()),
+            role="user",
+            parts=[Part(root=TextPart(kind="text", text="Hello"))],
+        )
+
+        async for _event in client.send_message(msg):
+            pass
+
+        # Verify the interceptor was called
+        assert len(interceptor.calls) == 1
+
+        # Verify the modified payload reached the underlying transport
+        call_args = mock_transport.request.call_args
+        transport_msg = call_args[0][1]
+        payload_data = transport_msg.payload
+        if isinstance(payload_data, bytes):
+            payload_data = payload_data.decode("utf-8")
+        sent_payload = json.loads(payload_data)
+        assert sent_payload.get("x-trace-id") == "abc-123"
+
+    @pytest.mark.asyncio
+    async def test_factory_create_patterns_consumers_wired(self):
+        """Consumers passed to factory.create() should be invoked on
+        send_message responses through the full factory path."""
+        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+
+        consumed_events: list = []
+
+        async def recording_consumer(event, card):
+            consumed_events.append((event, card))
+
+        mock_transport = _make_mock_transport("SLIM")
+        mock_transport.request.return_value = _make_json_rpc_response()
+
+        config = ClientConfig(slim_transport=mock_transport)
+        factory = A2AClientFactory(config)
+
+        card = _make_agent_card(
+            url="slim://test_topic",
+            preferred_transport="slimpatterns",
+        )
+
+        client = await factory.create(
+            card,
+            consumers=[recording_consumer],
+        )
+
+        from a2a.types import Message as A2AMessage, Part, TextPart
+
+        msg = A2AMessage(
+            messageId=str(uuid4()),
+            role="user",
+            parts=[Part(root=TextPart(kind="text", text="Hello"))],
+        )
+
+        async for _event in client.send_message(msg):
+            pass
+
+        # The consumer should have been invoked by the inner BaseClient
+        # during send_message processing
+        assert len(consumed_events) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Experimental-client consumer tests
+# ---------------------------------------------------------------------------
+
+
+class TestA2AExperimentalClientConsumers:
+    """Verify that consumer callbacks fire for all experimental operations."""
+
+    def _make_experimental_client_with_consumer(self):
+        """Helper to build an ``A2AExperimentalClient`` with a recording consumer.
+
+        The recording consumer is placed on the mock inner client's
+        ``_consumers`` list so that ``super().__init__()`` copies it into
+        the experimental client's own ``_consumers``.
+        """
+        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+            A2AExperimentalClient,
+        )
+
+        consumed_events: list = []
+
+        async def recording_consumer(event, card):
+            consumed_events.append((event, card))
+
+        mock_client = MagicMock()
+        mock_client._consumers = [recording_consumer]
+        mock_client._middleware = []
+        card = _make_agent_card()
+        mock_transport = _make_mock_transport()
+
+        client = A2AExperimentalClient(
+            client=mock_client,
+            agent_card=card,
+            transport=mock_transport,
+            topic="test_topic",
+        )
+        return client, mock_transport, card, consumed_events
+
+    # -- broadcast_message --------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_consumer_fires(self):
+        """broadcast_message should invoke consumers for each response."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        client, mock_transport, card, consumed = (
+            self._make_experimental_client_with_consumer()
+        )
+
+        task_result = {
+            "kind": "task",
+            "id": "task-1",
+            "contextId": "ctx-1",
+            "status": {"state": "completed"},
+        }
+        mock_resp = MagicMock()
+        mock_resp.type = "A2AResponse"
+        mock_resp.payload = json.dumps(
+            {"jsonrpc": "2.0", "id": "1", "result": task_result}
+        ).encode("utf-8")
+
+        async def one_response(*args, **kwargs):
+            yield mock_resp
+
+        mock_transport.gather_stream = one_response
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+        await client.broadcast_message(request, recipients=["agent-1"])
+
+        assert len(consumed) == 1
+        event, event_card = consumed[0]
+        # Event should be (Task, None)
+        assert isinstance(event, tuple)
+        assert event[1] is None
+        assert event_card == card
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_consumer_with_message_result(self):
+        """broadcast_message consumer should fire for Message results."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        client, mock_transport, card, consumed = (
+            self._make_experimental_client_with_consumer()
+        )
+
+        msg_result = {
+            "kind": "message",
+            "messageId": "msg-1",
+            "role": "agent",
+            "parts": [{"kind": "text", "text": "Hello back"}],
+        }
+        mock_resp = MagicMock()
+        mock_resp.type = "A2AResponse"
+        mock_resp.payload = json.dumps(
+            {"jsonrpc": "2.0", "id": "1", "result": msg_result}
+        ).encode("utf-8")
+
+        async def one_response(*args, **kwargs):
+            yield mock_resp
+
+        mock_transport.gather_stream = one_response
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+        await client.broadcast_message(request, recipients=["agent-1"])
+
+        assert len(consumed) == 1
+        event, event_card = consumed[0]
+        # Event should be a Message, not a tuple
+        assert isinstance(event, A2AMessage)
+        assert event_card == card
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_consumer_skips_errors(self):
+        """JSON-RPC error responses should not trigger consumers."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        client, mock_transport, card, consumed = (
+            self._make_experimental_client_with_consumer()
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.type = "A2AResponse"
+        mock_resp.payload = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": "1",
+                "error": {"code": -32600, "message": "Invalid Request"},
+            }
+        ).encode("utf-8")
+
+        async def one_response(*args, **kwargs):
+            yield mock_resp
+
+        mock_transport.gather_stream = one_response
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+        await client.broadcast_message(request, recipients=["agent-1"])
+
+        assert len(consumed) == 0
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_consumer_empty_stream(self):
+        """Empty broadcast stream should not trigger consumers."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        client, mock_transport, card, consumed = (
+            self._make_experimental_client_with_consumer()
+        )
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = empty_stream
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+        await client.broadcast_message(request, recipients=["agent-1"])
+
+        assert len(consumed) == 0
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_consumer_multiple_responses(self):
+        """N broadcast responses should produce N consumer invocations."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        client, mock_transport, card, consumed = (
+            self._make_experimental_client_with_consumer()
+        )
+
+        def _make_resp(task_id):
+            resp = MagicMock()
+            resp.type = "A2AResponse"
+            resp.payload = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "1",
+                    "result": {
+                        "kind": "task",
+                        "id": task_id,
+                        "contextId": "ctx-1",
+                        "status": {"state": "completed"},
+                    },
+                }
+            ).encode("utf-8")
+            return resp
+
+        async def three_responses(*args, **kwargs):
+            yield _make_resp("task-1")
+            yield _make_resp("task-2")
+            yield _make_resp("task-3")
+
+        mock_transport.gather_stream = three_responses
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+        await client.broadcast_message(request, recipients=["a1", "a2", "a3"])
+
+        assert len(consumed) == 3
+
+    # -- broadcast_message_streaming ----------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_consumer_fires(self):
+        """broadcast_message_streaming should invoke consumers for each event."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendStreamingMessageRequest,
+            Task,
+            TaskStatusUpdateEvent,
+            TextPart,
+        )
+
+        client, mock_transport, card, consumed = (
+            self._make_experimental_client_with_consumer()
+        )
+
+        # Intermediate status-update
+        intermediate_resp = MagicMock()
+        intermediate_resp.type = "A2AStatusUpdate"
+        intermediate_resp.status_code = 200
+        intermediate_resp.payload = json.dumps(
+            {
+                "result": {
+                    "kind": "status-update",
+                    "taskId": "task-1",
+                    "contextId": "ctx-1",
+                    "status": {"state": "working"},
+                    "final": False,
+                }
+            }
+        ).encode("utf-8")
+
+        # Final task response
+        final_resp = MagicMock()
+        final_resp.type = "A2AResponse"
+        final_resp.status_code = 200
+        final_resp.payload = json.dumps(
+            {
+                "result": {
+                    "kind": "task",
+                    "id": "task-1",
+                    "contextId": "ctx-1",
+                    "status": {"state": "completed"},
+                }
+            }
+        ).encode("utf-8")
+
+        async def mixed_stream(*args, **kwargs):
+            yield intermediate_resp
+            yield final_resp
+
+        mock_transport.gather_stream = mixed_stream
+
+        request = SendStreamingMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+
+        results = []
+        async for event in client.broadcast_message_streaming(
+            request, recipients=["agent-1"]
+        ):
+            results.append(event)
+
+        # Both intermediate and final events should trigger consumers
+        assert len(consumed) == 2
+        # First consumed event: (task_stub, TaskStatusUpdateEvent)
+        first_event, first_card = consumed[0]
+        assert isinstance(first_event, tuple)
+        assert isinstance(first_event[1], TaskStatusUpdateEvent)
+        assert first_card == card
+        # Second consumed event: (Task, None)
+        second_event, second_card = consumed[1]
+        assert isinstance(second_event, tuple)
+        assert isinstance(second_event[0], Task)
+        assert second_event[1] is None
+
+    # -- start_groupchat ----------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_start_groupchat_consumer_fires(self):
+        """start_groupchat should invoke consumers for each response."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        client, mock_transport, card, consumed = (
+            self._make_experimental_client_with_consumer()
+        )
+
+        def _make_raw_msg(task_id):
+            msg = MagicMock()
+            msg.payload = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "1",
+                    "result": {
+                        "kind": "task",
+                        "id": task_id,
+                        "contextId": "ctx-1",
+                        "status": {"state": "completed"},
+                    },
+                }
+            ).encode("utf-8")
+            return msg
+
+        mock_transport.start_conversation = AsyncMock(
+            return_value=[_make_raw_msg("task-1"), _make_raw_msg("task-2")]
+        )
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+        responses = await client.start_groupchat(
+            request, group_channel="grp", participants=["a", "b"]
+        )
+
+        assert len(responses) == 2
+        assert len(consumed) == 2
+
+    # -- start_streaming_groupchat ------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_start_streaming_groupchat_consumer_fires(self):
+        """start_streaming_groupchat should invoke consumers for each response."""
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            SendMessageRequest,
+            TextPart,
+        )
+
+        client, mock_transport, card, consumed = (
+            self._make_experimental_client_with_consumer()
+        )
+
+        def _make_raw_msg(task_id):
+            msg = MagicMock()
+            msg.payload = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "1",
+                    "result": {
+                        "kind": "task",
+                        "id": task_id,
+                        "contextId": "ctx-1",
+                        "status": {"state": "completed"},
+                    },
+                }
+            ).encode("utf-8")
+            return msg
+
+        async def streaming_conversation(*args, **kwargs):
+            yield _make_raw_msg("task-1")
+            yield _make_raw_msg("task-2")
+
+        mock_transport.start_streaming_conversation = streaming_conversation
+
+        request = SendMessageRequest(
+            id="req-1",
+            params=MessageSendParams(
+                message=A2AMessage(
+                    messageId=str(uuid4()),
+                    role="user",
+                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+                )
+            ),
+        )
+        results = []
+        async for event in client.start_streaming_groupchat(
+            request, group_channel="grp", participants=["a", "b"]
+        ):
+            results.append(event)
+
+        assert len(results) == 2
+        assert len(consumed) == 2

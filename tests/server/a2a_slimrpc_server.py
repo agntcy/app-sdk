@@ -4,10 +4,12 @@
 try:
     from tests.server.agent_executor import (
         HelloWorldAgentExecutor,  # type: ignore[import-untyped]
+        HelloWorldStreamingAgentExecutor,  # type: ignore[import-untyped]
     )
 except ImportError:
     from agent_executor import (
         HelloWorldAgentExecutor,  # type: ignore[import-untyped]
+        HelloWorldStreamingAgentExecutor,  # type: ignore[import-untyped]
     )
 
 import argparse
@@ -41,6 +43,7 @@ def _build_a2a_slimrpc_config(
     name: str = "default/default/Hello_World_Agent_1.0.0",
     endpoint: str = "http://localhost:46357",
     version: str = "1.0.0",
+    streaming: bool = False,
 ) -> A2ASlimRpcServerConfig:
     """Build an A2ASlimRpcServerConfig with a HelloWorld agent."""
     # Build the interface URL in the format expected by card_bootstrap:
@@ -69,8 +72,13 @@ def _build_a2a_slimrpc_config(
             ),
         ],
     )
+    executor = (
+        HelloWorldStreamingAgentExecutor(name)
+        if streaming
+        else HelloWorldAgentExecutor(name)
+    )
     request_handler = DefaultRequestHandler(
-        agent_executor=HelloWorldAgentExecutor(name),
+        agent_executor=executor,
         task_store=InMemoryTaskStore(),
     )
     return A2ASlimRpcServerConfig(
@@ -94,12 +102,14 @@ async def main(
     endpoint: str,
     version: str = "1.0.0",
     block: bool = True,
+    streaming: bool = False,
 ):
     """Create and start an A2A server over SlimRPC."""
     config = _build_a2a_slimrpc_config(
         name=name,
         endpoint=endpoint,
         version=version,
+        streaming=streaming,
     )
 
     factory = AgntcyFactory(enable_tracing=True)
@@ -136,6 +146,12 @@ if __name__ == "__main__":
         dest="block",
         help="Run the server in non-blocking mode (default: blocking)",
     )
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        default=False,
+        help="Use the streaming agent executor (default: non-streaming)",
+    )
 
     args = parser.parse_args()
     asyncio.run(
@@ -144,5 +160,6 @@ if __name__ == "__main__":
             args.endpoint,
             args.version,
             args.block,
+            args.streaming,
         )
     )

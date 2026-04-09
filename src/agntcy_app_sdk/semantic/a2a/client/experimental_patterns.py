@@ -23,7 +23,7 @@ from typing import Any, AsyncIterator, List
 from uuid import uuid4
 
 from a2a.client.client import Client, ClientEvent
-from a2a.client.middleware import ClientCallContext
+from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
 from a2a.types import (
     AgentCard,
     GetTaskPushNotificationConfigParams,
@@ -35,6 +35,7 @@ from a2a.types import (
     TaskIdParams,
     TaskPushNotificationConfig,
     TaskQueryParams,
+    TaskStatusUpdateEvent,
 )
 
 from agntcy_app_sdk.common.logging_config import get_logger
@@ -65,6 +66,7 @@ class A2AExperimentalClient(Client):
         agent_card: AgentCard,
         transport: BaseTransport,
         topic: str,
+        interceptors: list[ClientCallInterceptor] | None = None,
     ) -> None:
         # Initialise the ABC with the inner client's consumers/middleware
         super().__init__(
@@ -75,6 +77,7 @@ class A2AExperimentalClient(Client):
         self._agent_card = agent_card
         self._transport = transport
         self._topic = topic
+        self._interceptors = interceptors or []
 
     # ------------------------------------------------------------------
     # Properties
@@ -99,6 +102,85 @@ class A2AExperimentalClient(Client):
     def topic(self) -> str:
         """The topic used for transport operations."""
         return self._topic
+
+    # ------------------------------------------------------------------
+    # Interceptor support
+    # ------------------------------------------------------------------
+
+    async def _apply_interceptors(
+        self,
+        method_name: str,
+        request_payload: dict[str, Any],
+        context: ClientCallContext | None = None,
+    ) -> dict[str, Any]:
+        """Apply the interceptor chain to the request payload.
+
+        Experimental operations don't use HTTP, so ``http_kwargs`` is
+        passed as an empty dict to satisfy the interceptor ABC contract.
+        """
+        current_payload = request_payload
+        http_kwargs: dict[str, Any] = {}
+        for interceptor in self._interceptors:
+            current_payload, http_kwargs = await interceptor.intercept(
+                method_name,
+                current_payload,
+                http_kwargs,
+                self._agent_card,
+                context,
+            )
+        return current_payload
+
+    # ------------------------------------------------------------------
+    # Consumer support — fire registered consumers for experimental ops
+    # ------------------------------------------------------------------
+
+    async def _consume_response(self, response: SendMessageResponse) -> None:
+        """Extract a consumable event from a ``SendMessageResponse`` and
+        feed it to registered consumers.
+
+        A ``SendMessageResponse`` is a JSON-RPC envelope whose inner
+        result is either a ``Task`` or a ``Message``.  Error responses
+        are silently skipped (no meaningful event to deliver).
+        """
+        from a2a.types import JSONRPCErrorResponse, SendMessageSuccessResponse
+
+        inner = response.root
+        if isinstance(inner, JSONRPCErrorResponse):
+            return
+
+        if isinstance(inner, SendMessageSuccessResponse):
+            result = inner.result
+            if isinstance(result, Task):
+                await self.consume((result, None), self._agent_card)
+            elif isinstance(result, A2AMessage):
+                await self.consume(result, self._agent_card)
+
+    async def _consume_typed_event(
+        self,
+        event: SendMessageResponse | TaskStatusUpdateEvent | Task,
+    ) -> None:
+        """Consume a typed event produced by streaming experimental methods.
+
+        Handles the three object types that ``broadcast_message_streaming``
+        yields:
+
+        * ``Task`` — consumed as ``(task, None)``
+        * ``TaskStatusUpdateEvent`` — a minimal ``Task`` stub is built from
+          the event's ``task_id`` / ``context_id`` / ``status`` so that
+          consumers receive a ``(task_stub, update)`` pair.
+        * ``SendMessageResponse`` — delegates to ``_consume_response()``.
+        """
+        if isinstance(event, Task):
+            await self.consume((event, None), self._agent_card)
+        elif isinstance(event, TaskStatusUpdateEvent):
+            task_stub = Task(
+                id=event.task_id,
+                contextId=event.context_id,
+                status=event.status,
+            )
+            await self.consume((task_stub, event), self._agent_card)
+        elif isinstance(event, SendMessageResponse):
+            await self._consume_response(event)
 
     # ------------------------------------------------------------------
     # Client ABC — delegate to upstream Client
@@ -198,28 +280,58 @@ class A2AExperimentalClient(Client):
     async def broadcast_message(
         self,
         request: SendMessageRequest | SendStreamingMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
         recipients: List[str] | None = None,
         broadcast_topic: str | None = None,
         timeout: float = 60.0,
     ) -> List[SendMessageResponse]:
-        """Broadcast a message to multiple recipients via transport."""
+        """Broadcast a message to multiple recipients via transport.
+
+        When used with streaming agents the transport may deliver
+        intermediate ``A2AStatusUpdate`` messages before the final
+        ``A2AResponse``.  This method filters those out and returns
+        only the final responses (one per recipient).
+        """
         if not request.id:
             request.id = str(uuid4())
 
-        msg = message_translator(
-            request=request.model_dump(mode="json", exclude_none=True)
-        )
+        payload = request.model_dump(mode="json", exclude_none=True)
+        payload = await self._apply_interceptors("message/send", payload, context)
+        msg = message_translator(request=payload)
 
         if not broadcast_topic:
             broadcast_topic = self._topic
 
+        expected = len(recipients) if recipients else 1
+
         try:
-            responses = await self._transport.gather(
+            broadcast_responses: List[SendMessageResponse] = []
+            async for raw_resp in self._transport.gather_stream(
                 broadcast_topic,
                 msg,
                 recipients=recipients,
                 timeout=timeout,
-            )
+            ):
+                try:
+                    # Only collect final A2AResponse messages; skip
+                    # intermediate A2AStatusUpdate messages that streaming
+                    # agents emit.
+                    if raw_resp.type == "A2AStatusUpdate":
+                        continue
+
+                    resp = json.loads(raw_resp.payload.decode("utf-8"))
+                    smr = SendMessageResponse(resp)
+                    await self._consume_response(smr)
+                    broadcast_responses.append(smr)
+
+                    if len(broadcast_responses) >= expected:
+                        break
+                except Exception as e:
+                    logger.error(f"Error decoding JSON response: {e}")
+                    continue
+
+            return broadcast_responses
         except (TimeoutError, asyncio.CancelledError):
             raise
         except Exception as e:
@@ -228,59 +340,112 @@ class A2AExperimentalClient(Client):
             )
             return []
 
-        broadcast_responses = []
-        for raw_resp in responses:
-            try:
-                resp = json.loads(raw_resp.payload.decode("utf-8"))
-                broadcast_responses.append(SendMessageResponse(resp))
-            except Exception as e:
-                logger.error(f"Error decoding JSON response: {e}")
-                continue
-
-        return broadcast_responses
-
     async def broadcast_message_streaming(
         self,
         request: SendStreamingMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
         recipients: List[str] | None = None,
         broadcast_topic: str | None = None,
         message_limit: int | None = None,
         timeout: float = 60.0,
-    ) -> AsyncIterator[SendMessageResponse]:
-        """Broadcast with streaming responses."""
+    ) -> AsyncIterator[SendMessageResponse | TaskStatusUpdateEvent | Task]:
+        """Broadcast with streaming responses, including intermediate status events.
+
+        Yields intermediate ``TaskStatusUpdateEvent`` and ``Task`` objects as
+        they arrive from each recipient, plus a final ``SendMessageResponse``
+        per recipient.  The stream ends after *message_limit* final responses
+        have been received (defaults to ``len(recipients)``).
+        """
         if not request.id:
             request.id = str(uuid4())
 
-        msg = message_translator(
-            request=request.model_dump(mode="json", exclude_none=True)
-        )
+        payload = request.model_dump(mode="json", exclude_none=True)
+        payload = await self._apply_interceptors("message/send", payload, context)
+        msg = message_translator(request=payload)
 
         if not broadcast_topic:
             broadcast_topic = self._topic
 
-        # determine how many messages to stream until we break out
-        # if none, set strict number of recipients messages
-        if message_limit is None:
-            message_limit = len(recipients)
+        # How many *final* responses we expect before stopping the stream.
+        expected_finals = (
+            message_limit
+            if message_limit is not None
+            else (len(recipients) if recipients else 1)
+        )
 
+        # Do NOT pass message_limit to the transport — let it stream
+        # everything (intermediates + finals).  We manage the stop
+        # condition here based on final response count.
         try:
+            finals_received = 0
             async for raw_resp in self._transport.gather_stream(
                 broadcast_topic,
                 msg,
                 recipients=recipients,
-                message_limit=message_limit,
                 timeout=timeout,
             ):
                 try:
                     logger.debug(raw_resp)
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
+
                     if resp.get("error") == "forbidden" or raw_resp.status_code == 403:
                         logger.warning(
                             f"Received forbidden error in broadcast streaming response: {resp}"
                         )
-                        yield SendMessageResponse(get_identity_auth_error())
+                        error_resp = SendMessageResponse(get_identity_auth_error())
+                        await self._consume_response(error_resp)
+                        yield error_resp
+                        finals_received += 1
+                    elif raw_resp.type == "A2AStatusUpdate":
+                        # Intermediate status event — parse the same way
+                        # PatternsClientTransport.send_message_streaming does.
+                        result = resp.get("result", resp)
+                        if isinstance(result, dict):
+                            kind = result.get("kind")
+                            if kind == "status-update":
+                                event = TaskStatusUpdateEvent.model_validate(result)
+                                await self._consume_typed_event(event)
+                                yield event
+                            elif kind == "task" or "status" in result:
+                                event = Task.model_validate(result)
+                                await self._consume_typed_event(event)
+                                yield event
+                            else:
+                                # Unrecognised intermediate — skip
+                                logger.debug(
+                                    f"Unrecognised A2AStatusUpdate kind: {kind}"
+                                )
+                        continue  # intermediates don't count toward finals
                     else:
-                        yield SendMessageResponse(resp)
+                        # Final A2AResponse.  For streaming handlers the payload
+                        # is a raw A2A result (e.g. TaskStatusUpdateEvent dump)
+                        # without a JSON-RPC envelope.  For non-streaming
+                        # handlers the payload IS a JSON-RPC response.  Try the
+                        # envelope first; fall back to kind-based parsing.
+                        result = resp.get("result", resp)
+                        if isinstance(result, dict):
+                            kind = result.get("kind")
+                            if kind == "status-update":
+                                event = TaskStatusUpdateEvent.model_validate(result)
+                                await self._consume_typed_event(event)
+                                yield event
+                            elif kind == "task" or "status" in result:
+                                event = Task.model_validate(result)
+                                await self._consume_typed_event(event)
+                                yield event
+                            else:
+                                smr = SendMessageResponse(resp)
+                                await self._consume_response(smr)
+                                yield smr
+                        else:
+                            smr = SendMessageResponse(resp)
+                            await self._consume_response(smr)
+                            yield smr
+                        finals_received += 1
+
+                    if finals_received >= expected_finals:
+                        break
                 except Exception as e:
                     logger.error(f"Error decoding JSON response: {e}")
                     continue
@@ -295,6 +460,8 @@ class A2AExperimentalClient(Client):
     async def start_groupchat(
         self,
         init_message: SendMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
         group_channel: str,
         participants: List[str],
         timeout: float = 60,
@@ -304,9 +471,9 @@ class A2AExperimentalClient(Client):
         if not init_message.id:
             init_message.id = str(uuid4())
 
-        msg = message_translator(
-            request=init_message.model_dump(mode="json", exclude_none=True)
-        )
+        payload = init_message.model_dump(mode="json", exclude_none=True)
+        payload = await self._apply_interceptors("message/send", payload, context)
+        msg = message_translator(request=payload)
         try:
             member_messages = await self._transport.start_conversation(
                 group_channel=group_channel,
@@ -319,7 +486,9 @@ class A2AExperimentalClient(Client):
             for raw_msg in member_messages:
                 try:
                     resp = json.loads(raw_msg.payload.decode("utf-8"))
-                    groupchat_messages.append(SendMessageResponse(resp))
+                    smr = SendMessageResponse(resp)
+                    await self._consume_response(smr)
+                    groupchat_messages.append(smr)
                 except Exception as e:
                     logger.error(f"Error decoding JSON response: {e}")
                     continue
@@ -336,6 +505,8 @@ class A2AExperimentalClient(Client):
     async def start_streaming_groupchat(
         self,
         init_message: SendMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
         group_channel: str,
         participants: List[str],
         timeout: float = 60,
@@ -345,9 +516,9 @@ class A2AExperimentalClient(Client):
         if not init_message.id:
             init_message.id = str(uuid4())
 
-        msg = message_translator(
-            request=init_message.model_dump(mode="json", exclude_none=True)
-        )
+        payload = init_message.model_dump(mode="json", exclude_none=True)
+        payload = await self._apply_interceptors("message/send", payload, context)
+        msg = message_translator(request=payload)
 
         async for raw_member_message in self._transport.start_streaming_conversation(
             group_channel=group_channel,
@@ -357,4 +528,6 @@ class A2AExperimentalClient(Client):
             timeout=timeout,
         ):
             message = json.loads(raw_member_message.payload.decode("utf-8"))
-            yield SendMessageResponse(message)
+            smr = SendMessageResponse(message)
+            await self._consume_response(smr)
+            yield smr
