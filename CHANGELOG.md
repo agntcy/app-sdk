@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5](https://github.com/agntcy/app-sdk/compare/v0.5.4...v0.5.5) (2026-04-09)
+
+
+### Features
+
+* **a2a:** streaming status events and interceptor middleware ([#121](https://github.com/agntcy/app-sdk/issues/121)) ([0a7fb08](https://github.com/agntcy/app-sdk/commit/0a7fb08bb4189c9eac4ce4c56f81d74640e88add))
+
 ## [0.5.4](https://github.com/agntcy/app-sdk/compare/v0.5.3...v0.5.4) (2026-03-12)
 
 
