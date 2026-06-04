@@ -1,6 +1,6 @@
 <div align='center'>
 
-<h1>Agntcy Application SDK</h1>
+<h1>Agntcy Reference Application SDK</h1>
 
 <a href="https://agntcy.org">
   <picture>
@@ -30,9 +30,18 @@
 
 ## Overview
 
-The Agntcy Application SDK provides a unified factory interface for building interoperable, multi-agent components. It defines standard abstractions and interoperability layers that connect Agntcy and open-source transports, protocols, and directories — enabling agents to communicate and coordinate seamlessly.
+The reference app-sdk provides a reference integration layer used by CoffeeAGNTCY to demonstrate how multi-agent applications can connect AGNTCY components and selected open source project as needed. It includes factory interfaces, abstractions, and examples that help developers understand interoperability patterns across AGNTCY transports, protocols, and directories.
 
 It is intended as an integration and learning surface primarily used in [coffeeAgntcy](https://github.com/agntcy/coffeeAgntcy), not as a canonical or prescriptive SDK for AGNTCY subsystems. Standards and reference guidance remain the responsibility of the working groups. Please see the respective components for their latest SDK or interfaces.
+
+
+
+| This is | This is not |
+|:-:|:-:|
+| A reference integration SDK used by CoffeeAGNTCY | The canonical SDK for every AGNTCY subsystem |
+| A learning surface for application developers | A replacement for component-specific SDKs |
+| A place to demonstrate cross-component application patterns | A standards authority |
+| A bridge across AGNTCY components in reference app contexts | Ownership of the underlying components |
 
 ### Features
 
