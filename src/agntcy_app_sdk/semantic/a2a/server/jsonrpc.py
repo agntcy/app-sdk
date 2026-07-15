@@ -39,11 +39,13 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         *,
         host: str,
         port: int,
+        bind_host: Optional[str] = None,
     ):
         # BaseA2AServerHandler -> ServerHandler expects (managed_object, ...)
         super().__init__(server, transport=None, topic=None)
         self._server = server
         self._host = host
+        self._bind_host = bind_host or host
         self._port = port
         self._server_task: Optional[asyncio.Task] = None
         self._uvicorn_server: Optional[uvicorn.Server] = None
@@ -75,7 +77,7 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         app = self._server.build()
         config = uvicorn.Config(
             app=app,
-            host=self._host,
+            host=self._bind_host,
             port=self._port,
             loop="asyncio",
         )
@@ -86,7 +88,10 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
             self._uvicorn_server.serve(),
             name="jsonrpc-server",
         )
-        logger.debug(f"JSONRPC A2A handler started on {self._host}:{self._port}")
+        logger.debug(
+            f"JSONRPC A2A handler bound {self._bind_host}:{self._port} "
+            f"(advertised host={self._host})"
+        )
 
     async def teardown(self) -> None:
         """Stop the Uvicorn server."""

@@ -312,6 +312,7 @@ class CardBuilder:
         self._overrides: dict[str, object] = {}  # canonical transport_type -> pre-built
         self._skips: set[str] = set()  # canonical transport_types to skip
         self._shared_secret: str | None = None
+        self._http_bind_host: str | None = None
 
     # -- Fluent setters -----------------------------------------------------
 
@@ -343,6 +344,18 @@ class CardBuilder:
         time if neither is available and a SLIM-based transport is declared.
         """
         self._shared_secret = secret
+        return self
+
+    def with_http_bind_host(self, host: str) -> CardBuilder:
+        """Set the interface JSONRPC/HTTP interfaces bind to.
+
+        This is independent of the advertised card URL host. When not
+        called, the bind host is resolved from the
+        ``AGNTCY_A2A_HTTP_BIND_HOST`` environment variable, falling back to
+        ``0.0.0.0`` (bind all interfaces).  Use ``127.0.0.1`` to restrict
+        binding to loopback.
+        """
+        self._http_bind_host = host
         return self
 
     # -- Terminal operations ------------------------------------------------
@@ -573,11 +586,17 @@ class CardBuilder:
                     )
                     continue
 
+                bind_host = (
+                    self._http_bind_host
+                    or os.environ.get("AGNTCY_A2A_HTTP_BIND_HOST")
+                    or "0.0.0.0"
+                )
                 app_target = override if override is not None else a2a_app
                 (
                     session.add(app_target)
                     .with_host(str(parsed["host"]))
                     .with_port(int(parsed["port"]))
+                    .with_bind_host(bind_host)
                     .with_session_id(session_id)
                     .build()
                 )

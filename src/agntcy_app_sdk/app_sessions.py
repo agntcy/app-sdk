@@ -75,6 +75,7 @@ class ContainerBuilder:
         self._session_id: Optional[str] = None
         self._host: Optional[str] = None
         self._port: Optional[int] = None
+        self._bind_host: Optional[str] = None
 
     def with_transport(self, transport: BaseTransport) -> ContainerBuilder:
         self._transport = transport
@@ -94,6 +95,10 @@ class ContainerBuilder:
 
     def with_host(self, host: str) -> ContainerBuilder:
         self._host = host
+        return self
+
+    def with_bind_host(self, host: str) -> ContainerBuilder:
+        self._bind_host = host
         return self
 
     def with_port(self, port: int) -> ContainerBuilder:
@@ -126,6 +131,7 @@ class ContainerBuilder:
                 self._target,
                 host=self._host,
                 port=self._port,
+                bind_host=self._bind_host,
             )
         elif handler_class is A2ASRPCServerHandler:
             if self._transport is not None or self._topic is not None:
