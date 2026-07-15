@@ -51,7 +51,11 @@ from urllib.parse import urlparse
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.transport_types import (
     CANONICAL_TRANSPORTS as _CANONICAL_TRANSPORTS,
+)
+from agntcy_app_sdk.semantic.a2a.transport_types import (
     InterfaceTransport,
+)
+from agntcy_app_sdk.semantic.a2a.transport_types import (
     normalize_transport as _normalize_transport,
 )
 
@@ -586,20 +590,17 @@ class CardBuilder:
                     )
                     continue
 
-                bind_host = (
-                    self._http_bind_host
-                    or os.environ.get("AGNTCY_A2A_HTTP_BIND_HOST")
-                    or "0.0.0.0"
-                )
                 app_target = override if override is not None else a2a_app
-                (
+                builder = (
                     session.add(app_target)
                     .with_host(str(parsed["host"]))
                     .with_port(int(parsed["port"]))
-                    .with_bind_host(bind_host)
                     .with_session_id(session_id)
-                    .build()
                 )
+
+                if self._http_bind_host is not None:
+                    builder.with_bind_host(self._http_bind_host)
+                builder.build()
 
         if dry_run:
             return plan

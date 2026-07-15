@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Optional
 
 import uvicorn
@@ -14,6 +15,25 @@ from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 
 logger = get_logger(__name__)
+
+# Environment variable and default for the JSONRPC/HTTP bind interface.
+_HTTP_BIND_HOST_ENV = "AGNTCY_A2A_HTTP_BIND_HOST"
+_DEFAULT_HTTP_BIND_HOST = "0.0.0.0"
+
+
+def resolve_http_bind_host(explicit: Optional[str] = None) -> str:
+    """Resolve the interface a JSONRPC/HTTP server should bind to.
+
+    This is independent of the advertised card URL host. Precedence:
+
+    1. ``explicit`` value (e.g. from ``ContainerBuilder.with_bind_host()`` /
+       ``CardBuilder.with_http_bind_host()``),
+    2. the ``AGNTCY_A2A_HTTP_BIND_HOST`` environment variable,
+    3. ``0.0.0.0`` (bind all interfaces).
+
+    Use ``127.0.0.1`` to restrict binding to loopback.
+    """
+    return explicit or os.environ.get(_HTTP_BIND_HOST_ENV) or _DEFAULT_HTTP_BIND_HOST
 
 
 class A2AJsonRpcServerHandler(BaseA2AServerHandler):
