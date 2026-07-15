@@ -5,11 +5,39 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
+from agntcy_app_sdk.semantic.a2a.server.jsonrpc import (
+    A2AJsonRpcServerHandler,
+    resolve_http_bind_host,
+)
+
+
+class TestResolveHttpBindHost:
+    def test_default_all_interfaces(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGNTCY_A2A_HTTP_BIND_HOST", None)
+            assert resolve_http_bind_host() == "0.0.0.0"
+
+    def test_env_var(self):
+        with patch.dict(
+            os.environ, {"AGNTCY_A2A_HTTP_BIND_HOST": "127.0.0.1"}, clear=False
+        ):
+            assert resolve_http_bind_host() == "127.0.0.1"
+
+    def test_explicit_beats_env(self):
+        with patch.dict(
+            os.environ, {"AGNTCY_A2A_HTTP_BIND_HOST": "127.0.0.1"}, clear=False
+        ):
+            assert resolve_http_bind_host("10.0.0.1") == "10.0.0.1"
+
+    def test_explicit_beats_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGNTCY_A2A_HTTP_BIND_HOST", None)
+            assert resolve_http_bind_host("127.0.0.1") == "127.0.0.1"
 
 
 def _make_server() -> MagicMock:

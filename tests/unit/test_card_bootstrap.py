@@ -731,16 +731,15 @@ class TestCardBuilderBuildsContainers:
             await builder.start()
 
         session.add.assert_called_once()
-        # Advertised host comes from the card URL; bind host defaults to 0.0.0.0.
         mock_builder.with_host.assert_called_once_with("example.com")
         mock_builder.with_port.assert_called_once_with(9999)
-        mock_builder.with_bind_host.assert_called_once_with("0.0.0.0")
+        mock_builder.with_bind_host.assert_not_called()
         mock_builder.with_session_id.assert_called_once_with("http-0")
         session.start_all_sessions.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_http_bind_host_setter_precedence(self):
-        """`.with_http_bind_host()` takes precedence over env and default."""
+    async def test_http_bind_host_setter_forwarded(self):
+        """`.with_http_bind_host()` is forwarded to the container builder."""
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
         mock_builder.with_port.return_value = mock_builder
@@ -768,36 +767,6 @@ class TestCardBuilderBuildsContainers:
             await builder.start()
 
         mock_builder.with_host.assert_called_once_with("example.com")
-        mock_builder.with_bind_host.assert_called_once_with("127.0.0.1")
-
-    @pytest.mark.asyncio
-    async def test_http_bind_host_env(self):
-        """`AGNTCY_A2A_HTTP_BIND_HOST` is used when no setter is called."""
-        mock_builder = MagicMock()
-        mock_builder.with_host.return_value = mock_builder
-        mock_builder.with_port.return_value = mock_builder
-        mock_builder.with_bind_host.return_value = mock_builder
-        mock_builder.with_session_id.return_value = mock_builder
-        mock_builder.build.return_value = MagicMock()
-
-        session = MagicMock()
-        session.add.return_value = mock_builder
-        session.start_all_sessions = AsyncMock()
-
-        card = _make_card(
-            interfaces=[
-                AgentInterface(transport="jsonrpc", url="http://example.com:9999")
-            ]
-        )
-        handler = MagicMock()
-        builder = CardBuilder(session, card, handler)
-        builder.with_factory(MagicMock())
-
-        with patch.dict(
-            os.environ, {"AGNTCY_A2A_HTTP_BIND_HOST": "127.0.0.1"}, clear=False
-        ):
-            await builder.start()
-
         mock_builder.with_bind_host.assert_called_once_with("127.0.0.1")
 
     @pytest.mark.asyncio
