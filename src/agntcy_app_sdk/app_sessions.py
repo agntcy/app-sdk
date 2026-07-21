@@ -75,6 +75,7 @@ class ContainerBuilder:
         self._session_id: Optional[str] = None
         self._host: Optional[str] = None
         self._port: Optional[int] = None
+        self._bind_host: Optional[str] = None
 
     def with_transport(self, transport: BaseTransport) -> ContainerBuilder:
         self._transport = transport
@@ -96,6 +97,10 @@ class ContainerBuilder:
         self._host = host
         return self
 
+    def with_bind_host(self, host: str) -> ContainerBuilder:
+        self._bind_host = host
+        return self
+
     def with_port(self, port: int) -> ContainerBuilder:
         self._port = port
         return self
@@ -105,15 +110,18 @@ class ContainerBuilder:
         handler_class = _resolve_handler_class(self._target)
 
         # A2ASRPCServerHandler takes (config) — no transport or topic
-        from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCServerHandler
+        from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
+            A2AExperimentalServerHandler,
+        )
 
         # When the target is an A2AStarletteApplication but no transport was
         # provided, serve it over native HTTP JSONRPC instead of going through
         # the patterns handler (which requires a transport).
-        from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
-        from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
-            A2AExperimentalServerHandler,
+        from agntcy_app_sdk.semantic.a2a.server.jsonrpc import (
+            A2AJsonRpcServerHandler,
+            resolve_http_bind_host,
         )
+        from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCServerHandler
 
         if handler_class is A2AExperimentalServerHandler and self._transport is None:
             if self._host is None or self._port is None:
@@ -122,10 +130,13 @@ class ContainerBuilder:
                     "(no transport). Use .with_host() and .with_port() on "
                     "the builder."
                 )
+
+            bind_host = resolve_http_bind_host(self._bind_host)
             handler = A2AJsonRpcServerHandler(
                 self._target,
                 host=self._host,
                 port=self._port,
+                bind_host=bind_host,
             )
         elif handler_class is A2ASRPCServerHandler:
             if self._transport is not None or self._topic is not None:

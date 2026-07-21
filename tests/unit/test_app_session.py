@@ -1,9 +1,13 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+from unittest.mock import patch
+
+import pytest
+
 from agntcy_app_sdk.factory import AgntcyFactory
 from tests.server.a2a_starlette_server import default_a2a_server
-import pytest
 
 pytest_plugins = "pytest_asyncio"
 
@@ -42,3 +46,90 @@ async def test_app_session():
     assert app_session.get_app_container("test_session") is None, (
         "App container was not removed properly."
     )
+
+
+@pytest.mark.asyncio
+async def test_container_builder_passes_bind_host():
+    """`.with_bind_host()` is forwarded to the JSONRPC handler, decoupled from host."""
+    factory = AgntcyFactory()
+    app_session = factory.create_app_session(max_sessions=1)
+
+    container = (
+        app_session.add(default_a2a_server)
+        .with_host("example.com")
+        .with_bind_host("0.0.0.0")
+        .with_port(9000)
+        .with_session_id("bind_host_session")
+        .build()
+    )
+
+    handler = container.handler
+    assert handler._host == "example.com"
+    assert handler._bind_host == "0.0.0.0"
+    assert handler._port == 9000
+
+
+@pytest.mark.asyncio
+async def test_container_builder_bind_host_defaults_to_all_interfaces():
+    """Without `.with_bind_host()` or env, the handler binds all interfaces."""
+    factory = AgntcyFactory()
+    app_session = factory.create_app_session(max_sessions=1)
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("AGNTCY_A2A_HTTP_BIND_HOST", None)
+        container = (
+            app_session.add(default_a2a_server)
+            .with_host("127.0.0.1")
+            .with_port(9001)
+            .with_session_id("default_bind_session")
+            .build()
+        )
+
+    handler = container.handler
+    # Advertised host is preserved; bind host defaults to 0.0.0.0.
+    assert handler._host == "127.0.0.1"
+    assert handler._bind_host == "0.0.0.0"
+
+
+@pytest.mark.asyncio
+async def test_container_builder_bind_host_from_env():
+    """`AGNTCY_A2A_HTTP_BIND_HOST` is used when no explicit bind host is set."""
+    factory = AgntcyFactory()
+    app_session = factory.create_app_session(max_sessions=1)
+
+    with patch.dict(
+        os.environ, {"AGNTCY_A2A_HTTP_BIND_HOST": "127.0.0.1"}, clear=False
+    ):
+        container = (
+            app_session.add(default_a2a_server)
+            .with_host("example.com")
+            .with_port(9002)
+            .with_session_id("env_bind_session")
+            .build()
+        )
+
+    handler = container.handler
+    assert handler._host == "example.com"
+    assert handler._bind_host == "127.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_container_builder_bind_host_setter_beats_env():
+    """`.with_bind_host()` takes precedence over the env var."""
+    factory = AgntcyFactory()
+    app_session = factory.create_app_session(max_sessions=1)
+
+    with patch.dict(
+        os.environ, {"AGNTCY_A2A_HTTP_BIND_HOST": "127.0.0.1"}, clear=False
+    ):
+        container = (
+            app_session.add(default_a2a_server)
+            .with_host("example.com")
+            .with_bind_host("10.0.0.1")
+            .with_port(9003)
+            .with_session_id("precedence_bind_session")
+            .build()
+        )
+
+    handler = container.handler
+    assert handler._bind_host == "10.0.0.1"

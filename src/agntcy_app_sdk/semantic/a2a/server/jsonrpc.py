@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Optional
 
 import uvicorn
@@ -14,6 +15,25 @@ from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 
 logger = get_logger(__name__)
+
+# Environment variable and default for the JSONRPC/HTTP bind interface.
+_HTTP_BIND_HOST_ENV = "AGNTCY_A2A_HTTP_BIND_HOST"
+_DEFAULT_HTTP_BIND_HOST = "0.0.0.0"
+
+
+def resolve_http_bind_host(explicit: Optional[str] = None) -> str:
+    """Resolve the interface a JSONRPC/HTTP server should bind to.
+
+    This is independent of the advertised card URL host. Precedence:
+
+    1. ``explicit`` value (e.g. from ``ContainerBuilder.with_bind_host()`` /
+       ``CardBuilder.with_http_bind_host()``),
+    2. the ``AGNTCY_A2A_HTTP_BIND_HOST`` environment variable,
+    3. ``0.0.0.0`` (bind all interfaces).
+
+    Use ``127.0.0.1`` to restrict binding to loopback.
+    """
+    return explicit or os.environ.get(_HTTP_BIND_HOST_ENV) or _DEFAULT_HTTP_BIND_HOST
 
 
 class A2AJsonRpcServerHandler(BaseA2AServerHandler):
@@ -39,11 +59,13 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         *,
         host: str,
         port: int,
+        bind_host: Optional[str] = None,
     ):
         # BaseA2AServerHandler -> ServerHandler expects (managed_object, ...)
         super().__init__(server, transport=None, topic=None)
         self._server = server
         self._host = host
+        self._bind_host = bind_host or host
         self._port = port
         self._server_task: Optional[asyncio.Task] = None
         self._uvicorn_server: Optional[uvicorn.Server] = None
@@ -75,7 +97,7 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         app = self._server.build()
         config = uvicorn.Config(
             app=app,
-            host=self._host,
+            host=self._bind_host,
             port=self._port,
             loop="asyncio",
         )
@@ -86,7 +108,10 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
             self._uvicorn_server.serve(),
             name="jsonrpc-server",
         )
-        logger.debug(f"JSONRPC A2A handler started on {self._host}:{self._port}")
+        logger.debug(
+            f"JSONRPC A2A handler bound {self._bind_host}:{self._port} "
+            f"(advertised host={self._host})"
+        )
 
     async def teardown(self) -> None:
         """Stop the Uvicorn server."""

@@ -743,6 +743,30 @@ def override(transport_type: str, target: object) -> CardBuilder
 
 ---
 
+##### with_http_bind_host()
+
+Set the network interface that `jsonrpc` / `http` interfaces bind to, decoupled
+from the advertised card URL host.
+
+```python
+def with_http_bind_host(host: str) -> CardBuilder
+```
+
+**Parameters:**
+
+| Parameter | Type  | Required | Description                                       |
+| --------- | ----- | -------- | ------------------------------------------------- |
+| `host`    | `str` | Yes      | Interface to bind (e.g., `"0.0.0.0"`, `"127.0.0.1"`) |
+
+By default the bind host is resolved from the `AGNTCY_A2A_HTTP_BIND_HOST`
+environment variable, falling back to `0.0.0.0` (all interfaces). The advertised
+card URL host (from the `AgentInterface` URL) is used only for the card and
+logging — not for binding. Precedence: setter > env var > `0.0.0.0` default.
+
+**Returns:** `CardBuilder` (for chaining)
+
+---
+
 ##### dry_run()
 
 Return a plan describing what would be started, without actually starting anything.
