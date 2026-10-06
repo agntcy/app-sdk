@@ -7,6 +7,7 @@ import datetime
 from agntcy_app_sdk.common.logging_config import get_logger
 import slim_bindings
 from slim_bindings import (
+    MlsSettings,
     Name,
     Session,
     SessionConfig,
@@ -14,6 +15,20 @@ from slim_bindings import (
 )
 
 logger = get_logger(__name__)
+
+
+def _mls_settings(enabled: bool) -> MlsSettings | None:
+    """Translate the SDK's ``mls_enabled`` flag to slim-bindings 2.x settings.
+
+    slim-bindings 2.x replaced ``SessionConfig(enable_mls=...)`` with
+    ``mls_settings``: ``None`` disables MLS, an ``MlsSettings`` enables it.
+    """
+    if not enabled:
+        return None
+    return MlsSettings(
+        header_integrity_validation_percent=100,
+        max_seen_control_message_ids_size=None,
+    )
 
 
 class SessionManager:
@@ -49,7 +64,7 @@ class SessionManager:
                     session_type=SessionType.POINT_TO_POINT,
                     max_retries=max_retries,
                     interval=timeout,
-                    enable_mls=mls_enabled,
+                    mls_settings=_mls_settings(mls_enabled),
                     metadata={},
                 ),
                 remote_name,
@@ -90,7 +105,7 @@ class SessionManager:
                     session_type=SessionType.GROUP,
                     max_retries=max_retries,
                     interval=timeout,
-                    enable_mls=mls_enabled,
+                    mls_settings=_mls_settings(mls_enabled),
                     metadata={},
                 ),
                 channel,

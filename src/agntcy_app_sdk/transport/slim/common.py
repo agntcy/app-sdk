@@ -136,6 +136,32 @@ global_connection_id = None
 global_slim_service = None
 
 
+def get_or_init_slim_service() -> slim_bindings.Service:
+    """Initialise the SLIM runtime once and return the global ``Service``.
+
+    Unlike :func:`get_or_create_slim_instance` this does **not** create an
+    ``App`` or open a connection, so nothing gets subscribed to the SLIM
+    dataplane.  Use it when the caller manages its own app and connection
+    (the SlimRPC server does: a pub/sub app subscribed under the same name
+    as the RPC server would receive the clients' RPC sessions, which SLIM
+    2.x routes to the first matching subscriber).
+    """
+    if not slim_bindings.is_initialized():
+        tracing_config = slim_bindings.new_tracing_config()
+        runtime_config = slim_bindings.new_runtime_config()
+        service_config = slim_bindings.new_service_config()
+
+        tracing_config.log_level = "info"
+
+        slim_bindings.initialize_with_configs(
+            tracing_config=tracing_config,
+            runtime_config=runtime_config,
+            service_config=[service_config],
+        )
+
+    return slim_bindings.get_global_service()
+
+
 async def get_or_create_slim_instance(
     local: slim_bindings.Name,
     slim_endpoint: str,
@@ -152,18 +178,7 @@ async def get_or_create_slim_instance(
     if global_slim is not None and global_slim_service is not None:
         return global_slim_service, global_slim, global_connection_id
 
-    # Initialize with config objects
-    tracing_config = slim_bindings.new_tracing_config()
-    runtime_config = slim_bindings.new_runtime_config()
-    service_config = slim_bindings.new_service_config()
-
-    tracing_config.log_level = "info"
-
-    slim_bindings.initialize_with_configs(
-        tracing_config=tracing_config,
-        runtime_config=runtime_config,
-        service_config=[service_config],
-    )
+    slim_service = get_or_init_slim_service()
 
     if not jwt and not bundle:
         if not shared_secret:
@@ -184,8 +199,6 @@ async def get_or_create_slim_instance(
             identity=str(local),
             secret=shared_secret,
         )
-
-    slim_service = slim_bindings.get_global_service()
 
     slim_app = slim_service.create_app(local, provider, verifier)
 
