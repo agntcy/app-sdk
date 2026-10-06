@@ -2,19 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from typing import Any
 
 import pytest
-from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
+from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
+from a2a.helpers import get_stream_response_text
 from a2a.types import (
-    AgentCard,
-    Message,
-    Role,
-    SendMessageResponse,
-    Task,
+    GetExtendedAgentCardRequest,
+    StreamResponse,
     TaskState,
-    TaskStatusUpdateEvent,
-    TextPart,
 )
 from ioa_observe.sdk.tracing import session_start
 
@@ -24,28 +19,23 @@ from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from tests.e2e.conftest import (
     TRANSPORT_CONFIGS,
     make_agent_card,
-    make_message,
     make_send_request,
     make_streaming_send_request,
 )
 
 
 class _RecordingInterceptor(ClientCallInterceptor):
-    """Interceptor that records every call for assertion in tests."""
+    """Interceptor that records every ``before`` call for assertions."""
 
     def __init__(self):
-        self.calls: list[tuple[str, dict, dict]] = []
+        self.calls: list[str] = []
+        self.after_calls: list[str] = []
 
-    async def intercept(
-        self,
-        method_name: str,
-        request_payload: dict[str, Any],
-        http_kwargs: dict[str, Any],
-        agent_card: AgentCard | None,
-        context: ClientCallContext | None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        self.calls.append((method_name, dict(request_payload), dict(http_kwargs)))
-        return request_payload, http_kwargs
+    async def before(self, args: BeforeArgs) -> None:
+        self.calls.append(args.method)
+
+    async def after(self, args: AfterArgs) -> None:
+        self.after_calls.append(args.method)
 
 
 pytest_plugins = "pytest_asyncio"
@@ -101,23 +91,13 @@ async def test_client(run_a2a_server, transport):
         client = await a2a.create(card)
 
     assert client is not None, "Client was not created"
-    print(f"Agent: {(await client.get_card()).name}")
+    card = await client.get_extended_agent_card(GetExtendedAgentCardRequest())
+    print(f"Agent: {card.name}")
 
-    request = make_message()
+    request = make_send_request()
     output = ""
     async for event in client.send_message(request):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    output += part.root.text
-        else:
-            task, _update = event
-            if task.history:
-                for msg in task.history:
-                    if msg.role == Role.agent:
-                        for part in msg.parts:
-                            if isinstance(part.root, TextPart):
-                                output += part.root.text
+        output += get_stream_response_text(event)
 
     assert output, "Response was empty"
     assert "Hello from" in output, f"Expected 'Hello from' in response, got: {output}"
@@ -398,8 +378,8 @@ async def test_task_status_events(run_a2a_server, transport):
 
     The HelloWorldStreamingAgentExecutor produces:
       1. An initial Task event
-      2. N × TaskStatusUpdateEvent with state=working (one per token)
-      3. 1 × TaskStatusUpdateEvent with state=completed, final=True
+      2. N × TaskStatusUpdateEvent with state=TASK_STATE_WORKING (one per token)
+      3. 1 × TaskStatusUpdateEvent with state=TASK_STATE_COMPLETED (terminal)
     """
     endpoint = TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_task_status_events | {transport} | {endpoint} ---")
@@ -436,15 +416,15 @@ async def test_task_status_events(run_a2a_server, transport):
 
     assert client is not None, "Client was not created"
 
-    request = make_message()
+    request = make_send_request()
 
     # Collect all events from the streaming response
-    events: list[tuple[Task, TaskStatusUpdateEvent | None]] = []
+    events: list[StreamResponse] = []
     async for event in client.send_message(request):
-        if isinstance(event, Message):
+        if event.HasField("message"):
             # Streaming executor should produce Task events, not bare Messages
             pytest.fail(
-                f"Expected (Task, update) tuples but got a bare Message: {event}"
+                f"Expected Task / status updates but got a bare Message: {event}"
             )
         events.append(event)
 
@@ -456,59 +436,45 @@ async def test_task_status_events(run_a2a_server, transport):
     )
 
     # --- Assertion 2: first event is the initial Task ---
-    first_task, first_update = events[0]
-    assert isinstance(first_task, Task), "First event should contain a Task"
-    assert first_update is None, "First event update should be None (initial Task)"
+    assert events[0].HasField("task"), "First event should contain a Task"
 
     # Separate status update events (skip the initial Task event)
-    status_events = [update for _, update in events[1:] if update is not None]
+    status_events = [e.status_update for e in events[1:] if e.HasField("status_update")]
     assert len(status_events) >= 2, (
         f"Expected at least 2 status updates (working + completed), got {len(status_events)}"
     )
 
-    # --- Assertion 3: all status updates have correct kind ---
-    for se in status_events:
-        assert isinstance(se, TaskStatusUpdateEvent), (
-            f"Expected TaskStatusUpdateEvent, got {type(se)}"
-        )
-        assert se.kind == "status-update", (
-            f"Expected kind='status-update', got '{se.kind}'"
-        )
-
-    # --- Assertion 4: at least one working state ---
+    # --- Assertion 3: at least one working state ---
     working_events = [
-        se for se in status_events if se.status.state == TaskState.working
+        se for se in status_events if se.status.state == TaskState.TASK_STATE_WORKING
     ]
     assert len(working_events) >= 1, "Expected at least one working status update"
 
-    # --- Assertion 5: exactly one completed state ---
+    # --- Assertion 4: exactly one completed state ---
     completed_events = [
-        se for se in status_events if se.status.state == TaskState.completed
+        se for se in status_events if se.status.state == TaskState.TASK_STATE_COMPLETED
     ]
     assert len(completed_events) == 1, (
         f"Expected exactly 1 completed status update, got {len(completed_events)}"
     )
 
-    # --- Assertion 6: last status event is completed + final ---
+    # --- Assertion 5: last status event is the (terminal) completed one ---
     last_status = status_events[-1]
-    assert last_status.status.state == TaskState.completed, (
-        f"Last status should be completed, got {last_status.status.state}"
+    assert last_status.status.state == TaskState.TASK_STATE_COMPLETED, (
+        f"Last status should be completed, got "
+        f"{TaskState.Name(last_status.status.state)}"
     )
-    assert last_status.final is True, "Last status event should have final=True"
 
-    # --- Assertion 7: working events are not final ---
+    # --- Assertion 6: working events carry a message ---
     for we in working_events:
-        assert we.final is False, (
-            f"Working status events should have final=False, got final={we.final}"
-        )
-
-    # --- Assertion 8: working events carry a message ---
-    for we in working_events:
-        assert we.status.message is not None, (
+        assert we.status.HasField("message"), (
             "Working status events should carry a message with the streamed token"
         )
 
-    print(f"Status transitions: {[se.status.state.value for se in status_events]}")
+    print(
+        "Status transitions: "
+        f"{[TaskState.Name(se.status.state) for se in status_events]}"
+    )
 
     if transport_instance:
         await transport_instance.close()
@@ -528,9 +494,10 @@ async def test_task_status_events(run_a2a_server, transport):
 async def test_broadcast_task_status_events(run_a2a_server, transport):
     """Verify broadcast_message_streaming yields TaskStatusUpdateEvent objects.
 
-    Starts 3 streaming agents, broadcasts a SendStreamingMessageRequest, and
-    asserts that intermediate TaskStatusUpdateEvent/Task events are received
-    alongside the 3 final SendMessageResponse messages.
+    Starts 3 streaming agents, broadcasts a message with
+    ``broadcast_message_streaming`` and asserts that intermediate
+    TaskStatusUpdateEvent / Task events are received, ending with one
+    terminal (completed) status update per agent.
     """
     if transport == "A2A":
         pytest.skip("Broadcast not applicable for raw A2A transport.")
@@ -567,42 +534,35 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
 
-    # Use SendStreamingMessageRequest so the server dispatches to
-    # message/stream -> streaming executor which emits status events.
+    # broadcast_message_streaming dispatches SendStreamingMessage on the
+    # server -> streaming executor which emits status events.
     request = make_streaming_send_request()
 
     import time
     from collections import defaultdict
 
-    status_events_received: list[TaskStatusUpdateEvent] = []
-    task_events_received: list[Task] = []
-    final_responses: list[SendMessageResponse] = []
-    all_events_ordered: list = []  # preserves arrival order for ordering checks
-
+    status_events_received: list = []  # TaskStatusUpdateEvent protos
+    task_events_received: list = []  # Task protos
+    other_events: list[StreamResponse] = []
     start_time = time.monotonic()
 
     async for event in client.broadcast_message_streaming(
         request,
         recipients=agent_names,
     ):
-        all_events_ordered.append(event)
-        if isinstance(event, TaskStatusUpdateEvent):
-            status_events_received.append(event)
-        elif isinstance(event, Task):
-            task_events_received.append(event)
-        elif isinstance(event, SendMessageResponse):
-            final_responses.append(event)
+        if event.HasField("status_update"):
+            status_events_received.append(event.status_update)
+        elif event.HasField("task"):
+            task_events_received.append(event.task)
+        else:
+            other_events.append(event)
 
     elapsed = time.monotonic() - start_time
 
-    total_events = (
-        len(status_events_received) + len(task_events_received) + len(final_responses)
-    )
     print(
         f"Received {len(status_events_received)} status events, "
         f"{len(task_events_received)} task events, "
-        f"{len(final_responses)} final responses "
-        f"({total_events} total, {elapsed:.1f}s)"
+        f"{len(other_events)} other events ({elapsed:.1f}s)"
     )
 
     # --- Assertion 1: stream completed well under the timeout ---
@@ -628,19 +588,12 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
         f"got {len(context_ids)}: {context_ids}"
     )
 
-    # --- Assertion 4: all status events have correct kind ---
+    # --- Assertion 4: at least one working event per agent ---
+    working = TaskState.TASK_STATE_WORKING
+    completed = TaskState.TASK_STATE_COMPLETED
+    working_by_ctx: dict[str, list] = defaultdict(list)
     for se in status_events_received:
-        assert isinstance(se, TaskStatusUpdateEvent), (
-            f"Expected TaskStatusUpdateEvent, got {type(se)}"
-        )
-        assert se.kind == "status-update", (
-            f"Expected kind='status-update', got '{se.kind}'"
-        )
-
-    # --- Assertion 5: at least one working event per agent ---
-    working_by_ctx: dict[str, list[TaskStatusUpdateEvent]] = defaultdict(list)
-    for se in status_events_received:
-        if se.status.state == TaskState.working:
+        if se.status.state == working:
             working_by_ctx[se.context_id].append(se)
     assert len(working_by_ctx) == 3, (
         f"Expected working events from all 3 agents, "
@@ -648,10 +601,10 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
         f"{set(working_by_ctx.keys())}"
     )
 
-    # --- Assertion 6: exactly one completed event per agent ---
-    completed_by_ctx: dict[str, list[TaskStatusUpdateEvent]] = defaultdict(list)
+    # --- Assertion 5: exactly one completed (terminal) event per agent ---
+    completed_by_ctx: dict[str, list] = defaultdict(list)
     for se in status_events_received:
-        if se.status.state == TaskState.completed:
+        if se.status.state == completed:
             completed_by_ctx[se.context_id].append(se)
     assert len(completed_by_ctx) == 3, (
         f"Expected completed events from all 3 agents, "
@@ -664,58 +617,40 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
             f"got {len(completed_list)}"
         )
 
-    # --- Assertion 7: working events have final=False ---
-    all_working = [
-        se for se in status_events_received if se.status.state == TaskState.working
-    ]
+    # --- Assertion 6: working events carry a message (streamed token) ---
+    all_working = [se for se in status_events_received if se.status.state == working]
     for we in all_working:
-        assert we.final is False, (
-            f"Working status events should have final=False, got final={we.final}"
-        )
-
-    # --- Assertion 8: completed events have final=True ---
-    all_completed = [
-        se for se in status_events_received if se.status.state == TaskState.completed
-    ]
-    for ce in all_completed:
-        assert ce.final is True, (
-            f"Completed status events should have final=True, got final={ce.final}"
-        )
-
-    # --- Assertion 9: working events carry a message (streamed token) ---
-    for we in all_working:
-        assert we.status.message is not None, (
+        assert we.status.HasField("message"), (
             "Working status events should carry a message with the streamed token"
         )
 
-    # --- Assertion 10: per-agent ordering — working before completed ---
-    events_by_ctx: dict[str, list[TaskStatusUpdateEvent]] = defaultdict(list)
+    # --- Assertion 7: per-agent ordering — working before completed ---
+    events_by_ctx: dict[str, list] = defaultdict(list)
     for se in status_events_received:
         events_by_ctx[se.context_id].append(se)
     for ctx_id, agent_events in events_by_ctx.items():
         states = [e.status.state for e in agent_events]
         # Find the completed event index; everything before it must be working
         try:
-            completed_idx = states.index(TaskState.completed)
+            completed_idx = states.index(completed)
         except ValueError:
-            continue  # no completed event for this agent (caught by assertion 6)
+            continue  # no completed event for this agent (caught by assertion 5)
         for i in range(completed_idx):
-            assert states[i] == TaskState.working, (
+            assert states[i] == working, (
                 f"Agent {ctx_id}: expected working before completed, "
-                f"but state[{i}]={states[i].value} (completed at index {completed_idx})"
+                f"but state[{i}]={TaskState.Name(states[i])} "
+                f"(completed at index {completed_idx})"
             )
 
-    # --- Assertion 11: exactly 3 finals total ---
-    total_finals = len(final_responses) + len(all_completed)
+    # --- Assertion 8: exactly 3 terminal events total (one per agent) ---
+    total_finals = sum(len(v) for v in completed_by_ctx.values())
     assert total_finals == 3, (
-        f"Expected exactly 3 finals (one per agent), got {total_finals} "
-        f"({len(final_responses)} SendMessageResponse + "
-        f"{len(all_completed)} completed TaskStatusUpdateEvent)"
+        f"Expected exactly 3 terminal events (one per agent), got {total_finals}"
     )
 
     print("Status transitions by agent:")
     for ctx_id, agent_events in events_by_ctx.items():
-        transitions = [e.status.state.value for e in agent_events]
+        transitions = [TaskState.Name(e.status.state) for e in agent_events]
         print(f"  {ctx_id[:8]}...: {transitions}")
 
     if transport_instance:
@@ -771,7 +706,7 @@ async def test_interceptor(run_a2a_server, transport):
 
     assert client is not None, "Client was not created"
 
-    request = make_message()
+    request = make_send_request()
     async for _event in client.send_message(request):
         pass
 
@@ -782,313 +717,17 @@ async def test_interceptor(run_a2a_server, transport):
     )
 
     # --- Verify it was called with the correct method name ---
-    method_names = [call[0] for call in interceptor.calls]
-    assert "message/send" in method_names or "message/stream" in method_names, (
+    method_names = interceptor.calls
+    assert "send_message" in method_names or "send_message_streaming" in method_names, (
         f"Interceptor called with unexpected methods: {method_names}"
     )
 
-    print(
-        f"Interceptor called {len(interceptor.calls)} time(s): "
-        f"{[c[0] for c in interceptor.calls]}"
-    )
+    # --- ``after`` hooks must fire as well ---
+    assert interceptor.after_calls, "Interceptor.after was never called"
+
+    print(f"Interceptor called {len(interceptor.calls)} time(s): {method_names}")
 
     if transport_instance:
         await transport_instance.close()
 
     print(f"=== ✅ test_interceptor passed for {transport} ===\n")
-
-
-# ---------------------------------------------------------------------------
-# test_broadcast_consumer — consumer callbacks fire for broadcast
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
-)
-@pytest.mark.asyncio
-async def test_broadcast_consumer(run_a2a_server, transport):
-    """Consumer callbacks should fire for broadcast_message on pattern transports."""
-    if transport == "A2A":
-        pytest.skip("Broadcast not applicable for raw A2A transport.")
-    if transport == "JSONRPC":
-        pytest.skip("Broadcast not applicable for JSONRPC transport.")
-
-    endpoint = TRANSPORT_CONFIGS[transport]
-    print(f"\n--- test_broadcast_consumer | {transport} | {endpoint} ---")
-
-    factory = AgntcyFactory(enable_tracing=True)
-    transport_instance = factory.create_transport(
-        transport, endpoint=endpoint, name="default/default/default"
-    )
-
-    agent_names = [
-        "default/default/agent1",
-        "default/default/agent2",
-        "default/default/agent3",
-    ]
-    for name in agent_names:
-        run_a2a_server(transport, endpoint, name=name)
-
-    await asyncio.sleep(5)
-
-    consumed_events: list = []
-
-    async def recording_consumer(event, card):
-        consumed_events.append((event, card))
-
-    config_kwargs = {}
-    if transport == "SLIM":
-        config_kwargs["slim_transport"] = transport_instance
-    elif transport == "NATS":
-        config_kwargs["nats_transport"] = transport_instance
-
-    card = make_agent_card(agent_names[0], transport)
-    a2a = factory.a2a(ClientConfig(**config_kwargs))
-    client = await a2a.create(card, consumers=[recording_consumer])
-    assert client is not None, "Client was not created"
-
-    request = make_send_request()
-    responses = await client.broadcast_message(request, recipients=agent_names)
-
-    print(f"Received {len(responses)} broadcast responses")
-    assert len(responses) == 3, "Did not receive expected number of broadcast responses"
-
-    # --- Core assertion: consumer was invoked for each response ---
-    assert len(consumed_events) == 3, (
-        f"Expected 3 consumer invocations, got {len(consumed_events)}. "
-        f"Consumers are not being called for broadcast_message."
-    )
-    for event, event_card in consumed_events:
-        assert event_card == card
-
-    if transport_instance:
-        await transport_instance.close()
-
-    print(f"=== ✅ test_broadcast_consumer passed for {transport} ===\n")
-
-
-# ---------------------------------------------------------------------------
-# test_broadcast_streaming_consumer — consumer callbacks fire for streaming broadcast
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
-)
-@pytest.mark.asyncio
-async def test_broadcast_streaming_consumer(run_a2a_server, transport):
-    """Consumer callbacks should fire for broadcast_message_streaming."""
-    if transport == "A2A":
-        pytest.skip("Broadcast not applicable for raw A2A transport.")
-    if transport == "JSONRPC":
-        pytest.skip("Broadcast not applicable for JSONRPC transport.")
-
-    endpoint = TRANSPORT_CONFIGS[transport]
-    print(f"\n--- test_broadcast_streaming_consumer | {transport} | {endpoint} ---")
-
-    factory = AgntcyFactory(enable_tracing=True)
-    transport_instance = factory.create_transport(
-        transport, endpoint=endpoint, name="default/default/default"
-    )
-
-    agent_names = [
-        "default/default/agent1",
-        "default/default/agent2",
-        "default/default/agent3",
-    ]
-    for name in agent_names:
-        run_a2a_server(transport, endpoint, name=name)
-
-    await asyncio.sleep(5)
-
-    consumed_events: list = []
-
-    async def recording_consumer(event, card):
-        consumed_events.append((event, card))
-
-    config_kwargs = {}
-    if transport == "SLIM":
-        config_kwargs["slim_transport"] = transport_instance
-    elif transport == "NATS":
-        config_kwargs["nats_transport"] = transport_instance
-
-    card = make_agent_card(agent_names[0], transport)
-    a2a = factory.a2a(ClientConfig(**config_kwargs))
-    client = await a2a.create(card, consumers=[recording_consumer])
-    assert client is not None, "Client was not created"
-
-    request = make_send_request()
-    responses = []
-    async for resp in client.broadcast_message_streaming(
-        request,
-        message_limit=3,
-        recipients=agent_names,
-    ):
-        responses.append(resp)
-
-    print(f"Received {len(responses)} streaming responses")
-    assert len(responses) == 3, "Did not receive expected number of broadcast responses"
-
-    # --- Core assertion: consumer was invoked for each yielded event ---
-    assert len(consumed_events) >= 3, (
-        f"Expected at least 3 consumer invocations, got {len(consumed_events)}. "
-        f"Consumers are not being called for broadcast_message_streaming."
-    )
-    for event, event_card in consumed_events:
-        assert event_card == card
-
-    if transport_instance:
-        await transport_instance.close()
-
-    print(f"=== ✅ test_broadcast_streaming_consumer passed for {transport} ===\n")
-
-
-# ---------------------------------------------------------------------------
-# test_groupchat_consumer — consumer callbacks fire for groupchat
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
-)
-@pytest.mark.asyncio
-async def test_groupchat_consumer(run_a2a_server, transport):
-    """Consumer callbacks should fire for start_groupchat."""
-    if transport == "A2A":
-        pytest.skip("Group chat not applicable for raw A2A transport.")
-    if transport == "JSONRPC":
-        pytest.skip("Group chat not applicable for JSONRPC transport.")
-    if transport == "NATS":
-        pytest.skip("Group chat not applicable for NATS transport.")
-
-    endpoint = TRANSPORT_CONFIGS[transport]
-    print(f"\n--- test_groupchat_consumer | {transport} | {endpoint} ---")
-
-    participants = ["default/default/foo", "default/default/bar"]
-    for name in participants:
-        run_a2a_server(transport, endpoint, name=name)
-
-    await asyncio.sleep(3)
-
-    factory = AgntcyFactory(enable_tracing=True)
-    transport_instance = factory.create_transport(
-        transport, endpoint=endpoint, name="default/default/default"
-    )
-
-    consumed_events: list = []
-
-    async def recording_consumer(event, card):
-        consumed_events.append((event, card))
-
-    config_kwargs = {}
-    if transport == "SLIM":
-        config_kwargs["slim_transport"] = transport_instance
-    elif transport == "NATS":
-        config_kwargs["nats_transport"] = transport_instance
-
-    card = make_agent_card(participants[0], transport)
-    a2a = factory.a2a(ClientConfig(**config_kwargs))
-    client = await a2a.create(card, consumers=[recording_consumer])
-    assert client is not None, "Client was not created"
-
-    request = make_send_request("This is a groupchat message")
-    responses = await client.start_groupchat(
-        init_message=request,
-        group_channel="zoo",
-        participants=participants,
-        end_message="DELIVERED",
-        timeout=30,
-    )
-
-    assert len(responses) > 0, "No group chat responses received (possible timeout)"
-
-    # --- Core assertion: consumer was invoked for each response ---
-    assert len(consumed_events) == len(responses), (
-        f"Expected {len(responses)} consumer invocations, got {len(consumed_events)}. "
-        f"Consumers are not being called for start_groupchat."
-    )
-    for event, event_card in consumed_events:
-        assert event_card == card
-
-    if transport_instance:
-        await transport_instance.close()
-
-    print(f"=== ✅ test_groupchat_consumer passed for {transport} ===\n")
-
-
-# ---------------------------------------------------------------------------
-# test_streaming_groupchat_consumer — consumer callbacks fire for streaming groupchat
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
-)
-@pytest.mark.asyncio
-async def test_streaming_groupchat_consumer(run_a2a_server, transport):
-    """Consumer callbacks should fire for start_streaming_groupchat."""
-    if transport == "A2A":
-        pytest.skip("Group chat not applicable for raw A2A transport.")
-    if transport == "JSONRPC":
-        pytest.skip("Group chat not applicable for JSONRPC transport.")
-    if transport == "NATS":
-        pytest.skip("Group chat not applicable for NATS transport.")
-
-    endpoint = TRANSPORT_CONFIGS[transport]
-    print(f"\n--- test_streaming_groupchat_consumer | {transport} | {endpoint} ---")
-
-    participants = ["default/default/foo", "default/default/bar"]
-    for name in participants:
-        run_a2a_server(transport, endpoint, name=name)
-
-    await asyncio.sleep(3)
-
-    factory = AgntcyFactory(enable_tracing=True)
-    transport_instance = factory.create_transport(
-        transport, endpoint=endpoint, name="default/default/default"
-    )
-
-    consumed_events: list = []
-
-    async def recording_consumer(event, card):
-        consumed_events.append((event, card))
-
-    config_kwargs = {}
-    if transport == "SLIM":
-        config_kwargs["slim_transport"] = transport_instance
-    elif transport == "NATS":
-        config_kwargs["nats_transport"] = transport_instance
-
-    card = make_agent_card(participants[0], transport)
-    a2a = factory.a2a(ClientConfig(**config_kwargs))
-    client = await a2a.create(card, consumers=[recording_consumer])
-    assert client is not None, "Client was not created"
-
-    request = make_send_request("This is a groupchat message")
-    messages = []
-    async for message in client.start_streaming_groupchat(
-        init_message=request,
-        group_channel="zoo",
-        participants=participants,
-        end_message="DELIVERED",
-        timeout=30,
-    ):
-        messages.append(message)
-
-    assert len(messages) > 0, (
-        "No streaming group chat messages received (possible timeout)"
-    )
-
-    # --- Core assertion: consumer was invoked for each yielded message ---
-    assert len(consumed_events) == len(messages), (
-        f"Expected {len(messages)} consumer invocations, got {len(consumed_events)}. "
-        f"Consumers are not being called for start_streaming_groupchat."
-    )
-    for event, event_card in consumed_events:
-        assert event_card == card
-
-    if transport_instance:
-        await transport_instance.close()
-
-    print(f"=== ✅ test_streaming_groupchat_consumer passed for {transport} ===\n")

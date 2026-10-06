@@ -14,11 +14,8 @@ import os
 from unittest.mock import patch
 
 import pytest
-from a2a.types import (
-    Message,
-    Role,
-    TextPart,
-)
+from a2a.helpers import get_stream_response_text
+from a2a.types import GetExtendedAgentCardRequest
 from ioa_observe.sdk.tracing import session_start
 
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -28,7 +25,6 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import ServeCardPlan
 from tests.e2e.conftest import (
     TRANSPORT_CONFIGS,
     make_agent_card,
-    make_message,
     make_send_request,
 )
 
@@ -116,23 +112,13 @@ async def test_client(run_card_bootstrap_server, transport):
         client = await a2a.create(card)
 
     assert client is not None, "Client was not created"
-    print(f"Agent: {(await client.get_card()).name}")
+    agent_card = await client.get_extended_agent_card(GetExtendedAgentCardRequest())
+    print(f"Agent: {agent_card.name}")
 
-    request = make_message()
+    request = make_send_request()
     output = ""
     async for event in client.send_message(request):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    output += part.root.text
-        else:
-            task, _update = event
-            if task.history:
-                for msg in task.history:
-                    if msg.role == Role.agent:
-                        for part in msg.parts:
-                            if isinstance(part.root, TextPart):
-                                output += part.root.text
+        output += get_stream_response_text(event)
 
     assert output, "Response was empty"
     assert "Hello from" in output, f"Expected 'Hello from' in response, got: {output}"

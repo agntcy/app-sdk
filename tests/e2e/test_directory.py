@@ -14,7 +14,6 @@ import uuid
 
 import pytest
 import pytest_asyncio
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
@@ -33,7 +32,8 @@ from agntcy_app_sdk.directory import (
 )
 from agntcy_app_sdk.directory.oasf_converter import MODULE_NAME_A2A
 from agntcy_app_sdk.factory import AgntcyFactory
-from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
+from agntcy_app_sdk.semantic.a2a.card_utils import get_card_url
+from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
 from tests.server.agent_executor import HelloWorldAgentExecutor
 
 pytest_plugins = "pytest_asyncio"
@@ -51,12 +51,14 @@ def _unique_card(**overrides) -> AgentCard:
     unique = uuid.uuid4().hex[:8]
     defaults = {
         "name": f"e2e-test-agent-{unique}",
-        "url": "http://localhost:9000",
+        "supported_interfaces": [
+            AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000"),
+        ],
         "version": "1.0.0",
         "description": "E2E test agent for directory integration",
         "capabilities": AgentCapabilities(),
-        "defaultInputModes": ["text"],
-        "defaultOutputModes": ["text"],
+        "default_input_modes": ["text"],
+        "default_output_modes": ["text"],
         "skills": [],
         "provider": AgentProvider(
             organization="E2E Test Org", url="https://test.example.com"
@@ -125,7 +127,7 @@ async def test_push_and_pull_extract_card(directory: AgentDirectory):
         "extract_card should return an AgentCard"
     )
     assert restored_card.name == card.name
-    assert restored_card.url == card.url
+    assert get_card_url(restored_card) == get_card_url(card)
     assert restored_card.version == card.version
     assert restored_card.description == card.description
 
@@ -215,25 +217,23 @@ DEFAULT_SKILL = AgentSkill(
 )
 
 
-def _build_a2a_server(name: str = "dir-pipeline-agent") -> A2AStarletteApplication:
+def _build_a2a_server(name: str = "dir-pipeline-agent") -> A2AServerConfig:
     """Build an A2A server whose AgentCard will be pushed to the directory."""
     card = _unique_card(
         name=name,
         description="E2E directory pipeline agent",
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
-        additional_interfaces=[
-            AgentInterface(
-                transport=InterfaceTransport.JSONRPC,
-                url="http://0.0.0.0:9000",
-            ),
+        supported_interfaces=[
+            AgentInterface(protocol_binding="JSONRPC", url="http://0.0.0.0:9000"),
         ],
     )
     request_handler = DefaultRequestHandler(
         agent_executor=HelloWorldAgentExecutor(name),
         task_store=InMemoryTaskStore(),
+        agent_card=card,
     )
-    return A2AStarletteApplication(agent_card=card, http_handler=request_handler)
+    return A2AServerConfig(agent_card=card, request_handler=request_handler)
 
 
 @pytest.mark.asyncio

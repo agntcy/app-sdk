@@ -4,8 +4,8 @@
 """A2A server that bootstraps via ``add_a2a_card()`` — the way a real user would.
 
 The agent card is the **single source of truth**.  It declares *all*
-available transports in ``additional_interfaces`` (SLIM, NATS, HTTP) and
-uses ``preferredTransport`` to signal which one clients should favour.
+available transports in ``supported_interfaces`` (SLIM, NATS, HTTP); the
+list order signals which one clients should favour (first = preferred).
 ``add_a2a_card()`` reads those interfaces and wires everything up — no
 manual builder chain required.
 
@@ -45,7 +45,7 @@ DEFAULT_SKILL = AgentSkill(
     examples=["hi", "hello world"],
 )
 
-# Map CLI --transport values to InterfaceTransport preferredTransport strings
+# Map CLI --transport values to the InterfaceTransport (protocol_binding) strings
 _PREFERRED_TRANSPORT: dict[str, str] = {
     "SLIM": InterfaceTransport.SLIM_PATTERNS,
     "NATS": InterfaceTransport.NATS_PATTERNS,
@@ -71,40 +71,52 @@ async def main(
     # -- Build the card as a real user would: declare ALL transports --------
     # The *name* is the agent's routable identity, stamped into the SLIM/NATS
     # interface URLs.  add_a2a_card() reads those URLs and subscribes accordingly.
+    interfaces = [
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
+            url=f"{SLIM_ENDPOINT}/{name}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.NATS_PATTERNS,
+            url=f"{NATS_ENDPOINT}/{name}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.JSONRPC,
+            url=f"http://0.0.0.0:{port}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_RPC,
+            url=f"{SLIM_ENDPOINT}/{name}",
+        ),
+    ]
+    # List order = server preference: move the requested transport to the front.
+    preferred = _PREFERRED_TRANSPORT[transport_type]
+
+    # SLIM 2.x delivers a session to ONE subscriber of a name, so a pub/sub
+    # (slim) interface and an RPC (slimrpc) interface must not share the same
+    # identity.  Declare only the SLIM flavour that the test exercises.
+    if preferred == InterfaceTransport.SLIM_RPC:
+        unused = {InterfaceTransport.SLIM_PATTERNS}
+    else:
+        unused = {InterfaceTransport.SLIM_RPC}
+    interfaces = [i for i in interfaces if i.protocol_binding not in unused]
+    interfaces.sort(key=lambda i: i.protocol_binding != preferred)
+
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
-        url=f"http://localhost:{port}/",
         version=version,
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
-        supportsAuthenticatedExtendedCard=False,
-        preferredTransport=_PREFERRED_TRANSPORT[transport_type],
-        additional_interfaces=[
-            AgentInterface(
-                transport=InterfaceTransport.SLIM_PATTERNS,
-                url=f"{SLIM_ENDPOINT}/{name}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.NATS_PATTERNS,
-                url=f"{NATS_ENDPOINT}/{name}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.JSONRPC,
-                url=f"http://0.0.0.0:{port}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.SLIM_RPC,
-                url=f"{SLIM_ENDPOINT}/{name}",
-            ),
-        ],
+        supported_interfaces=interfaces,
     )
 
     request_handler = DefaultRequestHandler(
         agent_executor=HelloWorldAgentExecutor(name),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
     # -- One call does it all -----------------------------------------------
