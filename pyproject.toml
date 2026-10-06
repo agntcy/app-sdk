@@ -7,18 +7,18 @@ requires-python = ">=3.12,<4.0"
 license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
-    "a2a-sdk==0.3.20",
+    "a2a-sdk==1.1.0",
     "nats-py>=2.10.0,<3",
     "structlog>=24.1.0",
     "langchain-community>=0.3.24",
     "uvicorn>=0.29.0",
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
-    "ioa-observe-sdk==1.0.41",
+    "ioa-observe-sdk==1.0.49",
     "asgi-lifespan>=2.1.0",
-    "slim-bindings~=1.1",
+    "slim-bindings~=2.2",
     "agntcy-identity-service-sdk==0.0.7",
-    "slima2a==0.3.0",
+    "slima2a==0.7.0",
     "agntcy-dir>=1.0.0",
 ]
 
