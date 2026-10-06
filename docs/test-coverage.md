@@ -1,16 +1,19 @@
 # Test Coverage Report
 
-> Last updated: 2026-03-07
+> Last updated: 2026-10-06 (SLIM 2.2.0, slim-bindings 2.2, a2a-sdk 1.1.0)
 
 ## Overview
 
-| Category  |   Tests |  Passed |  Failed | Skipped |
-| --------- | ------: | ------: | ------: | ------: |
-| **Unit**  |     166 |     166 |       0 |       0 |
-| **E2E**   |      48 |      26 |     2\* |      11 |
-| **Total** | **214** | **192** | **2\*** |  **11** |
+| Category  |   Tests |  Passed | Failed | Skipped |
+| --------- | ------: | ------: | -----: | ------: |
+| **Unit**  |     322 |     322 |      0 |       0 |
+| **E2E**   |      60 |      48 |      0 |      12 |
+| **Total** | **382** | **370** |  **0** |  **12** |
 
-\*Pre-existing failures in `test_a2a_usage_guide.py` (unrelated to current changes).
+E2E figures cover every E2E file, including `test_directory.py` (9 tests, run
+against `dir-api-server` v1.0.0 and `zot`).
+The 12 skips are all by design ("broadcast not applicable to JSONRPC", "group
+chat not applicable to NATS", "MCP not applicable to JSONRPC", and similar).
 
 ---
 
@@ -27,12 +30,15 @@ uv run pytest tests/unit/ -v
 
 | File                              | Tests | What It Covers                                                                                                                                                                                                                                                                          |
 | --------------------------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_card_bootstrap.py`          |    64 | URL parsing (`slim://`, `nats://`, `http://`), transport aliasing, dry-run plan generation, `CardBuilder` container building, `InterfaceTransport` constants, `AppSession.add_a2a_card()` delegation, `.override()` / `.skip()` / fluent chaining                                       |
-| `test_a2a_client_config.py`       |    59 | `ClientConfig` post-init logic, transport config validation, `_parse_topic_from_url`, `PatternsClientTransport` adapter, `A2AExperimentalClient` API, `A2AClientFactory` negotiation (server/client preference, multi-transport), dispatch to slimrpc/slimpatterns/natspatterns/jsonrpc |
+| `test_card_bootstrap.py`          |    81 | URL parsing (`slim://`, `nats://`, `http://`), transport aliasing, dry-run plan generation, `CardBuilder` container building, `InterfaceTransport` constants, `AppSession.add_a2a_card()` delegation, `.override()` / `.skip()` / fluent chaining, warning when `slim` and `slimrpc` share one SLIM name |
+| `test_a2a_client_config.py`       |   112 | `ClientConfig` post-init logic (incl. deprecated `supported_transports`), transport config validation, `_parse_topic_from_url`, `PatternsClientTransport` adapter, `A2AExperimentalClient` API and `ClientCallInterceptor` integration, `A2AClientFactory` negotiation over `supported_interfaces` (server/client preference, multi-transport), dispatch to slimrpc/slimpatterns/natspatterns/jsonrpc |
+| `test_a2a_server.py`              |    45 | `A2AServerConfig` and deprecated `A2AStarletteApplication` shim, HTTP JSON-RPC app, interface declaration by server handlers, patterns bridge over an in-memory loopback transport (unary, streaming, errors, relay, identity auth), `with_public_url` / JSONRPC interface declaration |
+| `test_card_utils.py`              |    18 | `supported_interfaces` helpers: `add_interface` / `find_interface` / `clone_card`, binding casing and aliases |
+| `test_get_agent_identifier.py`    |    21 | Topic/identifier derivation from the agent card |
 | `test_agent_directory.py`         |    12 | `AgentDirectory` setup, push (AgentCard, raw dict), pull (by CID, extract card), search, teardown, error handling                                                                                                                                                                       |
 | `test_factory.py`                 |    10 | `AgntcyFactory` construction, transport creation, protocol accessor registration, directory creation, re-exports                                                                                                                                                                        |
 | `test_nats_invite_protocol.py`    |     9 | NATS invite/ACK subscribe flow, teardown unsubscribe, message handler intercept (invite, teardown, normal), `gather_stream` single/multi recipient, ephemeral subscription cleanup                                                                                                      |
-| `test_oasf_converter.py`          |     6 | AgentCard to OASF conversion (with/without provider), OASF to AgentCard roundtrip, edge cases (no matching module, empty modules)                                                                                                                                                       |
+| `test_oasf_converter.py`          |     8 | AgentCard to OASF conversion (with/without provider), OASF to AgentCard roundtrip, edge cases (no matching module, empty modules)                                                                                                                                                       |
 | `test_app_container_directory.py` |     5 | `AppContainer` integration with directory (push record, no record, no directory), stop/teardown                                                                                                                                                                                         |
 | `test_app_session.py`             |     1 | `AppSession` basic lifecycle                                                                                                                                                                                                                                                            |
 
@@ -49,6 +55,16 @@ transport connections, message serialization, protocol handlers, and server life
 docker-compose -f services/docker/docker-compose.yaml up
 ```
 
+The SLIM and NATS tests only need two services (SLIM **2.2.0** and NATS); start just those if
+other containers already use the remaining ports:
+
+```bash
+docker compose -f services/docker/docker-compose.yaml up -d nats slim
+```
+
+Run each E2E file on its own (as `task test-e2e` does), not all at once in a single pytest run.
+SLIM logs `connection unknown` ERROR lines between tests; these are harmless.
+
 | Service        | Port     | Required By           |
 | -------------- | -------- | --------------------- |
 | SLIM dataplane | `:46357` | SLIM, SLIMRPC tests   |
@@ -59,7 +75,7 @@ docker-compose -f services/docker/docker-compose.yaml up
 ### test_card_bootstrap.py
 
 `add_a2a_card()` card-driven bootstrap. The agent card is the single source of truth --
-`add_a2a_card()` reads `additional_interfaces` and starts all transports automatically.
+`add_a2a_card()` reads `supported_interfaces` and starts all transports automatically.
 
 ```
 uv run pytest tests/e2e/test_card_bootstrap.py -s -v
@@ -162,7 +178,7 @@ uv run pytest tests/e2e/test_a2a_usage_guide.py -s -v
 
 ### test_directory.py
 
-Agent directory push/pull/search operations (requires `dir-api-server` Docker service).
+Agent directory push/pull/search operations (requires the `dir-api-server` Docker service on `127.0.0.1:8888`, with its `postgres` and `zot` dependencies running).
 
 ```
 uv run pytest tests/e2e/test_directory.py -s -v

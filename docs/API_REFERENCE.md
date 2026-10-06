@@ -187,7 +187,7 @@ AppContainer(
 
 | Parameter   | Type                 | Required | Description                                                      |
 | ----------- | -------------------- | -------- | ---------------------------------------------------------------- |
-| `server`    | `Any`                | Yes      | Server instance (A2AStarletteApplication, MCPServer, or FastMCP) |
+| `server`    | `Any`                | Yes      | Server instance (A2AServerConfig, MCPServer, or FastMCP)         |
 | `transport` | `BaseTransport`      | No       | Transport layer for agent communication                          |
 | `directory` | `BaseAgentDirectory` | No       | Agent directory service for registration                         |
 | `topic`     | `str`                | No       | Message topic/channel (auto-generated for A2A)                   |
@@ -207,7 +207,8 @@ AppContainer(
 
 **Supported Server Types:**
 
-- `A2AStarletteApplication`: Agent-to-Agent protocol server
+- `A2AServerConfig`: Agent-to-Agent protocol server (card + request handler). The deprecated `A2AStarletteApplication` shim is still accepted
+- `A2ASlimRpcServerConfig`: Agent-to-Agent over native SlimRPC
 - `MCPServer`: Model Context Protocol server
 - `FastMCP`: Fast Model Context Protocol server
 
@@ -462,7 +463,7 @@ await session.stop_all_sessions()
 
 ### add_a2a_card()
 
-Begin building containers from an A2A AgentCard's `additional_interfaces`. Returns a `CardBuilder` for fluent configuration.
+Begin building containers from an A2A AgentCard's `supported_interfaces`. Returns a `CardBuilder` for fluent configuration.
 
 ```python
 def add_a2a_card(
@@ -475,7 +476,7 @@ def add_a2a_card(
 
 | Parameter         | Type                    | Required | Description                                      |
 | ----------------- | ----------------------- | -------- | ------------------------------------------------ |
-| `agent_card`      | `AgentCard`             | Yes      | Agent card with `additional_interfaces` declared |
+| `agent_card`      | `AgentCard`             | Yes      | Agent card with `supported_interfaces` declared  |
 | `request_handler` | `DefaultRequestHandler` | Yes      | Request handler for A2A message processing       |
 
 **Returns:** `CardBuilder` instance for fluent configuration
@@ -488,9 +489,9 @@ from a2a.types import AgentCard, AgentInterface
 
 agent_card = AgentCard(
     ...,
-    additional_interfaces=[
-        AgentInterface(transport=InterfaceTransport.SLIM_PATTERNS, url="slim://host:46357/topic"),
-        AgentInterface(transport=InterfaceTransport.NATS_PATTERNS, url="nats://host:4222/topic"),
+    supported_interfaces=[   # order = server preference
+        AgentInterface(protocol_binding=InterfaceTransport.SLIM_PATTERNS, url="slim://host:46357/topic"),
+        AgentInterface(protocol_binding=InterfaceTransport.NATS_PATTERNS, url="nats://host:4222/topic"),
     ],
 )
 
@@ -676,9 +677,9 @@ await container.loop_forever()  # Then keep alive
 
 ### CardBuilder
 
-Fluent builder that expands an `AgentCard`'s `additional_interfaces` into containers. Constructed via `AppSession.add_a2a_card()`.
+Fluent builder that expands an `AgentCard`'s `supported_interfaces` into containers. Constructed via `AppSession.add_a2a_card()`.
 
-The builder reads `agent_card.additional_interfaces`, creates transport/config objects for each, and registers `AppContainer` instances on the session.
+The builder reads `agent_card.supported_interfaces`, creates transport/config objects for each, and registers `AppContainer` instances on the session.
 
 #### Methods
 
@@ -737,7 +738,7 @@ def override(transport_type: str, target: object) -> CardBuilder
 
 - `slimrpc`: pass a pre-built `A2ASlimRpcServerConfig`
 - `slimpatterns` / `natspatterns`: pass a pre-built `BaseTransport`
-- `jsonrpc` / `http`: pass a pre-built `A2AStarletteApplication`
+- `jsonrpc` / `http`: pass a pre-built `A2AServerConfig`
 
 **Returns:** `CardBuilder` (for chaining)
 
@@ -785,9 +786,40 @@ async def start(*, keep_alive: bool = False) -> None
 
 ---
 
+### A2AServerConfig
+
+Describes an A2A agent to serve. Replaces the upstream `A2AStarletteApplication`, which a2a-sdk 1.x removed. Pass an instance to `session.add(...)`: with no transport it is served over native HTTP JSON-RPC (`.with_host()` / `.with_port()` required); with `.with_transport(...)` it is bridged over SLIM or NATS patterns.
+
+```python
+from agntcy_app_sdk.semantic.a2a.server import A2AServerConfig
+```
+
+| Field              | Type                                         | Default | Description                                                              |
+| ------------------ | -------------------------------------------- | ------- | ------------------------------------------------------------------------ |
+| `agent_card`       | `AgentCard`                                  | --      | The agent card; served transports are added to `supported_interfaces`    |
+| `request_handler`  | `RequestHandler`                             | --      | a2a-sdk request handler (normally `DefaultRequestHandler`)               |
+| `context_builder`  | `ServerCallContextBuilder \| None`           | `None`  | Builds the per-request context for the HTTP JSON-RPC routes              |
+| `card_modifier`    | `Callable[[AgentCard], Awaitable[AgentCard]]`| `None`  | Applied to the card each time it is served over HTTP                     |
+| `rpc_url`          | `str`                                        | `"/"`   | Path the JSON-RPC endpoint is mounted at                                 |
+| `enable_v0_3_compat` | `bool`                                     | `False` | Also accept A2A v0.3 JSON-RPC requests on the HTTP endpoint              |
+
+`build_app() -> Starlette` returns the ASGI app (agent-card routes plus JSON-RPC routes).
+
+**Advertising the HTTP endpoint.** When served over HTTP, clients find the endpoint through a `JSONRPC` entry in `agent_card.supported_interfaces`. The bind address (`.with_host()` / `.with_port()`) is never written to the card, because it is often not reachable by clients (`0.0.0.0`, in-container, behind a proxy). The SDK resolves the entry as follows:
+
+1. A `JSONRPC` interface already declared on the card is left untouched (URL and position).
+2. Otherwise, if `.with_public_url("https://...")` was set on the builder, a `JSONRPC` interface with that URL is **appended** (never prepended, so the author's preference order is kept). The URL must start with `http://` or `https://`.
+3. Otherwise a warning is logged and the card is unchanged.
+
+`.with_public_url()` only applies to HTTP serving; it is ignored (with a warning) when a transport is set.
+
+> **Deprecated:** `A2AStarletteApplication(agent_card=..., http_handler=...)` is kept as a shim that emits a `DeprecationWarning` and behaves as an `A2AServerConfig` (with `.http_handler` and `.build()` aliases). Use `A2AServerConfig(agent_card=..., request_handler=...)` instead.
+
+---
+
 ### InterfaceTransport
 
-Valid transport identifiers for `AgentInterface.transport`. Use these constants instead of hard-coded strings when building `AgentCard.additional_interfaces`.
+Valid transport identifiers for `AgentInterface.protocol_binding`. Use these constants instead of hard-coded strings when building `AgentCard.supported_interfaces`.
 
 ```python
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
@@ -1116,23 +1148,20 @@ os.environ["SLIM_SHARED_SECRET"] = "my-secret-at-least-32-chars-long-xxxxx"
 agent_card = AgentCard(
     name="My Agent",
     description="Multi-transport agent",
-    url="http://localhost:9000",
     version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
+    default_input_modes=["text"],
+    default_output_modes=["text"],
     capabilities=AgentCapabilities(streaming=True),
     skills=[AgentSkill(id="hello", name="Hello", description="Says hello",
                        tags=["hello"], examples=["hi"])],
-    preferredTransport=InterfaceTransport.SLIM_PATTERNS,
-    additional_interfaces=[
-        AgentInterface(transport=InterfaceTransport.SLIM_PATTERNS,
+    supported_interfaces=[   # first entry = preferred transport
+        AgentInterface(protocol_binding=InterfaceTransport.SLIM_PATTERNS,
                        url="slim://localhost:46357/default/default/My_Agent_1.0.0"),
-        AgentInterface(transport=InterfaceTransport.NATS_PATTERNS,
+        AgentInterface(protocol_binding=InterfaceTransport.NATS_PATTERNS,
                        url="nats://localhost:4222/default/default/My_Agent_1.0.0"),
-        AgentInterface(transport=InterfaceTransport.JSONRPC,
+        AgentInterface(protocol_binding=InterfaceTransport.JSONRPC,
                        url="http://0.0.0.0:9000"),
     ],
-    supportsAuthenticatedExtendedCard=False,
 )
 
 async def main():
@@ -1140,6 +1169,7 @@ async def main():
     handler = DefaultRequestHandler(
         agent_executor=MyAgentExecutor(),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
     session = factory.create_app_session(max_sessions=10)

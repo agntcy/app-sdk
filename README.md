@@ -139,29 +139,33 @@ from a2a.server.tasks import InMemoryTaskStore
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
-# Declare transports in the card — this is the single source of truth
+# Declare transports in the card — this is the single source of truth.
+# The order of `supported_interfaces` is the server's preference order:
+# the first entry is the preferred transport.
 agent_card = AgentCard(
-    name="My Agent", url="", version="1.0.0",
-    defaultInputModes=["text"], defaultOutputModes=["text"],
+    name="My Agent", version="1.0.0",
+    default_input_modes=["text"], default_output_modes=["text"],
     capabilities=AgentCapabilities(streaming=True), skills=[...],
-    preferredTransport=InterfaceTransport.SLIM_PATTERNS,
-    additional_interfaces=[
-        AgentInterface(transport=InterfaceTransport.SLIM_RPC,
-                       url="slim://localhost:46357/default/default/My_Agent_rpc"),
-        AgentInterface(transport=InterfaceTransport.SLIM_PATTERNS,
+    supported_interfaces=[
+        AgentInterface(protocol_binding=InterfaceTransport.SLIM_PATTERNS,
                        url="slim://localhost:46357/default/default/My_Agent_slimpatterns"),
-        AgentInterface(transport=InterfaceTransport.NATS_PATTERNS,
+        AgentInterface(protocol_binding=InterfaceTransport.SLIM_RPC,
+                       url="slim://localhost:46357/default/default/My_Agent_rpc"),
+        AgentInterface(protocol_binding=InterfaceTransport.NATS_PATTERNS,
                        url="nats://localhost:4222/default/default/My_Agent_natspatterns"),
     ],
     description="My agent description",
 )
 
-# One call does it all — add_a2a_card() reads the card's interfaces
+# One call does it all — add_a2a_card() reads the card's interfaces.
+# a2a-sdk 1.x requires the card at handler construction.
 factory = AgntcyFactory()
 session = factory.create_app_session(max_sessions=10)
 await (
     session.add_a2a_card(agent_card, DefaultRequestHandler(
-        agent_executor=MyAgentExecutor(), task_store=InMemoryTaskStore()))
+        agent_executor=MyAgentExecutor(),
+        task_store=InMemoryTaskStore(),
+        agent_card=agent_card))
     .start(keep_alive=True)
 )
 ```
@@ -180,6 +184,7 @@ config = A2ASlimRpcServerConfig(
     request_handler=DefaultRequestHandler(
         agent_executor=MyAgentExecutor(),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     ),
     connection=SlimRpcConnectionConfig(
         identity="default/default/my_agent",
@@ -203,7 +208,8 @@ await session.start_all_sessions(keep_alive=True)
 Configure all transports once, then let the factory negotiate the best one from the agent card:
 
 ```python
-from a2a.types import Message, Part, Role, TextPart
+from a2a.helpers import get_stream_response_text, new_text_message
+from a2a.types import Role, SendMessageRequest
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from agntcy_app_sdk.semantic.a2a.client.config import (
     ClientConfig, SlimRpcConfig, SlimTransportConfig, NatsTransportConfig,
@@ -231,34 +237,33 @@ config = ClientConfig(
 # Create the factory — supports slimrpc, slimpatterns, natspatterns, and JSONRPC
 a2a = A2AClientFactory(config)
 
-# Create a client — factory reads the card's preferred_transport and negotiates
+# Create a client — factory negotiates over the card's supported_interfaces
+# (server order wins unless ClientConfig(use_client_preference=True))
 client = await a2a.create(agent_card)
 
-# Send a message and stream the response
-request = Message(
-    role=Role.user,
-    message_id="msg-001",
-    parts=[Part(root=TextPart(text="Hello, agent!"))],
+# Send a message and stream the response. Events are `StreamResponse`
+# objects carrying a message, task, or status/artifact update.
+request = SendMessageRequest(
+    message=new_text_message("Hello, agent!", role=Role.ROLE_USER)
 )
-async for event in client.send_message(request=request):
-    if isinstance(event, Message):
-        for part in event.parts:
-            if isinstance(part.root, TextPart):
-                print(part.root.text)
+async for event in client.send_message(request):
+    text = get_stream_response_text(event)
+    if text:
+        print(text)
 ```
 
 <details>
 <summary><b>Alternative: Connect with a single transport (SlimRPC only)</b></summary>
 
 ```python
-from a2a.client import ClientFactory, minimal_agent_card
-from a2a.types import Message, Part, Role, TextPart
+from a2a.client import minimal_agent_card
+from a2a.helpers import get_stream_response_text, new_text_message
+from a2a.types import Role, SendMessageRequest
 from slima2a import setup_slim_client
-from slima2a.client_transport import (
-    ClientConfig as SRPCClientConfig,
-    SRPCTransport,
-    slimrpc_channel_factory,
-)
+from slima2a.client_transport import slimrpc_channel_factory
+
+from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 
 # Set up the SLIM connection
 service, slim_app, local_name, conn_id = await setup_slim_client(
@@ -266,16 +271,18 @@ service, slim_app, local_name, conn_id = await setup_slim_client(
     slim_url="http://localhost:46357",
 )
 
-# Create A2A client via upstream ClientFactory + SRPCTransport
-config = SRPCClientConfig(
-    supported_transports=["slimrpc"],
+# Enable slimrpc on the SDK's ClientConfig and let the factory negotiate
+config = ClientConfig(
     slimrpc_channel_factory=slimrpc_channel_factory(slim_app, conn_id),
 )
-client_factory = ClientFactory(config)
-client_factory.register("slimrpc", SRPCTransport.create)
-
 card = minimal_agent_card("default/default/my_agent", ["slimrpc"])
-client = client_factory.create(card=card)
+client = await AgntcyFactory().a2a(config).create(card)
+
+request = SendMessageRequest(
+    message=new_text_message("Hello, agent!", role=Role.ROLE_USER)
+)
+async for event in client.send_message(request):
+    print(get_stream_response_text(event))
 ```
 
 </details>
@@ -290,9 +297,9 @@ Fan out a single request to N agents simultaneously. Broadcast uses the **SLIM p
 <summary><b>Broadcast example (SLIM patterns)</b></summary>
 
 ```python
-import uuid
+from a2a.helpers import new_text_message
 from a2a.types import (
-    AgentCapabilities, AgentCard, Message, MessageSendParams, SendMessageRequest,
+    AgentCapabilities, AgentCard, AgentInterface, Role, SendMessageRequest,
 )
 
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -311,27 +318,24 @@ config = ClientConfig(
 )
 card = AgentCard(
     name="default/default/agent1",
-    url="slim://default/default/agent1",
     version="1.0.0",
     default_input_modes=["text"],
     default_output_modes=["text"],
     capabilities=AgentCapabilities(),
     skills=[],
-    preferred_transport=InterfaceTransport.SLIM_PATTERNS,
+    supported_interfaces=[
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
+            url="slim://default/default/agent1",
+        ),
+    ],
     description="Agent 1",
 )
 
 client = await factory.a2a(config).create(card)
 
 request = SendMessageRequest(
-    id=str(uuid.uuid4()),
-    params=MessageSendParams(
-        message=Message(
-            role="user",
-            parts=[{"type": "text", "text": "Status check"}],
-            messageId=str(uuid.uuid4()),
-        ),
-    ),
+    message=new_text_message("Status check", role=Role.ROLE_USER)
 )
 
 # Fan-out to 3 agents at once
@@ -345,10 +349,11 @@ responses = await client.broadcast_message(
     ],
 )
 
+# `responses` is a list of SendMessageResponse (message or task per agent)
 for resp in responses:
     print(f"Response: {resp}")
 
-# Streaming variant — yields each response as it arrives
+# Streaming variant — yields a StreamResponse for each event as it arrives
 async for resp in client.broadcast_message_streaming(
     request,
     broadcast_topic="status_channel",
@@ -374,9 +379,9 @@ Start a moderated multi-party conversation between agents. Each participant proc
 <summary><b>Group chat example (SLIM patterns)</b></summary>
 
 ```python
-import uuid
+from a2a.helpers import new_text_message
 from a2a.types import (
-    AgentCapabilities, AgentCard, Message, MessageSendParams, SendMessageRequest,
+    AgentCapabilities, AgentCard, AgentInterface, Role, SendMessageRequest,
 )
 
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -394,27 +399,24 @@ config = ClientConfig(
 )
 card = AgentCard(
     name="default/default/agent_a",
-    url="slim://default/default/agent_a",
     version="1.0.0",
     default_input_modes=["text"],
     default_output_modes=["text"],
     capabilities=AgentCapabilities(),
     skills=[],
-    preferred_transport=InterfaceTransport.SLIM_PATTERNS,
+    supported_interfaces=[
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
+            url="slim://default/default/agent_a",
+        ),
+    ],
     description="Agent A",
 )
 
 client = await factory.a2a(config).create(card)
 
 request = SendMessageRequest(
-    id=str(uuid.uuid4()),
-    params=MessageSendParams(
-        message=Message(
-            role="user",
-            parts=[{"type": "text", "text": "Plan a team lunch"}],
-            messageId=str(uuid.uuid4()),
-        ),
-    ),
+    message=new_text_message("Plan a team lunch", role=Role.ROLE_USER)
 )
 
 # Non-streaming group chat — collects all messages then returns
@@ -524,7 +526,7 @@ The SDK negotiates the best transport automatically by intersecting the server's
 │              │  │   Client          │  │ .build()            │
 │ SlimRPC      │  │  (SLIM/NATS       │  │                     │
 │  (native A2A │  │   patterns)       │  │ Targets:            │
-│   transport) │  │                   │  │ ├ A2AStarlette      │
+│   transport) │  │                   │  │ ├ A2AServerConfig   │
 │              │  │ MCPClientSession  │  │ ├ A2ASlimRpcServer │
 │ 3 Mixins:    │  │ FastMCPClient     │  │ ├ MCP Server        │
 │  ├ P2P       │  └───────────────────┘  │ └ FastMCP           │
@@ -535,17 +537,17 @@ The SDK negotiates the best transport automatically by intersecting the server's
 
 ### Card-Driven Bootstrap (Recommended)
 
-`add_a2a_card()` reads the agent card's `additional_interfaces` and creates all transports automatically — no manual builder chains required:
+`add_a2a_card()` reads the agent card's `supported_interfaces` and creates all transports automatically — no manual builder chains required:
 
 ```python
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 agent_card = AgentCard(
     ...,
-    additional_interfaces=[
-        AgentInterface(transport=InterfaceTransport.SLIM_PATTERNS, url="slim://host:46357/topic"),
-        AgentInterface(transport=InterfaceTransport.NATS_PATTERNS, url="nats://host:4222/topic"),
-        AgentInterface(transport=InterfaceTransport.JSONRPC, url="http://0.0.0.0:9000"),
+    supported_interfaces=[   # order = server preference (first is preferred)
+        AgentInterface(protocol_binding=InterfaceTransport.SLIM_PATTERNS, url="slim://host:46357/topic"),
+        AgentInterface(protocol_binding=InterfaceTransport.NATS_PATTERNS, url="nats://host:4222/topic"),
+        AgentInterface(protocol_binding=InterfaceTransport.JSONRPC, url="http://0.0.0.0:9000"),
     ],
 )
 
@@ -573,8 +575,8 @@ The `AppSession` builder chains configuration into a single readable expression 
 
 | Target Type                  | Handler Created                | Transport Required? |
 | ---------------------------- | ------------------------------ | :-----------------: |
-| `A2AStarletteApplication`    | `A2AExperimentalServerHandler` |         Yes         |
-| `A2AStarletteApplication`    | `A2AJsonRpcServerHandler`      |      No (HTTP)      |
+| `A2AServerConfig`            | `A2AExperimentalServerHandler` |         Yes         |
+| `A2AServerConfig`            | `A2AJsonRpcServerHandler`      |      No (HTTP)      |
 | `A2ASlimRpcServerConfig`     | `A2ASRPCServerHandler`         |    No (internal)    |
 | `mcp.server.lowlevel.Server` | `MCPServerHandler`             |         Yes         |
 | `mcp.server.fastmcp.FastMCP` | `FastMCPServerHandler`         |         Yes         |
@@ -599,12 +601,15 @@ session.add(a2a_srpc_config) \
 session.add(a2a_server) \
     .with_host("0.0.0.0") \
     .with_port(9000) \
+    .with_public_url("https://agent.example.com") \
     .with_session_id("http") \
     .build()
 
 # Start everything
 await session.start_all_sessions(keep_alive=True)
 ```
+
+`.with_public_url()` is the address clients should use (it is added to the card as a `JSONRPC` interface if the card does not already declare one). The bind address from `.with_host()` / `.with_port()` is never written to the card, since it is often not reachable by clients.
 
 ### Observability
 
@@ -654,7 +659,7 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
 
 | Component       | Version  | Description                                                                                                                                                                                  | Repo                                                 |
 | --------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| **SLIM**        | `1.0.0`  | Secure Low-Latency Interactive Messaging (SLIM) facilitates communication between AI agents using request-reply and moderated group-chat patterns.                                           | [Repo](https://github.com/agntcy/slim)               |
+| **SLIM**        | `2.2.0`  | Secure Low-Latency Interactive Messaging (SLIM) facilitates communication between AI agents using request-reply and moderated group-chat patterns.                                           | [Repo](https://github.com/agntcy/slim)               |
 | **Observe SDK** | `1.0.34` | Enables multi-agent observability by setting `enable_tracing=True` when initializing the `AgntcyFactory`. This automatically configures tracing and auto-instrumentation for SLIM and A2A.   | [Repo](https://github.com/agntcy/observe/tree/main)  |
 | **Directory**   | `1.0.0`  | Agent discovery and registration via the Agntcy Directory service. Push, pull, and search agent records with automatic OASF ↔ AgentCard conversion. Integrated into `AppSession` lifecycle. | [Repo](https://github.com/agntcy/dir)                |
 | **Identity**    | `0.0.7`  | Agent identity and authentication via the Agntcy Identity Service SDK. Supports shared-secret and JWT identity providers, access token management, and auth middleware for A2A and FastMCP.  | [Repo](https://github.com/agntcy/identity/tree/main) |
