@@ -5,27 +5,39 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import urlparse
+from uuid import uuid4
 
-from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
+from a2a.client.client import ClientCallContext
+from a2a.client.errors import A2AClientError
 from a2a.client.transports.base import ClientTransport
 from a2a.types import (
     AgentCard,
-    GetTaskPushNotificationConfigParams,
-    Message,
-    MessageSendParams,
+    CancelTaskRequest,
+    DeleteTaskPushNotificationConfigRequest,
+    GetExtendedAgentCardRequest,
+    GetTaskPushNotificationConfigRequest,
+    GetTaskRequest,
+    ListTaskPushNotificationConfigsRequest,
+    ListTaskPushNotificationConfigsResponse,
+    ListTasksRequest,
+    ListTasksResponse,
+    SendMessageRequest,
+    SendMessageResponse,
+    StreamResponse,
+    SubscribeToTaskRequest,
     Task,
-    TaskArtifactUpdateEvent,
-    TaskIdParams,
     TaskPushNotificationConfig,
-    TaskQueryParams,
-    TaskStatusUpdateEvent,
 )
+from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, VERSION_HEADER
+from google.protobuf.json_format import MessageToDict, ParseDict
+from google.protobuf.message import Message as ProtoMessage
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.client.utils import (
+    create_rpc_error,
     get_identity_auth_error,
     message_translator,
 )
@@ -66,6 +78,20 @@ def _parse_topic_from_url(url: str) -> str:
     return f"{hostname}/{path}" if path else hostname
 
 
+def _to_params(request: ProtoMessage) -> dict[str, Any]:
+    """Serialize a proto request to its ProtoJSON ``params`` dict."""
+    return MessageToDict(request, preserving_proto_field_name=False)
+
+
+_P = TypeVar("_P", bound=ProtoMessage)
+
+
+def _parse(result: Any, proto: _P) -> _P:
+    """Parse a JSON-RPC ``result`` into *proto* (unknown fields tolerated)."""
+    ParseDict(result or {}, proto, ignore_unknown_fields=True)
+    return proto
+
+
 class PatternsClientTransport(ClientTransport):
     """Adapts a ``BaseTransport`` (SLIM-patterns / NATS-patterns) to the
     upstream ``a2a.client.transports.base.ClientTransport`` interface.
@@ -75,8 +101,13 @@ class PatternsClientTransport(ClientTransport):
 
     Standard A2A operations (``send_message``, ``get_task``, …) are routed
     through the transport's ``request()`` method using the internal
-    ``Message`` wire format.  Streaming falls back to ``send_message``
-    (patterns transports are request/reply).
+    ``Message`` wire format: a JSON-RPC 2.0 envelope whose ``params`` /
+    ``result`` are ProtoJSON-encoded A2A v1 messages.  Streaming falls back
+    to ``send_message`` when the transport cannot stream.
+
+    Interceptors are applied by the upstream ``BaseClient`` that wraps this
+    transport; anything they put in ``context.service_parameters`` is
+    forwarded as transport message headers.
     """
 
     def __init__(
@@ -84,12 +115,10 @@ class PatternsClientTransport(ClientTransport):
         transport: BaseTransport,
         agent_card: AgentCard,
         topic: str,
-        interceptors: list[ClientCallInterceptor] | None = None,
     ) -> None:
         self._transport = transport
         self._agent_card = agent_card
         self._topic = topic
-        self._interceptors = interceptors or []
 
     # ------------------------------------------------------------------
     # Factory method — matches ``TransportProducer`` signature
@@ -101,7 +130,6 @@ class PatternsClientTransport(ClientTransport):
         card: AgentCard,
         url: str,
         config: ClientConfig,
-        interceptors: list[ClientCallInterceptor],
     ) -> PatternsClientTransport:
         """``TransportProducer`` compatible factory for upstream
         ``ClientFactory.register()``.
@@ -112,13 +140,17 @@ class PatternsClientTransport(ClientTransport):
         construction (which requires ``await``), use
         ``A2AClientFactory.create()`` instead.
 
-        The ``url`` parameter comes from the agent card (``card.url`` or
-        an ``additional_interfaces`` entry) and is expected to be a
+        The ``url`` parameter comes from the selected entry of
+        ``card.supported_interfaces`` and is expected to be a
         scheme-encoded topic, e.g. ``slim://my_topic`` or
         ``nats://my_topic``.
         """
         topic = _parse_topic_from_url(url)
-        transport_label = card.preferred_transport or url
+        transport_label = url
+        for iface in card.supported_interfaces:
+            if iface.url == url and iface.protocol_binding:
+                transport_label = iface.protocol_binding
+                break
 
         base_transport: BaseTransport | None = None
         if "slim" in str(transport_label).lower():
@@ -133,51 +165,29 @@ class PatternsClientTransport(ClientTransport):
                 f"or use A2AClientFactory.create() for deferred construction."
             )
 
-        return cls(base_transport, card, topic, interceptors)
-
-    # ------------------------------------------------------------------
-    # Interceptor support
-    # ------------------------------------------------------------------
-
-    async def _apply_interceptors(
-        self,
-        method_name: str,
-        request_payload: dict[str, Any],
-        context: ClientCallContext | None,
-    ) -> dict[str, Any]:
-        """Apply the interceptor chain to the request payload.
-
-        Patterns transports don't use HTTP, so ``http_kwargs`` is passed
-        as an empty dict to satisfy the interceptor ABC contract.  Only
-        the (potentially modified) payload is returned.
-        """
-        current_payload = request_payload
-        http_kwargs: dict[str, Any] = {}
-        for interceptor in self._interceptors:
-            current_payload, http_kwargs = await interceptor.intercept(
-                method_name,
-                current_payload,
-                http_kwargs,
-                self._agent_card,
-                context,
-            )
-        return current_payload
+        return cls(base_transport, card, topic)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _send_rpc(
-        self,
-        rpc_payload: dict,
-        method_name: str = "",
-        context: ClientCallContext | None = None,
-    ) -> dict:
-        """Send an A2A JSON-RPC payload through the underlying transport."""
-        rpc_payload = await self._apply_interceptors(method_name, rpc_payload, context)
-        headers: dict[str, str] = {}
+    @staticmethod
+    def _build_headers(context: ClientCallContext | None) -> dict[str, str]:
+        """Build transport message headers for a call.
 
-        if is_identity_auth_enabled():
+        Starts from ``context.service_parameters`` (where interceptors put
+        auth tokens and extension lists), adds the A2A protocol version,
+        and — when identity auth is enabled — a bearer token unless an
+        ``Authorization`` header is already present.
+        """
+        headers: dict[str, str] = {}
+        if context is not None and context.service_parameters:
+            headers.update(context.service_parameters)
+        headers.setdefault(VERSION_HEADER, PROTOCOL_VERSION_CURRENT)
+
+        if is_identity_auth_enabled() and not any(
+            k.lower() == "authorization" for k in headers
+        ):
             try:
                 from identityservice.sdk import IdentityServiceSdk
 
@@ -186,25 +196,41 @@ class PatternsClientTransport(ClientTransport):
                     headers["Authorization"] = f"Bearer {access_token}"
             except Exception as e:
                 logger.error("Failed to get access token for agent: %s", e)
+        return headers
 
+    @staticmethod
+    def _rpc_payload(method: str, request: ProtoMessage) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "id": str(uuid4()),
+            "method": method,
+            "params": _to_params(request),
+        }
+
+    async def _send_rpc(
+        self,
+        method: str,
+        request: ProtoMessage,
+        context: ClientCallContext | None,
+        *,
+        forbidden_as_message: bool = False,
+    ) -> Any:
+        """Send one JSON-RPC call and return its ``result``.
+
+        Raises the matching ``A2AError`` for JSON-RPC error responses.  An
+        identity-auth rejection (HTTP 403 / ``"forbidden"``) is returned as a
+        synthetic agent message when *forbidden_as_message* is set (message
+        sends), and raised as ``A2AClientError`` otherwise.
+        """
         try:
             response = await self._transport.request(
                 self._topic,
-                message_translator(request=rpc_payload, headers=headers),
+                message_translator(
+                    request=self._rpc_payload(method, request),
+                    headers=self._build_headers(context),
+                ),
             )
-            response_payload = json.loads(response.payload.decode("utf-8"))
-
-            # Handle Identity-Middleware auth errors
-            if (
-                response_payload.get("error") == "forbidden"
-                or response.status_code == 403
-            ):
-                logger.error(
-                    "Received forbidden error in A2A response due to identity auth"
-                )
-                return get_identity_auth_error()
-
-            return response_payload
+            payload = json.loads(response.payload.decode("utf-8"))
         except Exception as e:
             logger.error(
                 "Error sending A2A request with transport %s: %s",
@@ -213,81 +239,60 @@ class PatternsClientTransport(ClientTransport):
             )
             raise
 
+        # Handle Identity-Middleware auth errors
+        if payload.get("error") == "forbidden" or response.status_code == 403:
+            logger.error(
+                "Received forbidden error in A2A response due to identity auth"
+            )
+            if forbidden_as_message:
+                return get_identity_auth_error()["result"]
+            raise A2AClientError("Access forbidden: identity auth failed")
+
+        if "error" in payload:
+            raise create_rpc_error(payload["error"])
+
+        return payload.get("result", payload)
+
     # ------------------------------------------------------------------
     # ClientTransport interface
     # ------------------------------------------------------------------
 
     async def send_message(
         self,
-        request: MessageSendParams,
+        request: SendMessageRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
-    ) -> Task | Message:
-        """Send a non-streaming message and return the result."""
-        from uuid import uuid4
-
-        from a2a.types import SendMessageRequest
-
-        rpc_request = SendMessageRequest(id=str(uuid4()), params=request)
-        rpc_payload = rpc_request.model_dump(mode="json", exclude_none=True)
-        response = await self._send_rpc(rpc_payload, "message/send", context)
-
-        # Parse result from JSON-RPC response
-        result = response.get("result", response)
-        if isinstance(result, dict):
-            if result.get("kind") == "task" or "status" in result:
-                return Task.model_validate(result)
-            return Message.model_validate(result)
-        return Message.model_validate(response)
+    ) -> SendMessageResponse:
+        """Send a non-streaming message and return the response."""
+        result = await self._send_rpc(
+            "SendMessage", request, context, forbidden_as_message=True
+        )
+        return _parse(result, SendMessageResponse())
 
     async def send_message_streaming(
         self,
-        request: MessageSendParams,
+        request: SendMessageRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
-    ) -> AsyncGenerator[
-        Message | Task | TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None
-    ]:
+    ) -> AsyncGenerator[StreamResponse]:
         """Stream A2A events from the server over the patterns transport.
 
         Uses ``request_stream()`` on the underlying transport, which keeps
         a SLIM point-to-point session open across multiple messages.
-        Each intermediate ``A2AStatusUpdate`` message is parsed and
-        yielded as a ``TaskStatusUpdateEvent``; the final
-        ``A2AResponse`` is yielded as a ``Task`` or ``Message``.
+        Each intermediate ``A2AStatusUpdate`` message and the final
+        ``A2AResponse`` are parsed and yielded as ``StreamResponse``.
 
         Falls back to a single ``send_message()`` if the transport
         does not implement ``request_stream()``.
         """
-        from uuid import uuid4
-
-        from a2a.types import SendStreamingMessageRequest
-
-        rpc_request = SendStreamingMessageRequest(id=str(uuid4()), params=request)
-        rpc_payload = rpc_request.model_dump(mode="json", exclude_none=True)
-        rpc_payload = await self._apply_interceptors(
-            "message/stream", rpc_payload, context
+        transport_msg = message_translator(
+            request=self._rpc_payload("SendStreamingMessage", request),
+            headers=self._build_headers(context),
         )
 
-        headers: dict[str, str] = {}
-        if is_identity_auth_enabled():
-            try:
-                from identityservice.sdk import IdentityServiceSdk
-
-                access_token = IdentityServiceSdk().access_token()
-                if access_token:
-                    headers["Authorization"] = f"Bearer {access_token}"
-            except Exception as e:
-                logger.error("Failed to get access token: %s", e)
-
-        transport_msg = message_translator(request=rpc_payload, headers=headers)
-
+        stream = self._transport.request_stream(self._topic, transport_msg)
         try:
-            async for response in self._transport.request_stream(
-                self._topic, transport_msg
-            ):
+            async for response in stream:
                 response_payload = json.loads(response.payload.decode("utf-8"))
 
                 # Handle JSON-RPC error responses
@@ -297,22 +302,10 @@ class PatternsClientTransport(ClientTransport):
                         "Server returned JSON-RPC error in streaming response: %s",
                         error_data,
                     )
-                    raise RuntimeError(
-                        f"Server error: {error_data.get('message', error_data)}"
-                    )
+                    raise create_rpc_error(error_data)
 
                 result = response_payload.get("result", response_payload)
-
-                if isinstance(result, dict):
-                    kind = result.get("kind")
-                    if kind == "status-update":
-                        yield TaskStatusUpdateEvent.model_validate(result)
-                    elif kind == "task" or "status" in result:
-                        yield Task.model_validate(result)
-                    else:
-                        yield Message.model_validate(result)
-                else:
-                    yield Message.model_validate(response_payload)
+                yield _parse(result, StreamResponse())
 
                 # The transport Message.type distinguishes intermediate
                 # ("A2AStatusUpdate") from final ("A2AResponse") messages.
@@ -324,109 +317,120 @@ class PatternsClientTransport(ClientTransport):
         except NotImplementedError:
             # Transport doesn't support streaming — fall back to single
             # request/reply.
-            result = await self.send_message(
-                request, context=context, extensions=extensions
-            )
-            yield result
+            single = await self.send_message(request, context=context)
+            stream_response = StreamResponse()
+            if single.HasField("task"):
+                stream_response.task.CopyFrom(single.task)
+            elif single.HasField("message"):
+                stream_response.message.CopyFrom(single.message)
+            yield stream_response
+        finally:
+            # ``break`` does not close an async generator.  Close it here so
+            # the transport releases its session (SLIM: closes the session)
+            # now, not at event-loop shutdown where it can hang the process.
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     async def get_task(
         self,
-        request: TaskQueryParams,
+        request: GetTaskRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> Task:
         """Retrieve a task by ID."""
-        rpc_payload = {
-            "jsonrpc": "2.0",
-            "id": "1",
-            "method": "tasks/get",
-            "params": request.model_dump(mode="json", exclude_none=True),
-        }
-        response = await self._send_rpc(rpc_payload, "tasks/get", context)
-        return Task.model_validate(response.get("result", response))
+        result = await self._send_rpc("GetTask", request, context)
+        return _parse(result, Task())
+
+    async def list_tasks(
+        self,
+        request: ListTasksRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> ListTasksResponse:
+        """List tasks known to the agent."""
+        result = await self._send_rpc("ListTasks", request, context)
+        return _parse(result, ListTasksResponse())
 
     async def cancel_task(
         self,
-        request: TaskIdParams,
+        request: CancelTaskRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> Task:
         """Cancel a task by ID."""
-        rpc_payload = {
-            "jsonrpc": "2.0",
-            "id": "1",
-            "method": "tasks/cancel",
-            "params": request.model_dump(mode="json", exclude_none=True),
-        }
-        response = await self._send_rpc(rpc_payload, "tasks/cancel", context)
-        return Task.model_validate(response.get("result", response))
+        result = await self._send_rpc("CancelTask", request, context)
+        return _parse(result, Task())
 
-    async def set_task_callback(
+    async def create_task_push_notification_config(
         self,
         request: TaskPushNotificationConfig,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> TaskPushNotificationConfig:
-        """Set push notification config for a task."""
-        rpc_payload = {
-            "jsonrpc": "2.0",
-            "id": "1",
-            "method": "tasks/pushNotificationConfig/set",
-            "params": request.model_dump(mode="json", exclude_none=True),
-        }
-        response = await self._send_rpc(
-            rpc_payload, "tasks/pushNotificationConfig/set", context
+        """Create/update the push notification config for a task."""
+        result = await self._send_rpc(
+            "CreateTaskPushNotificationConfig", request, context
         )
-        return TaskPushNotificationConfig.model_validate(
-            response.get("result", response)
-        )
+        return _parse(result, TaskPushNotificationConfig())
 
-    async def get_task_callback(
+    async def get_task_push_notification_config(
         self,
-        request: GetTaskPushNotificationConfigParams,
+        request: GetTaskPushNotificationConfigRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> TaskPushNotificationConfig:
-        """Get push notification config for a task."""
-        rpc_payload = {
-            "jsonrpc": "2.0",
-            "id": "1",
-            "method": "tasks/pushNotificationConfig/get",
-            "params": request.model_dump(mode="json", exclude_none=True),
-        }
-        response = await self._send_rpc(
-            rpc_payload, "tasks/pushNotificationConfig/get", context
-        )
-        return TaskPushNotificationConfig.model_validate(
-            response.get("result", response)
-        )
+        """Get the push notification config for a task."""
+        result = await self._send_rpc("GetTaskPushNotificationConfig", request, context)
+        return _parse(result, TaskPushNotificationConfig())
 
-    async def resubscribe(
+    async def list_task_push_notification_configs(
         self,
-        request: TaskIdParams,
+        request: ListTaskPushNotificationConfigsRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
-    ) -> AsyncGenerator[
-        Task | Message | TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None
-    ]:
-        """Resubscribe to task updates — not supported by patterns transports."""
-        raise NotImplementedError("resubscribe is not supported by patterns transports")
+    ) -> ListTaskPushNotificationConfigsResponse:
+        """List push notification configs for a task."""
+        result = await self._send_rpc(
+            "ListTaskPushNotificationConfigs", request, context
+        )
+        return _parse(result, ListTaskPushNotificationConfigsResponse())
+
+    async def delete_task_push_notification_config(
+        self,
+        request: DeleteTaskPushNotificationConfigRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> None:
+        """Delete a push notification config."""
+        await self._send_rpc("DeleteTaskPushNotificationConfig", request, context)
+
+    async def subscribe(
+        self,
+        request: SubscribeToTaskRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> AsyncGenerator[StreamResponse]:
+        """Subscribe to task updates — not supported by patterns transports."""
+        raise NotImplementedError("subscribe is not supported by patterns transports")
         # Make the method a valid async generator
         yield  # pragma: no cover
 
-    async def get_card(
+    async def get_extended_agent_card(
         self,
+        request: GetExtendedAgentCardRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> AgentCard:
-        """Return the locally-cached agent card."""
-        return self._agent_card
+        """Return the agent card.
+
+        Asks the server only when the card advertises an extended card;
+        otherwise returns the locally-cached card.
+        """
+        if not self._agent_card.capabilities.extended_agent_card:
+            return self._agent_card
+        result = await self._send_rpc("GetExtendedAgentCard", request, context)
+        return _parse(result, AgentCard())
 
     async def close(self) -> None:
         """Close the underlying transport."""

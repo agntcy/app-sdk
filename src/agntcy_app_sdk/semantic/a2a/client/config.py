@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import dataclasses
+import warnings
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from a2a.client.client import ClientConfig as A2AClientConfig
 
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.semantic.a2a.card_utils import wire_binding
 
 if TYPE_CHECKING:
     from agntcy_app_sdk.transport.base import BaseTransport
@@ -136,8 +138,12 @@ class ClientConfig(A2AClientConfig):
 
     If neither field is set for a transport, that transport is unavailable.
 
-    ``supported_transports`` is auto-derived in ``__post_init__`` from
-    whichever fields are populated — you should not need to set it manually.
+    ``supported_protocol_bindings`` (the a2a-sdk 1.x name for the ordered
+    list of transports the client can use) is auto-derived in
+    ``__post_init__`` from whichever fields are populated — you should not
+    need to set it manually.  Entries are normalised to the casing the
+    upstream factory expects (``"jsonrpc"`` → ``"JSONRPC"``) and aliases are
+    resolved (``"slim"`` → ``"slimpatterns"``).
     """
 
     # -- SLIM-RPC (protobuf-over-SLIM, via slima2a) --------------------------
@@ -164,23 +170,51 @@ class ClientConfig(A2AClientConfig):
     nats_transport: BaseTransport | None = None
     """Eager: a pre-built ``NatsTransport`` instance."""
 
-    # -- Auto-derive supported_transports ------------------------------------
+    # -- Deprecated ----------------------------------------------------------
+
+    supported_transports: list[str] | None = None
+    """**Deprecated** — use ``supported_protocol_bindings``.
+
+    a2a-sdk 1.x renamed this field.  A value passed here is copied into
+    ``supported_protocol_bindings`` (with a ``DeprecationWarning``); when
+    nothing was passed it mirrors the resolved bindings for backward
+    compatibility.
+    """
+
+    # -- Auto-derive supported_protocol_bindings -----------------------------
 
     def __post_init__(self) -> None:
-        """Populate ``supported_transports`` from configured fields.
+        """Populate ``supported_protocol_bindings`` from configured fields.
 
-        Only runs when the user has *not* explicitly set
-        ``supported_transports``.  JSONRPC is always included as a fallback.
+        Only derives a list when the user has *not* explicitly set
+        ``supported_protocol_bindings`` (or the deprecated
+        ``supported_transports``).  JSONRPC is always included as a fallback.
         """
-        if not self.supported_transports:
-            transports: list[str] = ["JSONRPC"]
+        if self.supported_transports and not self.supported_protocol_bindings:
+            warnings.warn(
+                "ClientConfig.supported_transports is deprecated; use "
+                "supported_protocol_bindings (renamed in a2a-sdk 1.x).",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            self.supported_protocol_bindings = list(self.supported_transports)
+
+        if not self.supported_protocol_bindings:
+            bindings: list[str] = ["JSONRPC"]
             if self.slim_config is not None or self.slim_transport is not None:
-                transports.append("slimpatterns")
+                bindings.append("slimpatterns")
             if self.nats_config is not None or self.nats_transport is not None:
-                transports.append("natspatterns")
+                bindings.append("natspatterns")
             if (
                 self.slimrpc_config is not None
                 or self.slimrpc_channel_factory is not None
             ):
-                transports.append("slimrpc")
-            self.supported_transports = transports
+                bindings.append("slimrpc")
+            self.supported_protocol_bindings = bindings
+        else:
+            self.supported_protocol_bindings = [
+                wire_binding(b) for b in self.supported_protocol_bindings
+            ]
+
+        # Keep the deprecated mirror in sync for code that still reads it.
+        self.supported_transports = list(self.supported_protocol_bindings)

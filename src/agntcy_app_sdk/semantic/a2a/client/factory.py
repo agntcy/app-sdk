@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import datetime
 import os
+import warnings
 from typing import Any
 
 import httpx
@@ -13,12 +15,13 @@ from a2a.client import A2ACardResolver
 from a2a.client.base_client import BaseClient
 from a2a.client.client import Client
 from a2a.client.client_factory import ClientFactory as UpstreamClientFactory
-from a2a.client.middleware import ClientCallInterceptor
-from a2a.types import AgentCard
+from a2a.client.interceptors import ClientCallInterceptor
+from a2a.types import AgentCard, AgentInterface
 
 from slima2a.client_transport import SRPCTransport
 
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.semantic.a2a.card_utils import wire_binding
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
     A2AExperimentalClient,
@@ -43,9 +46,9 @@ class A2AClientFactory:
 
     Transport negotiation follows the upstream A2A pattern:
 
-    1. The ``AgentCard`` declares the server's available transports
-       (``preferred_transport``, ``additional_interfaces``).
-    2. The ``ClientConfig.supported_transports`` (auto-derived from
+    1. The ``AgentCard`` declares the server's available transports in
+       ``supported_interfaces`` (list order = server preference).
+    2. The ``ClientConfig.supported_protocol_bindings`` (auto-derived from
        configured fields) declares the client's capabilities.
     3. :meth:`create` finds the best intersection and lazily
        constructs the winning transport — including async setup.
@@ -90,15 +93,17 @@ class A2AClientFactory:
         """Create a client for the given AgentCard.
 
         Negotiates the best transport match between the card's declared
-        transports and the client's configured capabilities.  For
-        transports that require async setup (SLIM, NATS patterns), the
+        ``supported_interfaces`` and the client's configured capabilities.
+        For transports that require async setup (SLIM, NATS patterns), the
         transport is constructed and ``await``-ed here.  For sync
         transports (JSONRPC, gRPC, slimrpc), the upstream
         ``ClientFactory`` handles construction.
 
         Args:
             card: An ``AgentCard`` defining the remote agent.
-            consumers: Optional list of consumer callbacks.
+            consumers: **Deprecated and ignored.**  a2a-sdk 1.x removed
+                client consumers; iterate the events returned by
+                ``Client.send_message()`` instead.
             interceptors: Optional list of request interceptors.
 
         Returns:
@@ -106,6 +111,15 @@ class A2AClientFactory:
             ``A2AExperimentalClient``; for sync transports (JSONRPC,
             slimrpc) it is the upstream ``Client`` (``BaseClient``).
         """
+        if consumers:
+            warnings.warn(
+                "The 'consumers' argument is deprecated and ignored: "
+                "a2a-sdk 1.x removed client consumers.  Handle the events "
+                "yielded by Client.send_message() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self._initialize_tracing_if_enabled()
 
         transport_label, transport_url = self._negotiate(card)
@@ -119,14 +133,11 @@ class A2AClientFactory:
             # upstream ClientFactory.create() is sync and cannot call
             # await transport.setup().
             base_transport = await self._build_patterns_transport(transport_label_lower)
-            patterns_transport = PatternsClientTransport(
-                base_transport, card, topic, interceptors
-            )
+            patterns_transport = PatternsClientTransport(base_transport, card, topic)
             upstream_client = BaseClient(
                 card,
                 self._config,
                 patterns_transport,
-                consumers or [],
                 interceptors or [],
             )
             return A2AExperimentalClient(
@@ -142,21 +153,19 @@ class A2AClientFactory:
             await self._build_slimrpc_if_needed()
             # slima2a's channel factory expects a bare "org/ns/name"
             # identity, but cards may use slim:// URLs for consistency
-            # with other transports.  Normalise them here so the
-            # upstream factory passes a plain identity string.
-            self._normalise_slimrpc_urls(card)
-            return self._upstream.create(card, consumers, interceptors)
+            # with other transports.  Hand the upstream factory a card
+            # holding only the chosen interface, with a bare identity.
+            selected = self._select_card(
+                card, transport_label_lower, transport_url, url=topic
+            )
+            return self._upstream.create(selected, interceptors)
         else:
             # Sync path — construct JSONRPC client via upstream factory.
-            # Normalise transport identifiers to the casing the upstream
-            # ``a2a.client.client_factory`` expects (``TransportProtocol``
-            # enum values are UPPERCASE, e.g. ``"JSONRPC"``).  Without
-            # this, a card whose ``preferredTransport`` or
-            # ``additional_interfaces`` use lowercase ``"jsonrpc"``
-            # (our ``InterfaceTransport.JSONRPC``) would fail the
-            # upstream's exact-match negotiation.
-            self._normalise_card_transport_casing(card)
-            return self._upstream.create(card, consumers, interceptors)
+            # The upstream factory matches ``protocol_binding`` exactly
+            # (``"JSONRPC"``), so hand it a card holding only the chosen
+            # interface with the binding rewritten to the upstream casing.
+            selected = self._select_card(card, transport_label_lower, transport_url)
+            return self._upstream.create(selected, interceptors)
 
     @classmethod
     async def connect(
@@ -175,7 +184,7 @@ class A2AClientFactory:
         Args:
             agent: Base URL string or an ``AgentCard``.
             config: Optional ``ClientConfig``.
-            consumers: Optional list of consumer callbacks.
+            consumers: **Deprecated and ignored** (see :meth:`create`).
             interceptors: Optional list of request interceptors.
 
         Returns:
@@ -185,10 +194,12 @@ class A2AClientFactory:
             async with httpx.AsyncClient() as http_client:
                 resolver = A2ACardResolver(http_client, base_url=agent)
                 card = await resolver.get_agent_card()
-            # Backfill empty card.url with the URL used to fetch the card,
-            # so that transport negotiation can match against it.
-            if not card.url:
-                card.url = agent
+            # A card without any interface cannot be negotiated; assume it
+            # is served over JSON-RPC at the URL it was fetched from.
+            if not card.supported_interfaces:
+                card.supported_interfaces.append(
+                    AgentInterface(protocol_binding="JSONRPC", url=agent)
+                )
         else:
             card = agent
 
@@ -204,8 +215,9 @@ class A2AClientFactory:
         """Find the best matching transport between card and client config.
 
         Replicates the upstream ``ClientFactory.create()`` negotiation
-        logic.  By default, server preference wins unless
-        ``use_client_preference`` is set on the config.
+        logic over ``card.supported_interfaces``.  By default, server
+        preference (list order) wins unless ``use_client_preference`` is set
+        on the config.
 
         Returns:
             A ``(transport_label, url)`` tuple.
@@ -213,46 +225,92 @@ class A2AClientFactory:
         Raises:
             ValueError: If no compatible transport is found.
         """
-        server_preferred = card.preferred_transport or "JSONRPC"
-        server_set: dict[str, str] = {server_preferred: card.url}
-        if card.additional_interfaces:
-            server_set.update({x.transport: x.url for x in card.additional_interfaces})
+        server_set: list[tuple[str, str]] = [
+            (iface.protocol_binding, iface.url)
+            for iface in card.supported_interfaces
+            if iface.protocol_binding
+        ]
+        client_set = self._config.supported_protocol_bindings or ["JSONRPC"]
 
-        client_set = self._config.supported_transports or ["JSONRPC"]
-
-        # Build a case-insensitive lookup that also resolves aliases
+        # Case-insensitive comparison that also resolves aliases
         # (e.g. "slim" -> "slimpatterns") so that server and client
         # transport identifiers always match on canonical names.
-        server_lower: dict[str, tuple[str, str]] = {
-            normalize_transport(k): (k, v) for k, v in server_set.items()
-        }
-        client_lower: dict[str, str] = {normalize_transport(c): c for c in client_set}
+        client_lower = {normalize_transport(c) for c in client_set}
 
         transport_protocol: str | None = None
         transport_url: str | None = None
 
         if self._config.use_client_preference:
             for cl in client_set:
-                match = server_lower.get(normalize_transport(cl))
+                wanted = normalize_transport(cl)
+                match = next(
+                    (
+                        (label, url)
+                        for label, url in server_set
+                        if normalize_transport(label) == wanted
+                    ),
+                    None,
+                )
                 if match is not None:
-                    transport_protocol = match[0]
-                    transport_url = match[1]
+                    transport_protocol, transport_url = match
                     break
         else:
-            for sk, url in server_set.items():
-                if normalize_transport(sk) in client_lower:
-                    transport_protocol = sk
-                    transport_url = url
+            for label, url in server_set:
+                if normalize_transport(label) in client_lower:
+                    transport_protocol, transport_url = label, url
                     break
 
         if transport_protocol is None or transport_url is None:
+            hint = ""
+            if not server_set:
+                hint = (
+                    " The agent card declares no supported_interfaces; add an "
+                    "AgentInterface for the transport to use, or call "
+                    "A2AClientFactory.connect(url) to resolve the card from "
+                    "its URL (assumes JSONRPC at that URL)."
+                )
             raise ValueError(
                 f"No compatible transports. "
-                f"Server offers {list(server_set)}, "
-                f"client supports {list(client_set)}."
+                f"Server offers {[label for label, _ in server_set]}, "
+                f"client supports {list(client_set)}.{hint}"
             )
 
         return transport_protocol, transport_url
+
+    @staticmethod
+    def _select_card(
+        card: AgentCard,
+        label: str,
+        transport_url: str,
+        *,
+        url: str | None = None,
+    ) -> AgentCard:
+        """Return a copy of *card* holding only the negotiated interface.
+
+        The upstream factory matches ``protocol_binding`` exactly, so the
+        binding is rewritten to the casing it expects (``"JSONRPC"``).
+        *url* optionally overrides the interface URL (used to hand slimrpc
+        a bare ``org/ns/name`` identity).  The caller's card is not mutated.
+        """
+        selected = AgentCard()
+        selected.CopyFrom(card)
+        original = next(
+            (
+                i
+                for i in card.supported_interfaces
+                if i.url == transport_url
+                and normalize_transport(i.protocol_binding) == label
+            ),
+            None,
+        )
+        iface = AgentInterface()
+        if original is not None:
+            iface.CopyFrom(original)
+        iface.protocol_binding = wire_binding(label)
+        iface.url = url if url is not None else transport_url
+        del selected.supported_interfaces[:]
+        selected.supported_interfaces.append(iface)
+        return selected
 
     # ------------------------------------------------------------------
     # Async transport construction (deferred path)
@@ -342,8 +400,9 @@ class A2AClientFactory:
 
         Strategy (matches server-side ``srpc.py``):
           1. Initialise the global SLIM runtime via
-             ``get_or_create_slim_instance()`` — idempotent if slimpatterns
-             already ran.
+             ``get_or_init_slim_service()`` — idempotent if slimpatterns
+             already ran.  No pub/sub App is created: it is not needed for
+             RPC and SLIM 2.x does not cope with it next to the RPC App.
           2. Open a *second* connection using ``endpoint + "/"`` so
              ``slim_bindings`` treats it as a distinct endpoint key.
           3. Create a separate App under ``name + "-rpc"`` to isolate
@@ -365,24 +424,19 @@ class A2AClientFactory:
 
         import slim_bindings
 
-        from agntcy_app_sdk.transport.slim.common import get_or_create_slim_instance
+        from agntcy_app_sdk.transport.slim.common import get_or_init_slim_service
         from slima2a.client_transport import (
             slimrpc_channel_factory as _slimrpc_channel_factory,
         )
 
         rpc_cfg = config.slimrpc_config
-        rpc_name = slim_bindings.Name(rpc_cfg.namespace, rpc_cfg.group, rpc_cfg.name)
 
-        # 1) Ensure the global SLIM runtime is initialised.  If
-        #    slimpatterns already did this, it returns the cached
-        #    globals (no-op).  Otherwise, the first connection is
-        #    opened here.
-        service, _global_app, _global_conn = await get_or_create_slim_instance(
-            local=rpc_name,
-            slim_endpoint=rpc_cfg.slim_url,
-            slim_insecure_client=True,
-            shared_secret=rpc_cfg.secret,
-        )
+        # The Rust→Python callbacks need to know which loop to resume on.
+        slim_bindings.uniffi_set_event_loop(asyncio.get_running_loop())
+
+        # 1) Ensure the global SLIM runtime is initialised and take the
+        #    service.  If slimpatterns already did this it is a no-op.
+        service = get_or_init_slim_service()
 
         # 2) Open a dedicated connection for slimrpc by appending a
         #    trailing slash so the SLIM service sees it as a distinct
@@ -412,56 +466,6 @@ class A2AClientFactory:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    # Map lowercase transport strings to their upstream TransportProtocol
-    # enum values.  Only covers identifiers that the upstream SDK knows
-    # about — custom SDK-only labels (slimpatterns, natspatterns, slimrpc)
-    # are handled before reaching the upstream factory.
-    _UPSTREAM_TRANSPORT_CASING: dict[str, str] = {
-        "jsonrpc": "JSONRPC",
-        "grpc": "GRPC",
-        "http+json": "HTTP+JSON",
-    }
-
-    @staticmethod
-    def _normalise_card_transport_casing(card: AgentCard) -> None:
-        """Normalise transport identifiers on a card for upstream consumption.
-
-        The upstream ``a2a.client.client_factory.ClientFactory`` uses
-        ``TransportProtocol`` enum values (e.g. ``"JSONRPC"``) for
-        matching.  Our SDK and ``InterfaceTransport`` constants use
-        lowercase (``"jsonrpc"``).  This helper rewrites the card
-        in-place so the upstream negotiation succeeds.
-        """
-        mapping = A2AClientFactory._UPSTREAM_TRANSPORT_CASING
-        if card.preferred_transport:
-            canonical = mapping.get(card.preferred_transport.lower())
-            if canonical:
-                card.preferred_transport = canonical
-        if card.additional_interfaces:
-            for iface in card.additional_interfaces:
-                canonical = mapping.get(iface.transport.lower())
-                if canonical:
-                    iface.transport = canonical
-
-    @staticmethod
-    def _normalise_slimrpc_urls(card: AgentCard) -> None:
-        """Rewrite slim:// URLs on slimrpc interfaces to bare identities.
-
-        Cards may declare slimrpc interfaces with full ``slim://`` URLs
-        (e.g. ``slim://host:46357/org/ns/agent``) for consistency with
-        other transports.  The upstream ``SRPCTransport`` / ``slima2a``
-        channel factory expects a bare ``org/ns/name`` identity string.
-
-        This helper normalises ``card.url`` and matching
-        ``additional_interfaces`` entries in-place so the upstream
-        factory receives the correct format.
-        """
-        card.url = _parse_topic_from_url(card.url)
-        if card.additional_interfaces:
-            for iface in card.additional_interfaces:
-                if iface.transport.lower() == "slimrpc":
-                    iface.url = _parse_topic_from_url(iface.url)
 
     def _register_transports(self) -> None:
         """Register SDK transport producers with the upstream factory.

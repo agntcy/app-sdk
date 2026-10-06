@@ -14,26 +14,30 @@ from __future__ import annotations
 
 
 # ---------------------------------------------------------------------------
-# Interface transport types — valid values for ``AgentInterface.transport``
+# Interface transport types — valid values for ``AgentInterface.protocol_binding``
 # ---------------------------------------------------------------------------
 
 
 class InterfaceTransport:
-    """Valid transport identifiers for ``AgentInterface.transport``.
+    """Valid transport identifiers for ``AgentInterface.protocol_binding``.
 
     Use these constants instead of hard-coded strings when building
-    ``AgentCard.additional_interfaces``::
+    ``AgentCard.supported_interfaces``::
 
         from agntcy_app_sdk import InterfaceTransport
 
         AgentInterface(
-            transport=InterfaceTransport.SLIM_PATTERNS,
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
             url="slim://topic",
         )
         AgentInterface(
-            transport=InterfaceTransport.JSONRPC,
+            protocol_binding=InterfaceTransport.JSONRPC,
             url="http://0.0.0.0:9999",
         )
+
+    The order of ``supported_interfaces`` expresses the agent's transport
+    preference (first entry wins), replacing the removed
+    ``AgentCard.preferred_transport`` / ``additional_interfaces`` fields.
 
     **Aliases** are provided for convenience — they resolve to the same
     canonical transport during parsing:
