@@ -3,20 +3,50 @@
 
 """Unit tests for the AgentCard-centric A2A client stack:
 ClientConfig, PatternsClientTransport, A2AExperimentalClient, A2AClientFactory.
+
+Written against the a2a-sdk 1.x API: protobuf types, ``supported_interfaces``
+(list order = server preference), ``before`` / ``after`` interceptors and
+``StreamResponse`` events.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+import warnings
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-
-from a2a.client.client import Client
-from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
+from a2a.client.client import Client, ClientCallContext
+from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
+from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import (
     AgentCard,
     AgentInterface,
-    MessageSendParams,
+    CancelTaskRequest,
+    GetExtendedAgentCardRequest,
+    GetTaskRequest,
+    Role,
+    SendMessageRequest,
+    SendMessageResponse,
+    StreamResponse,
+    SubscribeToTaskRequest,
+    Task,
+    TaskState,
+)
+from a2a.utils.errors import TaskNotFoundError
+
+from agntcy_app_sdk.semantic.a2a.client.config import (
+    ClientConfig,
+    NatsTransportConfig,
+    SlimRpcConfig,
+    SlimTransportConfig,
+)
+from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+    A2AExperimentalClient,
+)
+from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+from agntcy_app_sdk.semantic.a2a.client.transports import (
+    PatternsClientTransport,
+    _parse_topic_from_url,
 )
 
 pytest_plugins = "pytest_asyncio"
@@ -27,24 +57,27 @@ pytest_plugins = "pytest_asyncio"
 # ---------------------------------------------------------------------------
 
 
+def _iface(binding: str, url: str) -> AgentInterface:
+    return AgentInterface(protocol_binding=binding, url=url)
+
+
 def _make_agent_card(
+    interfaces: list[AgentInterface] | None = None,
     name: str = "test-agent",
-    url: str = "http://localhost:8080",
-    preferred_transport: str | None = None,
-    additional_interfaces: list[AgentInterface] | None = None,
 ) -> AgentCard:
-    """Create a minimal AgentCard for testing."""
+    """Create a minimal AgentCard for testing.
+
+    Without *interfaces* the card advertises a single JSONRPC endpoint.
+    """
+    if interfaces is None:
+        interfaces = [_iface("JSONRPC", "http://localhost:8080")]
     return AgentCard(
         name=name,
-        url=url,
         version="1.0",
-        skills=[],
-        capabilities={},
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
         description="Test agent",
-        preferred_transport=preferred_transport,
-        additional_interfaces=additional_interfaces,
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        supported_interfaces=interfaces,
     )
 
 
@@ -55,11 +88,106 @@ def _make_mock_transport(transport_type: str = "SLIM") -> MagicMock:
     transport.setup = AsyncMock()
     transport.close = AsyncMock()
     transport.request = AsyncMock()
+    transport.request_stream = MagicMock()
     transport.gather = AsyncMock()
-    transport.gather_stream = AsyncMock()
+    transport.gather_stream = MagicMock()
     transport.start_conversation = AsyncMock()
-    transport.start_streaming_conversation = AsyncMock()
+    transport.start_streaming_conversation = MagicMock()
     return transport
+
+
+def _user_request(text: str = "Hi") -> SendMessageRequest:
+    return SendMessageRequest(message=new_text_message(text, role=Role.ROLE_USER))
+
+
+def _message_result(text: str = "Hello") -> dict:
+    """ProtoJSON ``result`` carrying an agent message."""
+    return {
+        "message": {
+            "messageId": str(uuid4()),
+            "role": "ROLE_AGENT",
+            "parts": [{"text": text}],
+        }
+    }
+
+
+def _status_result(state: str = "TASK_STATE_WORKING", text: str = "tok") -> dict:
+    """ProtoJSON ``result`` carrying a task status update."""
+    return {
+        "statusUpdate": {
+            "taskId": "task-1",
+            "contextId": "ctx-1",
+            "status": {
+                "state": state,
+                "message": {
+                    "messageId": str(uuid4()),
+                    "role": "ROLE_AGENT",
+                    "parts": [{"text": text}],
+                },
+            },
+        }
+    }
+
+
+def _rpc_response(
+    result: dict | None = None,
+    *,
+    type_: str = "A2AResponse",
+    status_code: int = 200,
+    error: dict | None = None,
+) -> MagicMock:
+    """Create a mock transport response with a JSON-RPC payload."""
+    resp = MagicMock()
+    payload: dict = {"jsonrpc": "2.0", "id": "1"}
+    if error is not None:
+        payload["error"] = error
+    else:
+        payload["result"] = result if result is not None else _message_result()
+    resp.payload = json.dumps(payload).encode("utf-8")
+    resp.status_code = status_code
+    resp.type = type_
+    return resp
+
+
+def _async_gen(*items):
+    """Return a factory for an async generator yielding *items*."""
+
+    async def _gen(*_args, **_kwargs):
+        for item in items:
+            yield item
+
+    return _gen
+
+
+def _sent_rpc(mock_call) -> dict:
+    """Decode the JSON-RPC envelope from the transport ``Message`` that was sent."""
+    message = mock_call.call_args.args[1]
+    return json.loads(message.payload)
+
+
+class _RecordingInterceptor(ClientCallInterceptor):
+    """Interceptor recording ``before`` / ``after`` calls.
+
+    Subclasses the real ``ClientCallInterceptor`` ABC so the tests verify the
+    actual a2a-sdk 1.x interface contract.
+    """
+
+    def __init__(self, headers: dict[str, str] | None = None):
+        self.before_calls: list[BeforeArgs] = []
+        self.after_calls: list[AfterArgs] = []
+        self._headers = headers
+
+    async def before(self, args: BeforeArgs) -> None:
+        self.before_calls.append(args)
+        if self._headers:
+            if args.context is None:
+                args.context = ClientCallContext()
+            params = dict(args.context.service_parameters or {})
+            params.update(self._headers)
+            args.context.service_parameters = params
+
+    async def after(self, args: AfterArgs) -> None:
+        self.after_calls.append(args)
 
 
 # ---------------------------------------------------------------------------
@@ -70,37 +198,23 @@ def _make_mock_transport(transport_type: str = "SLIM") -> MagicMock:
 class TestTransportConfigs:
     def test_slim_transport_config_requires_fields(self):
         """SlimTransportConfig should require endpoint and name."""
-        from agntcy_app_sdk.semantic.a2a.client.config import SlimTransportConfig
-
         cfg = SlimTransportConfig(endpoint="http://localhost:46357", name="a/b/c")
         assert cfg.endpoint == "http://localhost:46357"
         assert cfg.name == "a/b/c"
 
     def test_slim_transport_config_missing_name_raises(self):
-        """SlimTransportConfig without name should raise TypeError."""
-        from agntcy_app_sdk.semantic.a2a.client.config import SlimTransportConfig
-
         with pytest.raises(TypeError):
             SlimTransportConfig(endpoint="http://localhost:46357")  # type: ignore[call-arg]
 
     def test_nats_transport_config_requires_endpoint(self):
-        """NatsTransportConfig should require endpoint."""
-        from agntcy_app_sdk.semantic.a2a.client.config import NatsTransportConfig
-
         cfg = NatsTransportConfig(endpoint="nats://localhost:4222")
         assert cfg.endpoint == "nats://localhost:4222"
 
     def test_nats_transport_config_missing_endpoint_raises(self):
-        """NatsTransportConfig without endpoint should raise TypeError."""
-        from agntcy_app_sdk.semantic.a2a.client.config import NatsTransportConfig
-
         with pytest.raises(TypeError):
             NatsTransportConfig()  # type: ignore[call-arg]
 
     def test_slim_rpc_config_requires_all_fields(self):
-        """SlimRpcConfig should require namespace, group, name."""
-        from agntcy_app_sdk.semantic.a2a.client.config import SlimRpcConfig
-
         cfg = SlimRpcConfig(namespace="agntcy", group="demo", name="client")
         assert cfg.namespace == "agntcy"
         assert cfg.group == "demo"
@@ -114,9 +228,6 @@ class TestTransportConfigs:
 
 class TestClientConfig:
     def test_extends_upstream_config(self):
-        """ClientConfig should extend A2AClientConfig with new fields."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
         config = ClientConfig()
         assert config.slim_config is None
         assert config.slim_transport is None
@@ -128,82 +239,45 @@ class TestClientConfig:
         assert config.streaming is True
 
     def test_post_init_default_jsonrpc(self):
-        """Empty config should auto-derive supported_transports with JSONRPC."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
-        config = ClientConfig()
-        assert config.supported_transports == ["JSONRPC"]
+        """Empty config should auto-derive supported_protocol_bindings with JSONRPC."""
+        assert ClientConfig().supported_protocol_bindings == ["JSONRPC"]
 
     def test_post_init_slim_config(self):
-        """Setting slim_config should auto-add slimpatterns."""
-        from agntcy_app_sdk.semantic.a2a.client.config import (
-            ClientConfig,
-            SlimTransportConfig,
-        )
-
         config = ClientConfig(
             slim_config=SlimTransportConfig(
                 endpoint="http://localhost:46357", name="a/b/c"
             ),
         )
-        assert "JSONRPC" in config.supported_transports
-        assert "slimpatterns" in config.supported_transports
+        assert "JSONRPC" in config.supported_protocol_bindings
+        assert "slimpatterns" in config.supported_protocol_bindings
 
     def test_post_init_slim_transport(self):
-        """Setting slim_transport should auto-add slimpatterns."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
         config = ClientConfig(slim_transport=_make_mock_transport())
-        assert "slimpatterns" in config.supported_transports
+        assert "slimpatterns" in config.supported_protocol_bindings
 
     def test_post_init_nats_config(self):
-        """Setting nats_config should auto-add natspatterns."""
-        from agntcy_app_sdk.semantic.a2a.client.config import (
-            ClientConfig,
-            NatsTransportConfig,
-        )
-
         config = ClientConfig(
             nats_config=NatsTransportConfig(endpoint="nats://localhost:4222"),
         )
-        assert "natspatterns" in config.supported_transports
+        assert "natspatterns" in config.supported_protocol_bindings
 
     def test_post_init_nats_transport(self):
-        """Setting nats_transport should auto-add natspatterns."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
         config = ClientConfig(nats_transport=_make_mock_transport("NATS"))
-        assert "natspatterns" in config.supported_transports
+        assert "natspatterns" in config.supported_protocol_bindings
 
     def test_post_init_slimrpc_channel_factory(self):
-        """Setting slimrpc_channel_factory should auto-add slimrpc."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
         config = ClientConfig(slimrpc_channel_factory=MagicMock())
-        assert "slimrpc" in config.supported_transports
+        assert "slimrpc" in config.supported_protocol_bindings
 
     def test_post_init_slimrpc_config(self):
-        """Setting slimrpc_config should auto-add slimrpc."""
-        from agntcy_app_sdk.semantic.a2a.client.config import (
-            ClientConfig,
-            SlimRpcConfig,
-        )
-
         config = ClientConfig(
             slimrpc_config=SlimRpcConfig(
                 namespace="agntcy", group="demo", name="client"
             ),
         )
-        assert "slimrpc" in config.supported_transports
+        assert "slimrpc" in config.supported_protocol_bindings
 
     def test_post_init_multiple_transports(self):
-        """Multiple configs should all appear in supported_transports."""
-        from agntcy_app_sdk.semantic.a2a.client.config import (
-            ClientConfig,
-            NatsTransportConfig,
-            SlimTransportConfig,
-        )
-
         config = ClientConfig(
             slim_config=SlimTransportConfig(
                 endpoint="http://localhost:46357", name="a/b/c"
@@ -211,21 +285,45 @@ class TestClientConfig:
             nats_config=NatsTransportConfig(endpoint="nats://localhost:4222"),
             slimrpc_channel_factory=MagicMock(),
         )
-        assert "JSONRPC" in config.supported_transports
-        assert "slimpatterns" in config.supported_transports
-        assert "natspatterns" in config.supported_transports
-        assert "slimrpc" in config.supported_transports
+        assert config.supported_protocol_bindings == [
+            "JSONRPC",
+            "slimpatterns",
+            "natspatterns",
+            "slimrpc",
+        ]
 
-    def test_explicit_supported_transports_not_overridden(self):
-        """If user explicitly sets supported_transports, __post_init__ should not override."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-
+    def test_explicit_bindings_not_overridden(self):
+        """If the user sets supported_protocol_bindings, __post_init__ keeps them."""
         config = ClientConfig(
-            supported_transports=["custom_transport"],
+            supported_protocol_bindings=["custom_transport"],
             slim_transport=_make_mock_transport(),
         )
-        # User's explicit list should be preserved
-        assert config.supported_transports == ["custom_transport"]
+        assert config.supported_protocol_bindings == ["custom_transport"]
+
+    def test_explicit_bindings_are_normalised(self):
+        """Casing and aliases are normalised to what the upstream factory expects."""
+        config = ClientConfig(supported_protocol_bindings=["jsonrpc", "SLIM", "nats"])
+        assert config.supported_protocol_bindings == [
+            "JSONRPC",
+            "slimpatterns",
+            "natspatterns",
+        ]
+
+    def test_deprecated_supported_transports_is_honoured_with_warning(self):
+        """The a2a-sdk 0.3 field name still works, but warns."""
+        with pytest.warns(DeprecationWarning, match="supported_transports"):
+            config = ClientConfig(
+                supported_transports=["custom_transport"],
+                slim_transport=_make_mock_transport(),
+            )
+        assert config.supported_protocol_bindings == ["custom_transport"]
+
+    def test_deprecated_supported_transports_mirrors_bindings(self):
+        """Reading the old attribute keeps working (mirrors the new field)."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            config = ClientConfig(slim_transport=_make_mock_transport())
+        assert config.supported_transports == config.supported_protocol_bindings
 
 
 # ---------------------------------------------------------------------------
@@ -235,50 +333,31 @@ class TestClientConfig:
 
 class TestParseTopicFromUrl:
     def test_slim_scheme(self):
-        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
-
         assert _parse_topic_from_url("slim://my_topic") == "my_topic"
 
     def test_nats_scheme(self):
-        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
-
         assert _parse_topic_from_url("nats://my_topic") == "my_topic"
 
     def test_plain_topic(self):
-        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
-
         assert _parse_topic_from_url("my_topic") == "my_topic"
 
     def test_http_url_passthrough(self):
         """HTTP URLs should pass through unchanged (not a patterns scheme)."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
-
         assert _parse_topic_from_url("http://localhost:9999") == "http://localhost:9999"
 
     def test_topic_with_slashes(self):
-        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
-
         assert (
             _parse_topic_from_url("slim://default/default/agent")
             == "default/default/agent"
         )
 
     def test_slim_endpoint_with_port(self):
-        """slim://host:port/topic should extract just the topic."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
-
         assert _parse_topic_from_url("slim://localhost:46357/my_topic") == "my_topic"
 
     def test_nats_endpoint_with_port(self):
-        """nats://host:port/topic should extract just the topic."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
-
         assert _parse_topic_from_url("nats://localhost:4222/my_topic") == "my_topic"
 
     def test_slim_endpoint_with_port_and_slashes(self):
-        """slim://host:port/ns/group/name should extract the full path as topic."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import _parse_topic_from_url
-
         assert (
             _parse_topic_from_url("slim://localhost:46357/default/default/agent")
             == "default/default/agent"
@@ -292,139 +371,226 @@ class TestParseTopicFromUrl:
 
 class TestPatternsClientTransport:
     def test_create_slim_eager(self):
-        """create() should use slim_transport from config for slim labels."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
+        """create() should use slim_transport from config for slim interfaces."""
         mock_transport = _make_mock_transport("SLIM")
-        config = ClientConfig(
-            slim_transport=mock_transport,
-        )
-        card = _make_agent_card(preferred_transport="slimpatterns")
+        config = ClientConfig(slim_transport=mock_transport)
+        card = _make_agent_card([_iface("slimpatterns", "slim://topic_1")])
 
-        transport = PatternsClientTransport.create(card, "slim://topic_1", config, [])
+        transport = PatternsClientTransport.create(card, "slim://topic_1", config)
         assert transport._transport is mock_transport
         assert transport._topic == "topic_1"
         assert transport._agent_card is card
 
     def test_create_nats_eager(self):
-        """create() should use nats_transport from config for nats labels."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
         mock_transport = _make_mock_transport("NATS")
-        config = ClientConfig(
-            nats_transport=mock_transport,
-        )
-        card = _make_agent_card(preferred_transport="natspatterns")
+        config = ClientConfig(nats_transport=mock_transport)
+        card = _make_agent_card([_iface("natspatterns", "nats://topic_1")])
 
-        transport = PatternsClientTransport.create(card, "nats://topic_1", config, [])
+        transport = PatternsClientTransport.create(card, "nats://topic_1", config)
         assert transport._transport is mock_transport
         assert transport._topic == "topic_1"
 
     def test_create_no_transport_raises(self):
         """create() should raise if no pre-built transport is on config."""
-        from agntcy_app_sdk.semantic.a2a.client.config import (
-            ClientConfig,
-            SlimTransportConfig,
-        )
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
         # Only deferred config, no eager transport — sync create() can't handle it
         config = ClientConfig(
             slim_config=SlimTransportConfig(
                 endpoint="http://localhost:46357", name="a/b/c"
             ),
         )
-        card = _make_agent_card(preferred_transport="slimpatterns")
+        card = _make_agent_card([_iface("slimpatterns", "slim://topic_1")])
 
         with pytest.raises(ValueError, match="No pre-built transport"):
-            PatternsClientTransport.create(card, "slim://topic_1", config, [])
+            PatternsClientTransport.create(card, "slim://topic_1", config)
 
     def test_create_unknown_transport_raises(self):
-        """create() should raise for unknown transport labels."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
-        config = ClientConfig(supported_transports=["unknown"])
-        card = _make_agent_card(preferred_transport="unknown")
+        config = ClientConfig(supported_protocol_bindings=["unknown"])
+        card = _make_agent_card([_iface("unknown", "topic_1")])
 
         with pytest.raises(ValueError, match="No pre-built transport"):
-            PatternsClientTransport.create(card, "topic_1", config, [])
+            PatternsClientTransport.create(card, "topic_1", config)
 
     @pytest.mark.asyncio
     async def test_send_message(self):
-        """send_message should call transport.request and parse JSON response."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
+        """send_message sends a JSON-RPC SendMessage and parses the proto reply."""
         mock_transport = _make_mock_transport()
-        card = _make_agent_card()
+        mock_transport.request.return_value = _rpc_response(_message_result("Hello"))
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
 
-        response_payload = {
-            "jsonrpc": "2.0",
-            "id": "1",
-            "result": {
-                "kind": "message",
-                "messageId": str(uuid4()),
-                "role": "agent",
-                "parts": [{"kind": "text", "text": "Hello"}],
-            },
-        }
-        mock_response = MagicMock()
-        mock_response.payload = json.dumps(response_payload).encode("utf-8")
-        mock_response.status_code = 200
-        mock_transport.request.return_value = mock_response
+        response = await pct.send_message(_user_request("Hi"))
 
-        pct = PatternsClientTransport(mock_transport, card, "test_topic")
+        assert isinstance(response, SendMessageResponse)
+        assert response.HasField("message")
+        assert response.message.parts[0].text == "Hello"
 
-        # Create minimal MessageSendParams
-        from a2a.types import Message as A2AMessage, Part, TextPart
-
-        params = MessageSendParams(
-            message=A2AMessage(
-                messageId=str(uuid4()),
-                role="user",
-                parts=[Part(root=TextPart(kind="text", text="Hi"))],
-            )
-        )
-
-        await pct.send_message(params)
-        assert mock_transport.request.called
+        mock_transport.request.assert_called_once()
+        assert mock_transport.request.call_args.args[0] == "test_topic"
+        rpc = _sent_rpc(mock_transport.request)
+        assert rpc["jsonrpc"] == "2.0"
+        assert rpc["method"] == "SendMessage"
+        assert rpc["params"]["message"]["parts"][0]["text"] == "Hi"
+        assert rpc["params"]["message"]["role"] == "ROLE_USER"
 
     @pytest.mark.asyncio
-    async def test_get_card(self):
-        """get_card should return the cached agent card."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
+    async def test_send_message_returns_task_result(self):
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _rpc_response(
+            {
+                "task": {
+                    "id": "t1",
+                    "contextId": "c1",
+                    "status": {"state": "TASK_STATE_COMPLETED"},
+                }
+            }
         )
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
 
+        response = await pct.send_message(_user_request())
+
+        assert response.HasField("task")
+        assert response.task.id == "t1"
+        assert response.task.status.state == TaskState.TASK_STATE_COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_send_message_forwards_headers(self):
+        """service_parameters become message headers; the version header is added."""
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _rpc_response()
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
+
+        context = ClientCallContext(service_parameters={"X-Custom": "abc"})
+        await pct.send_message(_user_request(), context=context)
+
+        sent = mock_transport.request.call_args.args[1]
+        assert sent.headers["X-Custom"] == "abc"
+        assert sent.headers["A2A-Version"] == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_json_rpc_error_raises_matching_a2a_error(self):
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _rpc_response(
+            error={"code": -32001, "message": "no such task"}
+        )
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
+
+        with pytest.raises(TaskNotFoundError):
+            await pct.get_task(GetTaskRequest(id="missing"))
+
+    @pytest.mark.asyncio
+    async def test_forbidden_send_message_returns_agent_message(self):
+        """An identity-auth rejection is surfaced as an agent message."""
+        mock_transport = _make_mock_transport()
+        resp = MagicMock()
+        resp.payload = json.dumps({"error": "forbidden"}).encode("utf-8")
+        resp.status_code = 403
+        mock_transport.request.return_value = resp
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
+
+        response = await pct.send_message(_user_request())
+
+        assert response.HasField("message")
+        assert "Forbidden" in response.message.parts[0].text
+
+    @pytest.mark.asyncio
+    async def test_get_task(self):
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _rpc_response(
+            {"id": "t1", "contextId": "c1", "status": {"state": "TASK_STATE_WORKING"}}
+        )
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
+
+        task = await pct.get_task(GetTaskRequest(id="t1"))
+
+        assert isinstance(task, Task)
+        assert task.id == "t1"
+        rpc = _sent_rpc(mock_transport.request)
+        assert rpc["method"] == "GetTask"
+        assert rpc["params"]["id"] == "t1"
+
+    @pytest.mark.asyncio
+    async def test_cancel_task(self):
+        mock_transport = _make_mock_transport()
+        mock_transport.request.return_value = _rpc_response(
+            {"id": "t1", "status": {"state": "TASK_STATE_CANCELED"}}
+        )
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
+
+        task = await pct.cancel_task(CancelTaskRequest(id="t1"))
+
+        assert task.status.state == TaskState.TASK_STATE_CANCELED
+        assert _sent_rpc(mock_transport.request)["method"] == "CancelTask"
+
+    @pytest.mark.asyncio
+    async def test_send_message_streaming_yields_events_and_stops_at_final(self):
+        """Intermediate A2AStatusUpdate items and the final A2AResponse are yielded."""
+        mock_transport = _make_mock_transport()
+        mock_transport.request_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(
+                    _status_result("TASK_STATE_WORKING"), type_="A2AStatusUpdate"
+                ),
+                _rpc_response(_status_result("TASK_STATE_COMPLETED", "done")),
+                # Anything after the final response must not be read
+                _rpc_response(
+                    _status_result("TASK_STATE_FAILED"), type_="A2AStatusUpdate"
+                ),
+            )
+        )
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
+
+        events = [e async for e in pct.send_message_streaming(_user_request())]
+
+        assert len(events) == 2
+        assert all(isinstance(e, StreamResponse) for e in events)
+        assert events[0].status_update.status.state == TaskState.TASK_STATE_WORKING
+        assert events[1].status_update.status.state == TaskState.TASK_STATE_COMPLETED
+        sent = mock_transport.request_stream.call_args.args[1]
+        assert json.loads(sent.payload)["method"] == "SendStreamingMessage"
+
+    @pytest.mark.asyncio
+    async def test_send_message_streaming_falls_back_to_unary(self):
+        """If the transport cannot stream, a single SendMessage is used."""
+
+        async def _unsupported(*_a, **_k):
+            raise NotImplementedError
+            yield  # pragma: no cover
+
+        mock_transport = _make_mock_transport()
+        mock_transport.request_stream = MagicMock(side_effect=_unsupported)
+        mock_transport.request.return_value = _rpc_response(_message_result("Fallback"))
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
+
+        events = [e async for e in pct.send_message_streaming(_user_request())]
+
+        assert len(events) == 1
+        assert events[0].message.parts[0].text == "Fallback"
+        assert _sent_rpc(mock_transport.request)["method"] == "SendMessage"
+
+    @pytest.mark.asyncio
+    async def test_get_extended_agent_card_returns_cached_card(self):
+        """Without an advertised extended card, no request is made."""
         mock_transport = _make_mock_transport()
         card = _make_agent_card()
         pct = PatternsClientTransport(mock_transport, card, "test_topic")
 
-        card_result = await pct.get_card()
-        assert card_result is card
+        result = await pct.get_extended_agent_card(GetExtendedAgentCardRequest())
+
+        assert result is card
+        mock_transport.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_subscribe_not_supported(self):
+        pct = PatternsClientTransport(
+            _make_mock_transport(), _make_agent_card(), "test_topic"
+        )
+        with pytest.raises(NotImplementedError):
+            async for _ in pct.subscribe(SubscribeToTaskRequest(id="t1")):
+                pass
 
     @pytest.mark.asyncio
     async def test_close(self):
-        """close should delegate to transport.close()."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
         mock_transport = _make_mock_transport()
-        card = _make_agent_card()
-        pct = PatternsClientTransport(mock_transport, card, "test_topic")
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
 
         await pct.close()
         mock_transport.close.assert_called_once()
@@ -435,25 +601,26 @@ class TestPatternsClientTransport:
 # ---------------------------------------------------------------------------
 
 
+def _make_experimental(
+    interceptors: list[ClientCallInterceptor] | None = None,
+    inner: MagicMock | None = None,
+) -> tuple[A2AExperimentalClient, MagicMock, AgentCard]:
+    mock_transport = _make_mock_transport()
+    card = _make_agent_card([_iface("slimpatterns", "slim://test_topic")])
+    client = A2AExperimentalClient(
+        client=inner or MagicMock(),
+        agent_card=card,
+        transport=mock_transport,
+        topic="test_topic",
+        interceptors=interceptors,
+    )
+    return client, mock_transport, card
+
+
 class TestA2AExperimentalClient:
     def test_properties(self):
-        """Experimental client should expose agent_card, transport, topic properties."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
-
         mock_client = MagicMock()
-        mock_client._consumers = []
-        mock_client._middleware = []
-        card = _make_agent_card()
-        mock_transport = _make_mock_transport()
-
-        experimental = A2AExperimentalClient(
-            client=mock_client,
-            agent_card=card,
-            transport=mock_transport,
-            topic="test_topic",
-        )
+        experimental, mock_transport, card = _make_experimental(inner=mock_client)
 
         assert experimental.agent_card is card
         assert experimental.upstream_client is mock_client
@@ -461,74 +628,215 @@ class TestA2AExperimentalClient:
         assert experimental.topic == "test_topic"
 
     def test_is_client_subclass(self):
-        """A2AExperimentalClient should be a subclass of Client."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
-
-        mock_client = MagicMock()
-        mock_client._consumers = []
-        mock_client._middleware = []
-        card = _make_agent_card()
-        mock_transport = _make_mock_transport()
-
-        experimental = A2AExperimentalClient(
-            client=mock_client,
-            agent_card=card,
-            transport=mock_transport,
-            topic="test_topic",
-        )
-
+        experimental, _, _ = _make_experimental()
         assert isinstance(experimental, Client)
 
     def test_experimental_methods_available(self):
-        """Experimental client should have broadcast and groupchat methods."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
+        experimental, _, _ = _make_experimental()
 
-        mock_client = MagicMock()
-        mock_client._consumers = []
-        mock_client._middleware = []
-        card = _make_agent_card()
-        mock_transport = _make_mock_transport()
-
-        experimental = A2AExperimentalClient(
-            client=mock_client,
-            agent_card=card,
-            transport=mock_transport,
-            topic="test_topic",
-        )
-
-        assert hasattr(experimental, "broadcast_message")
-        assert hasattr(experimental, "broadcast_message_streaming")
-        assert hasattr(experimental, "start_groupchat")
-        assert hasattr(experimental, "start_streaming_groupchat")
         assert callable(experimental.broadcast_message)
+        assert callable(experimental.broadcast_message_streaming)
         assert callable(experimental.start_groupchat)
+        assert callable(experimental.start_streaming_groupchat)
 
     @pytest.mark.asyncio
-    async def test_get_card(self):
-        """get_card should return the cached agent card."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
+    async def test_get_extended_agent_card_delegates(self):
+        inner = MagicMock()
+        inner.get_extended_agent_card = AsyncMock(return_value="card")
+        experimental, _, _ = _make_experimental(inner=inner)
+
+        request = GetExtendedAgentCardRequest()
+        result = await experimental.get_extended_agent_card(request)
+
+        assert result == "card"
+        inner.get_extended_agent_card.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_send_message_delegates(self):
+        inner = MagicMock()
+        expected = StreamResponse()
+        expected.message.CopyFrom(new_text_message("hello"))
+
+        async def _send(request, *, context=None):
+            yield expected
+
+        inner.send_message = _send
+        experimental, _, _ = _make_experimental(inner=inner)
+
+        events = [e async for e in experimental.send_message(_user_request())]
+        assert events == [expected]
+
+    @pytest.mark.asyncio
+    async def test_close_closes_inner_client(self):
+        inner = MagicMock()
+        inner.close = AsyncMock()
+        experimental, _, _ = _make_experimental(inner=inner)
+
+        await experimental.close()
+        inner.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_add_interceptor_registers_on_both_clients(self):
+        inner = MagicMock()
+        inner.add_interceptor = AsyncMock()
+        experimental, _, _ = _make_experimental(inner=inner)
+        interceptor = _RecordingInterceptor()
+
+        await experimental.add_interceptor(interceptor)
+
+        assert interceptor in experimental._interceptors
+        inner.add_interceptor.assert_awaited_once_with(interceptor)
+
+
+# ---------------------------------------------------------------------------
+# A2AExperimentalClient — broadcast / groupchat operations
+# ---------------------------------------------------------------------------
+
+
+class TestA2AExperimentalClientOperations:
+    @pytest.mark.asyncio
+    async def test_broadcast_message_sends_send_message_rpc(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response(), _rpc_response())
         )
 
-        mock_client = MagicMock()
-        mock_client._consumers = []
-        mock_client._middleware = []
-        card = _make_agent_card()
-        mock_transport = _make_mock_transport()
-
-        experimental = A2AExperimentalClient(
-            client=mock_client,
-            agent_card=card,
-            transport=mock_transport,
-            topic="test_topic",
+        responses = await experimental.broadcast_message(
+            _user_request("ping"), recipients=["a", "b"]
         )
 
-        result = await experimental.get_card()
-        assert result is card
+        assert len(responses) == 2
+        assert all(isinstance(r, SendMessageResponse) for r in responses)
+        assert responses[0].message.parts[0].text == "Hello"
+        topic, msg = mock_transport.gather_stream.call_args.args
+        assert topic == "test_topic"
+        rpc = json.loads(msg.payload)
+        assert rpc["method"] == "SendMessage"
+        assert rpc["params"]["message"]["parts"][0]["text"] == "ping"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_skips_intermediate_status_updates(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(_status_result(), type_="A2AStatusUpdate"),
+                _rpc_response(_message_result("final")),
+            )
+        )
+
+        responses = await experimental.broadcast_message(
+            _user_request(), recipients=["a"]
+        )
+
+        assert len(responses) == 1
+        assert responses[0].message.parts[0].text == "final"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_yields_all_events(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(
+                    {"task": {"id": "t", "contextId": "c"}}, type_="A2AStatusUpdate"
+                ),
+                _rpc_response(
+                    _status_result("TASK_STATE_WORKING"), type_="A2AStatusUpdate"
+                ),
+                _rpc_response(_status_result("TASK_STATE_COMPLETED", "done")),
+            )
+        )
+
+        events = [
+            e
+            async for e in experimental.broadcast_message_streaming(
+                _user_request(), recipients=["a"]
+            )
+        ]
+
+        assert [e.WhichOneof("payload") for e in events] == [
+            "task",
+            "status_update",
+            "status_update",
+        ]
+        # Streaming broadcast must request the streaming RPC on the server
+        _, msg = mock_transport.gather_stream.call_args.args
+        assert json.loads(msg.payload)["method"] == "SendStreamingMessage"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_stops_after_expected_finals(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(_message_result("one")),
+                _rpc_response(_message_result("two")),
+                _rpc_response(_message_result("three")),
+            )
+        )
+
+        events = [
+            e
+            async for e in experimental.broadcast_message_streaming(
+                _user_request(), recipients=["a", "b"]
+            )
+        ]
+
+        assert len(events) == 2
+
+    @pytest.mark.asyncio
+    async def test_broadcast_forbidden_response_becomes_agent_message(self):
+        experimental, mock_transport, _ = _make_experimental()
+        forbidden = MagicMock()
+        forbidden.payload = json.dumps({"error": "forbidden"}).encode("utf-8")
+        forbidden.status_code = 403
+        forbidden.type = "A2AResponse"
+        mock_transport.gather_stream = MagicMock(side_effect=_async_gen(forbidden))
+
+        responses = await experimental.broadcast_message(
+            _user_request(), recipients=["a"]
+        )
+
+        assert len(responses) == 1
+        assert "Forbidden" in responses[0].message.parts[0].text
+
+    @pytest.mark.asyncio
+    async def test_start_groupchat(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.start_conversation = AsyncMock(
+            return_value=[_rpc_response(), _rpc_response()]
+        )
+
+        responses = await experimental.start_groupchat(
+            _user_request(),
+            group_channel="zoo",
+            participants=["a", "b"],
+            end_message="DELIVERED",
+        )
+
+        assert len(responses) == 2
+        kwargs = mock_transport.start_conversation.call_args.kwargs
+        assert kwargs["group_channel"] == "zoo"
+        assert kwargs["participants"] == ["a", "b"]
+        assert json.loads(kwargs["init_message"].payload)["method"] == "SendMessage"
+
+    @pytest.mark.asyncio
+    async def test_start_streaming_groupchat(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.start_streaming_conversation = MagicMock(
+            side_effect=_async_gen(_rpc_response(), _rpc_response())
+        )
+
+        events = [
+            e
+            async for e in experimental.start_streaming_groupchat(
+                _user_request(),
+                group_channel="zoo",
+                participants=["a", "b"],
+            )
+        ]
+
+        assert len(events) == 2
+        assert all(isinstance(e, StreamResponse) for e in events)
+        assert get_stream_response_text(events[0]) == "Hello"
 
 
 # ---------------------------------------------------------------------------
@@ -538,20 +846,10 @@ class TestA2AExperimentalClient:
 
 class TestA2AClientFactory:
     def test_constructor_default_config(self):
-        """Factory with no config should use defaults."""
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
         factory = A2AClientFactory()
-        assert factory._config.supported_transports == ["JSONRPC"]
+        assert factory._config.supported_protocol_bindings == ["JSONRPC"]
 
     def test_constructor_with_config(self):
-        """Factory should accept and store a ClientConfig."""
-        from agntcy_app_sdk.semantic.a2a.client.config import (
-            ClientConfig,
-            SlimTransportConfig,
-        )
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
         config = ClientConfig(
             slim_config=SlimTransportConfig(
                 endpoint="http://localhost:46357", name="a/b/c"
@@ -559,65 +857,54 @@ class TestA2AClientFactory:
         )
         factory = A2AClientFactory(config)
         assert factory._config is config
-        assert "slimpatterns" in factory._config.supported_transports
+        assert "slimpatterns" in factory._config.supported_protocol_bindings
 
     # -- Negotiation tests --------------------------------------------------
 
     def test_negotiate_server_preference(self):
-        """Default negotiation should prefer server's transport."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+        """Default negotiation follows the card's interface order."""
+        factory = A2AClientFactory(ClientConfig(slim_transport=_make_mock_transport()))
 
-        config = ClientConfig(
-            slim_transport=_make_mock_transport(),
-        )
-        factory = A2AClientFactory(config)
-
-        # Card prefers slimpatterns, client supports both
         card = _make_agent_card(
-            preferred_transport="slimpatterns",
-            url="slim://my_agent",
+            [
+                _iface("slimpatterns", "slim://my_agent"),
+                _iface("JSONRPC", "http://localhost:8080"),
+            ]
         )
         label, url = factory._negotiate(card)
         assert label == "slimpatterns"
         assert url == "slim://my_agent"
 
     def test_negotiate_fallback_to_jsonrpc(self):
-        """If server offers unknown transport + JSONRPC, should fall back."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        config = ClientConfig()  # only JSONRPC
-        factory = A2AClientFactory(config)
+        """Unsupported transports are skipped; the first supported one wins."""
+        factory = A2AClientFactory(ClientConfig())  # only JSONRPC
 
         card = _make_agent_card(
-            preferred_transport="grpc",
-            url="grpc://my_agent",
-            additional_interfaces=[
-                AgentInterface(transport="JSONRPC", url="http://localhost:8080"),
-            ],
+            [
+                _iface("grpc", "grpc://my_agent"),
+                _iface("JSONRPC", "http://localhost:8080"),
+            ]
         )
         label, url = factory._negotiate(card)
         assert label == "JSONRPC"
         assert url == "http://localhost:8080"
 
     def test_negotiate_no_match_raises(self):
-        """Negotiation should raise if no compatible transports."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+        factory = A2AClientFactory(
+            ClientConfig(supported_protocol_bindings=["custom_only"])
+        )
 
-        config = ClientConfig(supported_transports=["custom_only"])
-        factory = A2AClientFactory(config)
-
-        card = _make_agent_card(preferred_transport="grpc", url="grpc://agent")
+        card = _make_agent_card([_iface("grpc", "grpc://agent")])
         with pytest.raises(ValueError, match="No compatible transports"):
             factory._negotiate(card)
 
-    def test_negotiate_client_preference(self):
-        """With use_client_preference, client's order should win."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+    def test_negotiate_empty_card_raises(self):
+        factory = A2AClientFactory(ClientConfig())
+        with pytest.raises(ValueError, match="No compatible transports"):
+            factory._negotiate(_make_agent_card([]))
 
+    def test_negotiate_client_preference(self):
+        """With use_client_preference, the client's order wins."""
         config = ClientConfig(
             slim_transport=_make_mock_transport(),
             nats_transport=_make_mock_transport("NATS"),
@@ -625,39 +912,53 @@ class TestA2AClientFactory:
         )
         factory = A2AClientFactory(config)
 
-        # Server prefers natspatterns, but client's list has JSONRPC first
+        # Server lists natspatterns first, but the client's list has JSONRPC first
         card = _make_agent_card(
-            preferred_transport="natspatterns",
-            url="nats://my_agent",
-            additional_interfaces=[
-                AgentInterface(transport="JSONRPC", url="http://localhost:8080"),
-            ],
+            [
+                _iface("natspatterns", "nats://my_agent"),
+                _iface("JSONRPC", "http://localhost:8080"),
+            ]
         )
         label, url = factory._negotiate(card)
-        # Client's supported_transports is ["JSONRPC", "slimpatterns", "natspatterns"]
-        # JSONRPC appears first and server offers it
         assert label == "JSONRPC"
         assert url == "http://localhost:8080"
+
+    # -- _select_card -------------------------------------------------------
+
+    def test_select_card_keeps_only_chosen_interface(self):
+        card = _make_agent_card(
+            [
+                _iface("slimpatterns", "slim://a"),
+                _iface("jsonrpc", "http://localhost:8080"),
+            ]
+        )
+        selected = A2AClientFactory._select_card(
+            card, "jsonrpc", "http://localhost:8080"
+        )
+
+        assert [(i.protocol_binding, i.url) for i in selected.supported_interfaces] == [
+            ("JSONRPC", "http://localhost:8080")
+        ]
+        # the caller's card is untouched
+        assert len(card.supported_interfaces) == 2
+        assert card.supported_interfaces[1].protocol_binding == "jsonrpc"
+
+    def test_select_card_url_override(self):
+        card = _make_agent_card([_iface("slimrpc", "slim://host:46357/org/ns/agent")])
+        selected = A2AClientFactory._select_card(
+            card, "slimrpc", "slim://host:46357/org/ns/agent", url="org/ns/agent"
+        )
+        assert selected.supported_interfaces[0].url == "org/ns/agent"
+        assert selected.supported_interfaces[0].protocol_binding == "slimrpc"
 
     # -- create() async path tests ------------------------------------------
 
     @pytest.mark.asyncio
     async def test_create_with_eager_slim_transport(self):
-        """create() with eager slim_transport should return A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
         mock_transport = _make_mock_transport("SLIM")
-        config = ClientConfig(slim_transport=mock_transport)
-        factory = A2AClientFactory(config)
+        factory = A2AClientFactory(ClientConfig(slim_transport=mock_transport))
 
-        card = _make_agent_card(
-            preferred_transport="slimpatterns",
-            url="slim://my_agent",
-        )
+        card = _make_agent_card([_iface("slimpatterns", "slim://my_agent")])
         result = await factory.create(card)
 
         assert isinstance(result, A2AExperimentalClient)
@@ -665,80 +966,99 @@ class TestA2AClientFactory:
         assert result.agent_card is card
         assert result.transport is mock_transport
         assert result.topic == "my_agent"
+        mock_transport.setup.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_create_with_eager_nats_transport(self):
-        """create() with eager nats_transport should return A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
         mock_transport = _make_mock_transport("NATS")
-        config = ClientConfig(nats_transport=mock_transport)
-        factory = A2AClientFactory(config)
+        factory = A2AClientFactory(ClientConfig(nats_transport=mock_transport))
 
-        card = _make_agent_card(
-            preferred_transport="natspatterns",
-            url="nats://my_agent",
-        )
+        card = _make_agent_card([_iface("natspatterns", "nats://my_agent")])
         result = await factory.create(card)
 
         assert isinstance(result, A2AExperimentalClient)
-        assert isinstance(result, Client)
-        assert result.agent_card is card
         assert result.transport is mock_transport
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
     async def test_create_jsonrpc_returns_upstream_client(self):
-        """create() for JSONRPC should return upstream Client, not A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+        """JSONRPC returns the upstream Client, not A2AExperimentalClient."""
+        factory = A2AClientFactory(ClientConfig())
 
-        config = ClientConfig()
-        factory = A2AClientFactory(config)
-
-        card = _make_agent_card()  # defaults to JSONRPC
-        result = await factory.create(card)
+        result = await factory.create(_make_agent_card())  # defaults to JSONRPC
 
         assert isinstance(result, Client)
         assert not isinstance(result, A2AExperimentalClient)
 
     @pytest.mark.asyncio
-    async def test_create_deferred_slim_missing_config_raises(self):
-        """create() with slimpatterns but no config or transport should raise."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+    async def test_create_accepts_lowercase_jsonrpc_binding(self):
+        """Cards written with the SDK's lowercase constant still negotiate."""
+        factory = A2AClientFactory(ClientConfig())
 
-        # Force slimpatterns in supported_transports but provide no config
-        config = ClientConfig(supported_transports=["slimpatterns", "JSONRPC"])
+        result = await factory.create(
+            _make_agent_card([_iface("jsonrpc", "http://localhost:8080")])
+        )
+
+        assert isinstance(result, Client)
+
+    @pytest.mark.asyncio
+    async def test_create_does_not_mutate_card(self):
+        factory = A2AClientFactory(ClientConfig())
+        card = _make_agent_card([_iface("jsonrpc", "http://localhost:8080")])
+        before = AgentCard()
+        before.CopyFrom(card)
+
+        await factory.create(card)
+
+        assert card == before
+
+    @pytest.mark.asyncio
+    async def test_create_deferred_slim_missing_config_raises(self):
+        """slimpatterns negotiated but neither config nor transport set → error."""
+        config = ClientConfig(supported_protocol_bindings=["slimpatterns", "JSONRPC"])
         factory = A2AClientFactory(config)
 
-        card = _make_agent_card(
-            preferred_transport="slimpatterns",
-            url="slim://my_agent",
-        )
+        card = _make_agent_card([_iface("slimpatterns", "slim://my_agent")])
         with pytest.raises(ValueError, match="neither slim_transport nor slim_config"):
             await factory.create(card)
+
+    @pytest.mark.asyncio
+    async def test_create_consumers_are_deprecated_and_ignored(self):
+        """a2a-sdk 1.x removed client consumers; passing them warns."""
+        factory = A2AClientFactory(ClientConfig())
+
+        with pytest.warns(DeprecationWarning, match="consumers"):
+            result = await factory.create(_make_agent_card(), consumers=[AsyncMock()])
+
+        assert isinstance(result, Client)
 
     # -- connect() classmethod test -----------------------------------------
 
     @pytest.mark.asyncio
     async def test_connect_with_card(self):
         """connect() with an AgentCard should skip HTTP resolution."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        card = _make_agent_card()  # JSONRPC default
-        config = ClientConfig()
-
-        result = await A2AClientFactory.connect(card, config=config)
+        result = await A2AClientFactory.connect(
+            _make_agent_card(), config=ClientConfig()
+        )
         assert isinstance(result, Client)
+
+    @pytest.mark.asyncio
+    async def test_connect_backfills_jsonrpc_interface_for_bare_card(self):
+        """A resolved card with no interfaces is assumed to be JSONRPC at the base URL."""
+        resolved = AgentCard(name="bare", version="1")
+
+        with patch(
+            "agntcy_app_sdk.semantic.a2a.client.factory.A2ACardResolver"
+        ) as resolver_cls:
+            resolver_cls.return_value.get_agent_card = AsyncMock(return_value=resolved)
+            client = await A2AClientFactory.connect(
+                "http://agent.example:9000", config=ClientConfig()
+            )
+
+        assert isinstance(client, Client)
+        assert [(i.protocol_binding, i.url) for i in resolved.supported_interfaces] == [
+            ("JSONRPC", "http://agent.example:9000")
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -746,151 +1066,73 @@ class TestA2AClientFactory:
 # ---------------------------------------------------------------------------
 
 
-class TestMultiTransportNegotiation:
-    """Tests for a ClientConfig with slimrpc, slimpatterns, and natspatterns
-    all configured simultaneously, verifying negotiation against various
-    server agent cards.
+def _make_multi_transport_factory():
+    """Build an A2AClientFactory whose ClientConfig supports all transports."""
+    config = ClientConfig(
+        slimrpc_channel_factory=MagicMock(),
+        slim_transport=_make_mock_transport("SLIM"),
+        nats_transport=_make_mock_transport("NATS"),
+    )
+    return A2AClientFactory(config), config
 
-    The factory is built once with all three transports (plus the implicit
-    JSONRPC fallback).  Each test constructs an agent card that a real server
-    would advertise and asserts the negotiation picks the correct transport.
+
+class TestMultiTransportNegotiation:
+    """A ClientConfig with slimrpc, slimpatterns and natspatterns configured
+    simultaneously, negotiated against various server cards.  Server
+    preference is the order of ``supported_interfaces``.
     """
 
-    # -- Fixture: factory with all three transports -------------------------
+    def test_bindings_contain_all(self):
+        _factory, config = _make_multi_transport_factory()
+        assert config.supported_protocol_bindings == [
+            "JSONRPC",
+            "slimpatterns",
+            "natspatterns",
+            "slimrpc",
+        ]
 
-    @staticmethod
-    def _make_multi_transport_factory():
-        """Build an A2AClientFactory whose ClientConfig supports all transports."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+    @pytest.mark.parametrize(
+        ("binding", "url"),
+        [
+            ("slimrpc", "default/default/Hello_World_Agent_1.0.0"),
+            ("slimpatterns", "slim://my_agent_topic"),
+            ("natspatterns", "nats://my_agent_topic"),
+            ("JSONRPC", "http://localhost:9999"),
+        ],
+    )
+    def test_server_preference_per_transport(self, binding, url):
+        factory, _ = _make_multi_transport_factory()
+        card = _make_agent_card([_iface(binding, url)])
 
-        config = ClientConfig(
-            # slimrpc (eager channel factory)
-            slimrpc_channel_factory=MagicMock(),
-            # slimpatterns (eager transport)
-            slim_transport=_make_mock_transport("SLIM"),
-            # natspatterns (eager transport)
-            nats_transport=_make_mock_transport("NATS"),
-        )
-        return A2AClientFactory(config), config
+        assert factory._negotiate(card) == (binding, url)
 
-    # -- Auto-derived supported_transports ----------------------------------
-
-    def test_supported_transports_contains_all(self):
-        """ClientConfig with all three should auto-derive all four transports."""
-        _factory, config = self._make_multi_transport_factory()
-        assert "JSONRPC" in config.supported_transports
-        assert "slimrpc" in config.supported_transports
-        assert "slimpatterns" in config.supported_transports
-        assert "natspatterns" in config.supported_transports
-        assert len(config.supported_transports) == 4
-
-    # -- Server prefers slimrpc ---------------------------------------------
-
-    def test_server_prefers_slimrpc(self):
-        """Card with preferred_transport=slimrpc should negotiate to slimrpc."""
-        factory, _config = self._make_multi_transport_factory()
+    def test_first_listed_interface_wins(self):
+        """Even though the client supports all of them, the card's first entry wins."""
+        factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
-            preferred_transport="slimrpc",
-            url="default/default/Hello_World_Agent_1.0.0",
+            [
+                _iface("slimrpc", "default/default/agent"),
+                _iface("slimpatterns", "slim://agent_topic"),
+                _iface("natspatterns", "nats://agent_topic"),
+                _iface("JSONRPC", "http://localhost:9999"),
+            ]
         )
-        label, url = factory._negotiate(card)
-        assert label == "slimrpc"
-        assert url == "default/default/Hello_World_Agent_1.0.0"
 
-    # -- Server prefers slimpatterns ----------------------------------------
+        assert factory._negotiate(card) == ("slimrpc", "default/default/agent")
 
-    def test_server_prefers_slimpatterns(self):
-        """Card with preferred_transport=slimpatterns should negotiate to slimpatterns."""
-        factory, _config = self._make_multi_transport_factory()
+    def test_unsupported_first_falls_back_to_next_supported(self):
+        factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
-            preferred_transport="slimpatterns",
-            url="slim://my_agent_topic",
+            [
+                _iface("grpc", "grpc://agent"),
+                _iface("natspatterns", "nats://agent_topic"),
+                _iface("JSONRPC", "http://localhost:9999"),
+            ]
         )
-        label, url = factory._negotiate(card)
-        assert label == "slimpatterns"
-        assert url == "slim://my_agent_topic"
 
-    # -- Server prefers natspatterns ----------------------------------------
-
-    def test_server_prefers_natspatterns(self):
-        """Card with preferred_transport=natspatterns should negotiate to natspatterns."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="natspatterns",
-            url="nats://my_agent_topic",
-        )
-        label, url = factory._negotiate(card)
-        assert label == "natspatterns"
-        assert url == "nats://my_agent_topic"
-
-    # -- Server prefers JSONRPC (explicit) ----------------------------------
-
-    def test_server_prefers_jsonrpc(self):
-        """Card with preferred_transport=JSONRPC should negotiate to JSONRPC."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="JSONRPC",
-            url="http://localhost:9999",
-        )
-        label, url = factory._negotiate(card)
-        assert label == "JSONRPC"
-        assert url == "http://localhost:9999"
-
-    # -- Server prefers JSONRPC (default / None) ----------------------------
-
-    def test_server_default_transport_is_jsonrpc(self):
-        """Card with no preferred_transport should default to JSONRPC."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(url="http://localhost:9999")
-        label, url = factory._negotiate(card)
-        assert label == "JSONRPC"
-        assert url == "http://localhost:9999"
-
-    # -- Server prefers unknown, fallback via additional_interfaces ---------
-
-    def test_server_unknown_preferred_falls_back_to_additional(self):
-        """Server prefers unsupported transport; client finds match in additional_interfaces."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="grpc",
-            url="grpc://agent",
-            additional_interfaces=[
-                AgentInterface(transport="natspatterns", url="nats://agent_topic"),
-                AgentInterface(transport="JSONRPC", url="http://localhost:9999"),
-            ],
-        )
-        label, url = factory._negotiate(card)
-        # Server's preferred "grpc" not supported → first match in server_set
-        # iteration: grpc (skip), natspatterns (match!)
-        assert label == "natspatterns"
-        assert url == "nats://agent_topic"
-
-    # -- Server offers multiple via additional_interfaces -------------------
-
-    def test_server_preferred_plus_additional(self):
-        """Server's preferred_transport wins even when additional_interfaces are present."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="slimrpc",
-            url="default/default/agent",
-            additional_interfaces=[
-                AgentInterface(transport="slimpatterns", url="slim://agent_topic"),
-                AgentInterface(transport="natspatterns", url="nats://agent_topic"),
-                AgentInterface(transport="JSONRPC", url="http://localhost:9999"),
-            ],
-        )
-        label, url = factory._negotiate(card)
-        assert label == "slimrpc"
-        assert url == "default/default/agent"
-
-    # -- Client preference mode overrides server ----------------------------
+        assert factory._negotiate(card) == ("natspatterns", "nats://agent_topic")
 
     def test_client_preference_overrides_server(self):
-        """With use_client_preference=True, client's transport order wins."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
         config = ClientConfig(
             slimrpc_channel_factory=MagicMock(),
             slim_transport=_make_mock_transport("SLIM"),
@@ -899,31 +1141,20 @@ class TestMultiTransportNegotiation:
         )
         factory = A2AClientFactory(config)
 
-        # Client's auto-derived order: ["JSONRPC", "slimpatterns", "natspatterns", "slimrpc"]
-        # Server prefers slimrpc and also offers JSONRPC
+        # Client order: JSONRPC, slimpatterns, natspatterns, slimrpc
         card = _make_agent_card(
-            preferred_transport="slimrpc",
-            url="default/default/agent",
-            additional_interfaces=[
-                AgentInterface(transport="JSONRPC", url="http://localhost:9999"),
-            ],
+            [
+                _iface("slimrpc", "default/default/agent"),
+                _iface("JSONRPC", "http://localhost:9999"),
+            ]
         )
-        label, url = factory._negotiate(card)
-        # JSONRPC appears first in client's list and server offers it
-        assert label == "JSONRPC"
-        assert url == "http://localhost:9999"
 
-    # -- No match at all raises ValueError ---------------------------------
+        assert factory._negotiate(card) == ("JSONRPC", "http://localhost:9999")
 
     def test_no_match_raises(self):
-        """Server only offers transports the client doesn't support → ValueError."""
-        factory, _config = self._make_multi_transport_factory()
+        factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
-            preferred_transport="grpc",
-            url="grpc://agent",
-            additional_interfaces=[
-                AgentInterface(transport="websocket", url="ws://agent"),
-            ],
+            [_iface("grpc", "grpc://agent"), _iface("websocket", "ws://agent")]
         )
         with pytest.raises(ValueError, match="No compatible transports"):
             factory._negotiate(card)
@@ -932,64 +1163,61 @@ class TestMultiTransportNegotiation:
 
     @pytest.mark.asyncio
     async def test_create_dispatches_slimrpc(self):
-        """create() with slimrpc card should return upstream Client (sync path)."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="slimrpc",
-            url="default/default/agent",
-        )
+        """slimrpc goes through the upstream sync path → upstream Client."""
+        factory, _ = _make_multi_transport_factory()
+        card = _make_agent_card([_iface("slimrpc", "default/default/agent")])
+
         result = await factory.create(card)
-        # slimrpc goes through the upstream sync path → upstream Client
+
         assert isinstance(result, Client)
+        assert not isinstance(result, A2AExperimentalClient)
+
+    @pytest.mark.asyncio
+    async def test_create_slimrpc_strips_slim_scheme_from_url(self):
+        """The channel factory receives a bare ``org/ns/name`` identity."""
+        factory, config = _make_multi_transport_factory()
+        card = _make_agent_card([_iface("slimrpc", "slim://host:46357/org/ns/agent")])
+
+        await factory.create(card)
+
+        config.slimrpc_channel_factory.assert_called_once_with("org/ns/agent")
 
     @pytest.mark.asyncio
     async def test_create_dispatches_slimpatterns(self):
-        """create() with slimpatterns card should return A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
+        factory, _ = _make_multi_transport_factory()
+        card = _make_agent_card([_iface("slimpatterns", "slim://my_agent")])
 
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="slimpatterns",
-            url="slim://my_agent",
-        )
         result = await factory.create(card)
+
         assert isinstance(result, A2AExperimentalClient)
         assert result.transport.type() == "SLIM"
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
     async def test_create_dispatches_natspatterns(self):
-        """create() with natspatterns card should return A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
+        factory, _ = _make_multi_transport_factory()
+        card = _make_agent_card([_iface("natspatterns", "nats://my_agent")])
 
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="natspatterns",
-            url="nats://my_agent",
-        )
         result = await factory.create(card)
+
         assert isinstance(result, A2AExperimentalClient)
         assert result.transport.type() == "NATS"
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
-    async def test_create_dispatches_jsonrpc_from_additional(self):
-        """When server prefers unknown transport but offers JSONRPC in
-        additional_interfaces, create() should fall through to JSONRPC."""
-        factory, _config = self._make_multi_transport_factory()
+    async def test_create_dispatches_jsonrpc_after_unsupported(self):
+        factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
-            preferred_transport="grpc",
-            url="grpc://agent",
-            additional_interfaces=[
-                AgentInterface(transport="JSONRPC", url="http://localhost:9999"),
-            ],
+            [
+                _iface("grpc", "grpc://agent"),
+                _iface("JSONRPC", "http://localhost:9999"),
+            ]
         )
+
         result = await factory.create(card)
+
         assert isinstance(result, Client)
+        assert not isinstance(result, A2AExperimentalClient)
 
 
 # =========================================================================
@@ -998,146 +1226,67 @@ class TestMultiTransportNegotiation:
 
 
 class TestTransportAliasNegotiation:
-    """Verify that transport aliases (e.g. "slim" -> "slimpatterns",
-    "nats" -> "natspatterns") are resolved during client-side negotiation
-    and dispatch so cards using alias names still produce valid clients.
+    """Aliases ("slim" -> "slimpatterns", "nats" -> "natspatterns") are
+    resolved during negotiation and dispatch, so cards using alias names
+    still produce valid clients.
     """
 
-    @staticmethod
-    def _make_multi_transport_factory():
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+    @pytest.mark.parametrize(
+        ("alias", "url"),
+        [
+            ("slim", "slim://my_topic"),
+            ("nats", "nats://my_topic"),
+            ("slim-extended", "slim://my_topic"),
+            ("SLIM", "slim://my_topic"),
+        ],
+    )
+    def test_negotiate_alias_binding(self, alias, url):
+        factory, _ = _make_multi_transport_factory()
+        card = _make_agent_card([_iface(alias, url)])
 
-        config = ClientConfig(
-            slimrpc_channel_factory=MagicMock(),
-            slim_transport=_make_mock_transport("SLIM"),
-            nats_transport=_make_mock_transport("NATS"),
-        )
-        return A2AClientFactory(config), config
+        assert factory._negotiate(card) == (alias, url)
 
-    # -- negotiate() resolves aliases in preferred_transport ----------------
-
-    def test_negotiate_slim_alias_preferred(self):
-        """Card with preferred_transport='slim' should negotiate successfully."""
-        factory, _config = self._make_multi_transport_factory()
+    def test_negotiate_alias_after_unsupported(self):
+        factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
-            preferred_transport="slim",
-            url="slim://my_topic",
+            [_iface("grpc", "grpc://agent"), _iface("slim", "slim://my_topic")]
         )
-        label, url = factory._negotiate(card)
-        assert label == "slim"
-        assert url == "slim://my_topic"
 
-    def test_negotiate_nats_alias_preferred(self):
-        """Card with preferred_transport='nats' should negotiate successfully."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="nats",
-            url="nats://my_topic",
-        )
-        label, url = factory._negotiate(card)
-        assert label == "nats"
-        assert url == "nats://my_topic"
-
-    def test_negotiate_slim_extended_alias_preferred(self):
-        """Card with preferred_transport='slim-extended' should negotiate."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="slim-extended",
-            url="slim://my_topic",
-        )
-        label, url = factory._negotiate(card)
-        assert label == "slim-extended"
-        assert url == "slim://my_topic"
-
-    # -- negotiate() resolves aliases in additional_interfaces ---------------
-
-    def test_negotiate_slim_alias_in_additional_interfaces(self):
-        """Card with transport='slim' in additional_interfaces matches client's 'slimpatterns'."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="grpc",
-            url="grpc://agent",
-            additional_interfaces=[
-                AgentInterface(transport="slim", url="slim://my_topic"),
-            ],
-        )
-        label, url = factory._negotiate(card)
-        assert label == "slim"
-        assert url == "slim://my_topic"
-
-    def test_negotiate_nats_alias_in_additional_interfaces(self):
-        """Card with transport='nats' in additional_interfaces matches client's 'natspatterns'."""
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="grpc",
-            url="grpc://agent",
-            additional_interfaces=[
-                AgentInterface(transport="nats", url="nats://my_topic"),
-            ],
-        )
-        label, url = factory._negotiate(card)
-        assert label == "nats"
-        assert url == "nats://my_topic"
-
-    # -- create() dispatches correctly for aliased labels -------------------
+        assert factory._negotiate(card) == ("slim", "slim://my_topic")
 
     @pytest.mark.asyncio
     async def test_create_slim_alias_dispatches_to_slimpatterns(self):
-        """create() with preferred_transport='slim' should return A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
+        factory, _ = _make_multi_transport_factory()
+        card = _make_agent_card([_iface("slim", "slim://my_agent")])
 
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="slim",
-            url="slim://my_agent",
-        )
         result = await factory.create(card)
+
         assert isinstance(result, A2AExperimentalClient)
         assert result.transport.type() == "SLIM"
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
     async def test_create_nats_alias_dispatches_to_natspatterns(self):
-        """create() with preferred_transport='nats' should return A2AExperimentalClient."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
+        factory, _ = _make_multi_transport_factory()
+        card = _make_agent_card([_iface("nats", "nats://my_agent")])
 
-        factory, _config = self._make_multi_transport_factory()
-        card = _make_agent_card(
-            preferred_transport="nats",
-            url="nats://my_agent",
-        )
         result = await factory.create(card)
+
         assert isinstance(result, A2AExperimentalClient)
         assert result.transport.type() == "NATS"
         assert result.topic == "my_agent"
 
-    # -- client_preference mode also resolves aliases -----------------------
-
     def test_client_preference_resolves_aliases(self):
-        """With use_client_preference, aliased server transports still match."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
         config = ClientConfig(
             slim_transport=_make_mock_transport("SLIM"),
             use_client_preference=True,
         )
         factory = A2AClientFactory(config)
 
-        card = _make_agent_card(
-            preferred_transport="slim",
-            url="slim://my_topic",
-        )
-        label, url = factory._negotiate(card)
         # Client supports "slimpatterns"; server offers "slim" (alias).
-        # Alias resolution should make them match.
-        assert label == "slim"
-        assert url == "slim://my_topic"
+        card = _make_agent_card([_iface("slim", "slim://my_topic")])
+
+        assert factory._negotiate(card) == ("slim", "slim://my_topic")
 
 
 # ---------------------------------------------------------------------------
@@ -1146,26 +1295,14 @@ class TestTransportAliasNegotiation:
 
 
 class TestBuildSlimrpcIfNeeded:
-    """Verify that ``_build_slimrpc_if_needed()`` opens a dedicated SLIM
-    connection via the trailing-slash endpoint trick, matching the
-    server-side pattern in ``A2ASRPCServerHandler``.
+    """``_build_slimrpc_if_needed()`` opens a dedicated SLIM connection via the
+    trailing-slash endpoint trick, matching the server-side pattern in
+    ``A2ASRPCServerHandler``.
     """
 
     @pytest.mark.asyncio
     async def test_slimrpc_uses_trailing_slash_endpoint(self):
-        """_build_slimrpc_if_needed should connect using endpoint + '/'."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from agntcy_app_sdk.semantic.a2a.client.config import (
-            ClientConfig,
-            SlimRpcConfig,
-        )
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
         mock_service = MagicMock()
-        mock_service.connect_async = AsyncMock(return_value=42)
-        mock_app = MagicMock()
-        mock_service.create_app_with_secret = MagicMock(return_value=mock_app)
 
         config = ClientConfig(
             slimrpc_config=SlimRpcConfig(
@@ -1180,10 +1317,10 @@ class TestBuildSlimrpcIfNeeded:
 
         with (
             patch(
-                "agntcy_app_sdk.transport.slim.common.get_or_create_slim_instance",
-                new_callable=AsyncMock,
-                return_value=(mock_service, mock_app, 1),
-            ) as mock_get_or_create,
+                "agntcy_app_sdk.transport.slim.common.get_or_init_slim_service",
+                return_value=mock_service,
+            ) as mock_get_service,
+            patch("slim_bindings.uniffi_set_event_loop", MagicMock()),
             patch("slim_bindings.Name", MagicMock()) as mock_name,
             patch(
                 "slim_bindings.new_insecure_client_config",
@@ -1194,17 +1331,15 @@ class TestBuildSlimrpcIfNeeded:
                 return_value=MagicMock(),
             ),
         ):
-            # Wire connect_async on the service returned by get_or_create
             mock_service.connect_async = AsyncMock(return_value=99)
-            # Wire the rpc app returned by create_app_with_secret
             mock_rpc_app = MagicMock()
             mock_rpc_app.subscribe_async = AsyncMock()
             mock_service.create_app_with_secret = MagicMock(return_value=mock_rpc_app)
 
             await factory._build_slimrpc_if_needed()
 
-            # Should have called get_or_create_slim_instance first
-            mock_get_or_create.assert_called_once()
+            # Should have taken the global service first (no pub/sub App)
+            mock_get_service.assert_called_once()
 
             # Should have called new_insecure_client_config with trailing slash
             mock_new_client_config.assert_called_once_with("http://localhost:46357/")
@@ -1224,10 +1359,6 @@ class TestBuildSlimrpcIfNeeded:
 
     @pytest.mark.asyncio
     async def test_slimrpc_noop_when_eager_factory_set(self):
-        """_build_slimrpc_if_needed should be a no-op if channel factory already set."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
         eager_factory = MagicMock()
         config = ClientConfig(slimrpc_channel_factory=eager_factory)
         factory = A2AClientFactory(config)
@@ -1239,1328 +1370,245 @@ class TestBuildSlimrpcIfNeeded:
 
 
 # ---------------------------------------------------------------------------
-# Interceptor test helper
+# Interceptors — standard operations (via the upstream BaseClient)
 # ---------------------------------------------------------------------------
 
 
-class _RecordingInterceptor(ClientCallInterceptor):
-    """Test interceptor that records calls and optionally modifies payloads.
-
-    Subclasses the real ``ClientCallInterceptor`` ABC so that tests verify
-    the actual interface contract rather than relying on duck-typing.
-    """
-
-    def __init__(self, modify_key=None, modify_value=None):
-        self.calls: list[tuple] = []
-        self._modify_key = modify_key
-        self._modify_value = modify_value
-
-    async def intercept(
-        self,
-        method_name: str,
-        request_payload: dict,
-        http_kwargs: dict,
-        agent_card: AgentCard | None,
-        context: ClientCallContext | None,
-    ) -> tuple[dict, dict]:
-        self.calls.append(
-            (method_name, dict(request_payload), dict(http_kwargs), context)
-        )
-        if self._modify_key:
-            request_payload[self._modify_key] = self._modify_value
-        return request_payload, http_kwargs
+async def _patterns_client(
+    interceptors: list[ClientCallInterceptor] | None = None,
+    streaming: bool = False,
+) -> tuple[A2AExperimentalClient, MagicMock]:
+    mock_transport = _make_mock_transport("SLIM")
+    config = ClientConfig(slim_transport=mock_transport, streaming=streaming)
+    factory = A2AClientFactory(config)
+    card = _make_agent_card([_iface("slimpatterns", "slim://my_agent")])
+    card.capabilities.streaming = streaming
+    client = await factory.create(card, interceptors=interceptors)
+    assert isinstance(client, A2AExperimentalClient)
+    return client, mock_transport
 
 
-def _make_json_rpc_response(result: dict | None = None) -> MagicMock:
-    """Create a mock transport response with a JSON-RPC payload."""
-    resp = MagicMock()
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "result": result
-        or {
-            "kind": "message",
-            "messageId": str(uuid4()),
-            "role": "agent",
-            "parts": [{"kind": "text", "text": "Hello"}],
-        },
-    }
-    resp.payload = json.dumps(payload).encode("utf-8")
-    resp.status_code = 200
-    resp.type = "A2AResponse"
-    return resp
-
-
-# ---------------------------------------------------------------------------
-# PatternsClientTransport interceptor tests
-# ---------------------------------------------------------------------------
-
-
-class TestPatternsClientTransportInterceptors:
+class TestFactoryInterceptorIntegration:
     @pytest.mark.asyncio
-    async def test_send_message_calls_interceptor(self):
-        """send_message should invoke the interceptor with method_name='message/send'."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
+    async def test_send_message_runs_before_and_after_hooks(self):
         interceptor = _RecordingInterceptor()
-        mock_transport = _make_mock_transport()
-        mock_transport.request.return_value = _make_json_rpc_response()
-        card = _make_agent_card()
+        client, mock_transport = await _patterns_client([interceptor])
+        mock_transport.request.return_value = _rpc_response(_message_result("Hello"))
 
-        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
+        events = [e async for e in client.send_message(_user_request())]
 
-        from a2a.types import Message as A2AMessage, Part, TextPart
-
-        params = MessageSendParams(
-            message=A2AMessage(
-                messageId=str(uuid4()),
-                role="user",
-                parts=[Part(root=TextPart(kind="text", text="Hi"))],
-            )
-        )
-        await pct.send_message(params)
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "message/send"
+        assert [get_stream_response_text(e) for e in events] == ["Hello"]
+        assert [a.method for a in interceptor.before_calls] == ["send_message"]
+        assert [a.method for a in interceptor.after_calls] == ["send_message"]
+        assert interceptor.before_calls[0].agent_card.name == "test-agent"
 
     @pytest.mark.asyncio
-    async def test_send_message_uses_modified_payload(self):
-        """Interceptor modifications should reach the underlying transport."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
-        interceptor = _RecordingInterceptor(
-            modify_key="x-custom", modify_value="injected"
-        )
-        mock_transport = _make_mock_transport()
-        mock_transport.request.return_value = _make_json_rpc_response()
-        card = _make_agent_card()
-
-        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
-
-        from a2a.types import Message as A2AMessage, Part, TextPart
-
-        params = MessageSendParams(
-            message=A2AMessage(
-                messageId=str(uuid4()),
-                role="user",
-                parts=[Part(root=TextPart(kind="text", text="Hi"))],
-            )
-        )
-        await pct.send_message(params)
-
-        # Verify the interceptor was invoked
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "message/send"
-        # Verify the transport received the modified payload by inspecting
-        # the Message object passed to transport.request().  The second
-        # positional arg is the transport Message built from the intercepted
-        # payload.
-        call_args = mock_transport.request.call_args
-        transport_msg = call_args[0][1]  # second positional arg
-        payload_data = transport_msg.payload
-        import json as _json
-
-        # payload may be str or bytes depending on message_translator
-        if isinstance(payload_data, bytes):
-            payload_data = payload_data.decode("utf-8")
-        sent_payload = _json.loads(payload_data)
-        assert sent_payload.get("x-custom") == "injected"
-
-    @pytest.mark.asyncio
-    async def test_get_task_calls_interceptor(self):
-        """get_task should invoke the interceptor with method_name='tasks/get'."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
-        from a2a.types import TaskQueryParams
-
+    async def test_streaming_send_message_uses_streaming_hooks(self):
         interceptor = _RecordingInterceptor()
-        mock_transport = _make_mock_transport()
-        mock_transport.request.return_value = _make_json_rpc_response(
-            result={
-                "kind": "task",
-                "id": "task-1",
-                "contextId": "ctx-1",
-                "status": {"state": "completed"},
-            }
-        )
-        card = _make_agent_card()
-
-        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
-        await pct.get_task(TaskQueryParams(id="task-1"))
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "tasks/get"
-
-    @pytest.mark.asyncio
-    async def test_cancel_task_calls_interceptor(self):
-        """cancel_task should invoke the interceptor with method_name='tasks/cancel'."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
-        from a2a.types import TaskIdParams
-
-        interceptor = _RecordingInterceptor()
-        mock_transport = _make_mock_transport()
-        mock_transport.request.return_value = _make_json_rpc_response(
-            result={
-                "kind": "task",
-                "id": "task-1",
-                "contextId": "ctx-1",
-                "status": {"state": "canceled"},
-            }
-        )
-        card = _make_agent_card()
-
-        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
-        await pct.cancel_task(TaskIdParams(id="task-1"))
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "tasks/cancel"
-
-    @pytest.mark.asyncio
-    async def test_set_task_callback_calls_interceptor(self):
-        """set_task_callback should invoke the interceptor with the correct method_name."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
-        from a2a.types import TaskPushNotificationConfig
-
-        interceptor = _RecordingInterceptor()
-        mock_transport = _make_mock_transport()
-        mock_transport.request.return_value = _make_json_rpc_response(
-            result={
-                "taskId": "task-1",
-                "pushNotificationConfig": {"url": "http://example.com/callback"},
-            }
-        )
-        card = _make_agent_card()
-
-        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
-        await pct.set_task_callback(
-            TaskPushNotificationConfig(
-                taskId="task-1",
-                pushNotificationConfig={"url": "http://example.com/callback"},
+        client, mock_transport = await _patterns_client([interceptor], streaming=True)
+        mock_transport.request_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(_status_result(), type_="A2AStatusUpdate"),
+                _rpc_response(_status_result("TASK_STATE_COMPLETED")),
             )
         )
 
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "tasks/pushNotificationConfig/set"
+        events = [e async for e in client.send_message(_user_request())]
+
+        assert len(events) == 2
+        assert [a.method for a in interceptor.before_calls] == [
+            "send_message_streaming"
+        ]
+        assert len(interceptor.after_calls) == 2
 
     @pytest.mark.asyncio
-    async def test_get_task_callback_calls_interceptor(self):
-        """get_task_callback should invoke the interceptor with the correct method_name."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
+    async def test_interceptor_headers_reach_the_wire(self):
+        """service_parameters set in ``before`` become transport message headers."""
+        interceptor = _RecordingInterceptor(headers={"Authorization": "Bearer abc"})
+        client, mock_transport = await _patterns_client([interceptor])
+        mock_transport.request.return_value = _rpc_response()
 
-        from a2a.types import GetTaskPushNotificationConfigParams
+        _ = [e async for e in client.send_message(_user_request())]
 
-        interceptor = _RecordingInterceptor()
-        mock_transport = _make_mock_transport()
-        mock_transport.request.return_value = _make_json_rpc_response(
-            result={
-                "taskId": "task-1",
-                "pushNotificationConfig": {"url": "http://example.com/callback"},
-            }
-        )
-        card = _make_agent_card()
-
-        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
-        await pct.get_task_callback(GetTaskPushNotificationConfigParams(id="task-1"))
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "tasks/pushNotificationConfig/get"
+        sent = mock_transport.request.call_args.args[1]
+        assert sent.headers["Authorization"] == "Bearer abc"
 
     @pytest.mark.asyncio
-    async def test_send_message_streaming_calls_interceptor(self):
-        """send_message_streaming should invoke the interceptor with 'message/stream'."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
+    async def test_get_task_runs_hooks(self):
         interceptor = _RecordingInterceptor()
-        mock_transport = _make_mock_transport()
-        card = _make_agent_card()
-
-        # Mock request_stream as an async generator
-        stream_response = _make_json_rpc_response()
-
-        async def mock_request_stream(topic, msg):
-            yield stream_response
-
-        mock_transport.request_stream = mock_request_stream
-
-        pct = PatternsClientTransport(mock_transport, card, "topic", [interceptor])
-
-        from a2a.types import Message as A2AMessage, Part, TextPart
-
-        params = MessageSendParams(
-            message=A2AMessage(
-                messageId=str(uuid4()),
-                role="user",
-                parts=[Part(root=TextPart(kind="text", text="Hi"))],
-            )
+        client, mock_transport = await _patterns_client([interceptor])
+        mock_transport.request.return_value = _rpc_response(
+            {"id": "t1", "status": {"state": "TASK_STATE_WORKING"}}
         )
 
-        # Consume the async generator
-        results = []
-        async for event in pct.send_message_streaming(params):
-            results.append(event)
+        task = await client.get_task(GetTaskRequest(id="t1"))
 
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "message/stream"
+        assert task.id == "t1"
+        assert [a.method for a in interceptor.before_calls] == ["get_task"]
+        assert [a.method for a in interceptor.after_calls] == ["get_task"]
 
     @pytest.mark.asyncio
     async def test_interceptor_chaining_order(self):
-        """Multiple interceptors should be applied in order, composing modifications."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
+        """``before`` runs in registration order, ``after`` in reverse."""
+        order: list[str] = []
 
-        first = _RecordingInterceptor(modify_key="step", modify_value="first")
-        second = _RecordingInterceptor(modify_key="step", modify_value="second")
-        mock_transport = _make_mock_transport()
-        mock_transport.request.return_value = _make_json_rpc_response()
-        card = _make_agent_card()
+        class _Ordered(ClientCallInterceptor):
+            def __init__(self, label: str):
+                self._label = label
 
-        pct = PatternsClientTransport(mock_transport, card, "topic", [first, second])
+            async def before(self, args: BeforeArgs) -> None:
+                order.append(f"before:{self._label}")
 
-        from a2a.types import Message as A2AMessage, Part, TextPart
+            async def after(self, args: AfterArgs) -> None:
+                order.append(f"after:{self._label}")
 
-        params = MessageSendParams(
-            message=A2AMessage(
-                messageId=str(uuid4()),
-                role="user",
-                parts=[Part(root=TextPart(kind="text", text="Hi"))],
-            )
-        )
-        await pct.send_message(params)
+        client, mock_transport = await _patterns_client([_Ordered("a"), _Ordered("b")])
+        mock_transport.request.return_value = _rpc_response()
 
-        # Both interceptors called
-        assert len(first.calls) == 1
-        assert len(second.calls) == 1
-        # Second interceptor sees the modification from the first
-        assert second.calls[0][1].get("step") == "first"
+        _ = [e async for e in client.send_message(_user_request())]
+
+        assert order == ["before:a", "before:b", "after:b", "after:a"]
 
     @pytest.mark.asyncio
     async def test_no_interceptors_passthrough(self):
-        """With no interceptors, send_message should still work normally."""
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
+        client, mock_transport = await _patterns_client()
+        mock_transport.request.return_value = _rpc_response(_message_result("plain"))
 
-        mock_transport = _make_mock_transport()
-        mock_transport.request.return_value = _make_json_rpc_response()
-        card = _make_agent_card()
+        events = [e async for e in client.send_message(_user_request())]
 
-        # No interceptors — empty list
-        pct = PatternsClientTransport(mock_transport, card, "topic", [])
-
-        from a2a.types import Message as A2AMessage, Part, TextPart
-
-        params = MessageSendParams(
-            message=A2AMessage(
-                messageId=str(uuid4()),
-                role="user",
-                parts=[Part(root=TextPart(kind="text", text="Hi"))],
-            )
-        )
-        await pct.send_message(params)
-        assert mock_transport.request.called
-
-    def test_create_forwards_interceptors(self):
-        """PatternsClientTransport.create() should store interceptors."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.transports import (
-            PatternsClientTransport,
-        )
-
-        interceptor = _RecordingInterceptor()
-        mock_transport = _make_mock_transport("SLIM")
-        config = ClientConfig(slim_transport=mock_transport)
-        card = _make_agent_card(preferred_transport="slimpatterns")
-
-        pct = PatternsClientTransport.create(
-            card, "slim://topic_1", config, [interceptor]
-        )
-        assert pct._interceptors == [interceptor]
+        assert get_stream_response_text(events[0]) == "plain"
 
 
 # ---------------------------------------------------------------------------
-# A2AExperimentalClient interceptor tests
+# Interceptors — experimental operations
 # ---------------------------------------------------------------------------
 
 
 class TestA2AExperimentalClientInterceptors:
-    def _make_experimental_client(self, interceptors=None):
-        """Helper to construct an A2AExperimentalClient with mocks."""
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
+    @pytest.mark.asyncio
+    async def test_broadcast_message_runs_hooks(self):
+        interceptor = _RecordingInterceptor()
+        client, mock_transport, _ = _make_experimental([interceptor])
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response())
         )
 
-        mock_client = MagicMock()
-        mock_client._consumers = []
-        mock_client._middleware = []
-        card = _make_agent_card()
-        mock_transport = _make_mock_transport()
+        await client.broadcast_message(_user_request(), recipients=["a"])
 
-        return (
-            A2AExperimentalClient(
-                client=mock_client,
-                agent_card=card,
-                transport=mock_transport,
-                topic="test_topic",
-                interceptors=interceptors,
-            ),
-            mock_transport,
-            card,
-        )
+        assert [a.method for a in interceptor.before_calls] == ["send_message"]
+        assert [a.method for a in interceptor.after_calls] == ["send_message"]
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_calls_interceptor(self):
-        """broadcast_message should apply the interceptor to the payload."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
+    async def test_broadcast_message_streaming_runs_hooks(self):
         interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
+        client, mock_transport, _ = _make_experimental([interceptor])
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response())
         )
 
-        # Mock gather_stream to return an empty async iterator
-        async def empty_stream(*args, **kwargs):
-            return
-            yield  # pragma: no cover
+        _ = [
+            e
+            async for e in client.broadcast_message_streaming(
+                _user_request(), recipients=["a"]
+            )
+        ]
 
-        mock_transport.gather_stream = empty_stream
-
-        await client.broadcast_message(request, recipients=["agent-1"])
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "message/send"
+        assert [a.method for a in interceptor.before_calls] == [
+            "send_message_streaming"
+        ]
+        assert len(interceptor.after_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_calls_interceptor(self):
-        """broadcast_message_streaming should apply the interceptor to the payload."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendStreamingMessageRequest,
-            TextPart,
-        )
-
+    async def test_start_groupchat_runs_hooks(self):
         interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
-
-        request = SendStreamingMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-
-        # Mock gather_stream to return an empty async iterator
-        async def empty_stream(*args, **kwargs):
-            return
-            yield  # pragma: no cover
-
-        mock_transport.gather_stream = empty_stream
-
-        results = []
-        async for event in client.broadcast_message_streaming(
-            request, recipients=["agent-1"]
-        ):
-            results.append(event)
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "message/send"
-
-    @pytest.mark.asyncio
-    async def test_start_groupchat_calls_interceptor(self):
-        """start_groupchat should apply the interceptor to the init message."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-
-        # Mock start_conversation to return empty list
-        mock_transport.start_conversation = AsyncMock(return_value=[])
+        client, mock_transport, _ = _make_experimental([interceptor])
+        mock_transport.start_conversation = AsyncMock(return_value=[_rpc_response()])
 
         await client.start_groupchat(
-            request, group_channel="group", participants=["a", "b"]
+            _user_request(), group_channel="zoo", participants=["a"]
         )
 
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "message/send"
+        assert [a.method for a in interceptor.before_calls] == ["send_message"]
+        assert len(interceptor.after_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_start_streaming_groupchat_calls_interceptor(self):
-        """start_streaming_groupchat should apply the interceptor to the init message."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
+    async def test_start_streaming_groupchat_runs_hooks(self):
         interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
+        client, mock_transport, _ = _make_experimental([interceptor])
+        mock_transport.start_streaming_conversation = MagicMock(
+            side_effect=_async_gen(_rpc_response())
         )
 
-        # Mock start_streaming_conversation to return empty async iterator
-        async def empty_stream(*args, **kwargs):
-            return
-            yield  # pragma: no cover
+        _ = [
+            e
+            async for e in client.start_streaming_groupchat(
+                _user_request(), group_channel="zoo", participants=["a"]
+            )
+        ]
 
-        mock_transport.start_streaming_conversation = empty_stream
-
-        results = []
-        async for event in client.start_streaming_groupchat(
-            request, group_channel="group", participants=["a", "b"]
-        ):
-            results.append(event)
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][0] == "message/send"
+        assert [a.method for a in interceptor.before_calls] == ["send_message"]
+        assert len(interceptor.after_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_forwards_context(self):
-        """broadcast_message should forward context to the interceptor."""
-        from a2a.client.middleware import ClientCallContext
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
+    async def test_context_is_forwarded_to_interceptors(self):
         interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
+        client, mock_transport, _ = _make_experimental([interceptor])
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response())
+        )
+        context = ClientCallContext(state={"trace": "t-1"})
 
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
+        await client.broadcast_message(
+            _user_request(), recipients=["a"], context=context
+        )
+
+        assert interceptor.before_calls[0].context is context
+        assert interceptor.after_calls[0].context is context
+
+    @pytest.mark.asyncio
+    async def test_context_defaults_to_none_without_interceptors(self):
+        client, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response())
+        )
+
+        responses = await client.broadcast_message(_user_request(), recipients=["a"])
+
+        assert len(responses) == 1
+
+    @pytest.mark.asyncio
+    async def test_interceptor_headers_reach_the_wire(self):
+        """Headers an interceptor stores in service_parameters are sent."""
+        interceptor = _RecordingInterceptor(headers={"X-Trace": "abc"})
+        client, mock_transport, _ = _make_experimental([interceptor])
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response())
+        )
+
+        await client.broadcast_message(_user_request(), recipients=["a"])
+
+        _, msg = mock_transport.gather_stream.call_args.args
+        assert msg.headers["X-Trace"] == "abc"
+
+    @pytest.mark.asyncio
+    async def test_interceptor_can_replace_the_request(self):
+        class _Rewrite(ClientCallInterceptor):
+            async def before(self, args: BeforeArgs) -> None:
+                args.input = SendMessageRequest(
+                    message=new_text_message("rewritten", role=Role.ROLE_USER)
                 )
-            ),
+
+            async def after(self, args: AfterArgs) -> None:
+                pass
+
+        client, mock_transport, _ = _make_experimental([_Rewrite()])
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response())
         )
 
-        async def empty_stream(*args, **kwargs):
-            return
-            yield  # pragma: no cover
+        await client.broadcast_message(_user_request("original"), recipients=["a"])
 
-        mock_transport.gather_stream = empty_stream
-
-        ctx = ClientCallContext()
-        await client.broadcast_message(request, context=ctx, recipients=["agent-1"])
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][3] is ctx
-
-    @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_forwards_context(self):
-        """broadcast_message_streaming should forward context to the interceptor."""
-        from a2a.client.middleware import ClientCallContext
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendStreamingMessageRequest,
-            TextPart,
+        _, msg = mock_transport.gather_stream.call_args.args
+        assert json.loads(msg.payload)["params"]["message"]["parts"][0]["text"] == (
+            "rewritten"
         )
-
-        interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
-
-        request = SendStreamingMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-
-        async def empty_stream(*args, **kwargs):
-            return
-            yield  # pragma: no cover
-
-        mock_transport.gather_stream = empty_stream
-
-        ctx = ClientCallContext()
-        results = []
-        async for event in client.broadcast_message_streaming(
-            request, context=ctx, recipients=["agent-1"]
-        ):
-            results.append(event)
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][3] is ctx
-
-    @pytest.mark.asyncio
-    async def test_start_groupchat_forwards_context(self):
-        """start_groupchat should forward context to the interceptor."""
-        from a2a.client.middleware import ClientCallContext
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-
-        mock_transport.start_conversation = AsyncMock(return_value=[])
-
-        ctx = ClientCallContext()
-        await client.start_groupchat(
-            request, context=ctx, group_channel="group", participants=["a", "b"]
-        )
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][3] is ctx
-
-    @pytest.mark.asyncio
-    async def test_start_streaming_groupchat_forwards_context(self):
-        """start_streaming_groupchat should forward context to the interceptor."""
-        from a2a.client.middleware import ClientCallContext
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-
-        async def empty_stream(*args, **kwargs):
-            return
-            yield  # pragma: no cover
-
-        mock_transport.start_streaming_conversation = empty_stream
-
-        ctx = ClientCallContext()
-        results = []
-        async for event in client.start_streaming_groupchat(
-            request, context=ctx, group_channel="group", participants=["a", "b"]
-        ):
-            results.append(event)
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][3] is ctx
-
-    @pytest.mark.asyncio
-    async def test_broadcast_message_context_defaults_to_none(self):
-        """broadcast_message without context= should pass None to interceptor."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        interceptor = _RecordingInterceptor()
-        client, mock_transport, _ = self._make_experimental_client([interceptor])
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-
-        async def empty_stream(*args, **kwargs):
-            return
-            yield  # pragma: no cover
-
-        mock_transport.gather_stream = empty_stream
-
-        await client.broadcast_message(request, recipients=["agent-1"])
-
-        assert len(interceptor.calls) == 1
-        assert interceptor.calls[0][3] is None
-
-
-# ---------------------------------------------------------------------------
-# Factory-level interceptor integration tests
-# ---------------------------------------------------------------------------
-
-
-class TestFactoryInterceptorIntegration:
-    """Verify interceptors are wired end-to-end through
-    ``A2AClientFactory.create()`` for the patterns transport path.
-    """
-
-    @pytest.mark.asyncio
-    async def test_factory_create_patterns_interceptor_invoked(self):
-        """Interceptor passed to factory.create() should fire on send_message
-        through the full BaseClient -> PatternsClientTransport chain."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        interceptor = _RecordingInterceptor()
-        mock_transport = _make_mock_transport("SLIM")
-        mock_transport.request.return_value = _make_json_rpc_response()
-
-        config = ClientConfig(slim_transport=mock_transport)
-        factory = A2AClientFactory(config)
-
-        card = _make_agent_card(
-            url="slim://test_topic",
-            preferred_transport="slimpatterns",
-        )
-
-        client = await factory.create(card, interceptors=[interceptor])
-
-        from a2a.types import Message as A2AMessage, Part, TextPart
-
-        msg = A2AMessage(
-            messageId=str(uuid4()),
-            role="user",
-            parts=[Part(root=TextPart(kind="text", text="Hello"))],
-        )
-
-        # send_message is an async iterator; consume it
-        async for _event in client.send_message(msg):
-            pass
-
-        # The interceptor must have been called at least once via
-        # PatternsClientTransport._send_rpc -> _apply_interceptors
-        assert len(interceptor.calls) >= 1
-        assert interceptor.calls[0][0] == "message/send"
-
-    @pytest.mark.asyncio
-    async def test_factory_create_patterns_interceptor_modifies_payload(self):
-        """Payload modifications made by the interceptor should reach the
-        underlying transport when going through the full factory path."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        interceptor = _RecordingInterceptor(
-            modify_key="x-trace-id", modify_value="abc-123"
-        )
-        mock_transport = _make_mock_transport("SLIM")
-        mock_transport.request.return_value = _make_json_rpc_response()
-
-        config = ClientConfig(slim_transport=mock_transport)
-        factory = A2AClientFactory(config)
-
-        card = _make_agent_card(
-            url="slim://test_topic",
-            preferred_transport="slimpatterns",
-        )
-
-        client = await factory.create(card, interceptors=[interceptor])
-
-        from a2a.types import Message as A2AMessage, Part, TextPart
-
-        msg = A2AMessage(
-            messageId=str(uuid4()),
-            role="user",
-            parts=[Part(root=TextPart(kind="text", text="Hello"))],
-        )
-
-        async for _event in client.send_message(msg):
-            pass
-
-        # Verify the interceptor was called
-        assert len(interceptor.calls) == 1
-
-        # Verify the modified payload reached the underlying transport
-        call_args = mock_transport.request.call_args
-        transport_msg = call_args[0][1]
-        payload_data = transport_msg.payload
-        if isinstance(payload_data, bytes):
-            payload_data = payload_data.decode("utf-8")
-        sent_payload = json.loads(payload_data)
-        assert sent_payload.get("x-trace-id") == "abc-123"
-
-    @pytest.mark.asyncio
-    async def test_factory_create_patterns_consumers_wired(self):
-        """Consumers passed to factory.create() should be invoked on
-        send_message responses through the full factory path."""
-        from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
-        from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
-
-        consumed_events: list = []
-
-        async def recording_consumer(event, card):
-            consumed_events.append((event, card))
-
-        mock_transport = _make_mock_transport("SLIM")
-        mock_transport.request.return_value = _make_json_rpc_response()
-
-        config = ClientConfig(slim_transport=mock_transport)
-        factory = A2AClientFactory(config)
-
-        card = _make_agent_card(
-            url="slim://test_topic",
-            preferred_transport="slimpatterns",
-        )
-
-        client = await factory.create(
-            card,
-            consumers=[recording_consumer],
-        )
-
-        from a2a.types import Message as A2AMessage, Part, TextPart
-
-        msg = A2AMessage(
-            messageId=str(uuid4()),
-            role="user",
-            parts=[Part(root=TextPart(kind="text", text="Hello"))],
-        )
-
-        async for _event in client.send_message(msg):
-            pass
-
-        # The consumer should have been invoked by the inner BaseClient
-        # during send_message processing
-        assert len(consumed_events) >= 1
-
-
-# ---------------------------------------------------------------------------
-# Experimental-client consumer tests
-# ---------------------------------------------------------------------------
-
-
-class TestA2AExperimentalClientConsumers:
-    """Verify that consumer callbacks fire for all experimental operations."""
-
-    def _make_experimental_client_with_consumer(self):
-        """Helper to build an ``A2AExperimentalClient`` with a recording consumer.
-
-        The recording consumer is placed on the mock inner client's
-        ``_consumers`` list so that ``super().__init__()`` copies it into
-        the experimental client's own ``_consumers``.
-        """
-        from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
-            A2AExperimentalClient,
-        )
-
-        consumed_events: list = []
-
-        async def recording_consumer(event, card):
-            consumed_events.append((event, card))
-
-        mock_client = MagicMock()
-        mock_client._consumers = [recording_consumer]
-        mock_client._middleware = []
-        card = _make_agent_card()
-        mock_transport = _make_mock_transport()
-
-        client = A2AExperimentalClient(
-            client=mock_client,
-            agent_card=card,
-            transport=mock_transport,
-            topic="test_topic",
-        )
-        return client, mock_transport, card, consumed_events
-
-    # -- broadcast_message --------------------------------------------------
-
-    @pytest.mark.asyncio
-    async def test_broadcast_message_consumer_fires(self):
-        """broadcast_message should invoke consumers for each response."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        client, mock_transport, card, consumed = (
-            self._make_experimental_client_with_consumer()
-        )
-
-        task_result = {
-            "kind": "task",
-            "id": "task-1",
-            "contextId": "ctx-1",
-            "status": {"state": "completed"},
-        }
-        mock_resp = MagicMock()
-        mock_resp.type = "A2AResponse"
-        mock_resp.payload = json.dumps(
-            {"jsonrpc": "2.0", "id": "1", "result": task_result}
-        ).encode("utf-8")
-
-        async def one_response(*args, **kwargs):
-            yield mock_resp
-
-        mock_transport.gather_stream = one_response
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-        await client.broadcast_message(request, recipients=["agent-1"])
-
-        assert len(consumed) == 1
-        event, event_card = consumed[0]
-        # Event should be (Task, None)
-        assert isinstance(event, tuple)
-        assert event[1] is None
-        assert event_card == card
-
-    @pytest.mark.asyncio
-    async def test_broadcast_message_consumer_with_message_result(self):
-        """broadcast_message consumer should fire for Message results."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        client, mock_transport, card, consumed = (
-            self._make_experimental_client_with_consumer()
-        )
-
-        msg_result = {
-            "kind": "message",
-            "messageId": "msg-1",
-            "role": "agent",
-            "parts": [{"kind": "text", "text": "Hello back"}],
-        }
-        mock_resp = MagicMock()
-        mock_resp.type = "A2AResponse"
-        mock_resp.payload = json.dumps(
-            {"jsonrpc": "2.0", "id": "1", "result": msg_result}
-        ).encode("utf-8")
-
-        async def one_response(*args, **kwargs):
-            yield mock_resp
-
-        mock_transport.gather_stream = one_response
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-        await client.broadcast_message(request, recipients=["agent-1"])
-
-        assert len(consumed) == 1
-        event, event_card = consumed[0]
-        # Event should be a Message, not a tuple
-        assert isinstance(event, A2AMessage)
-        assert event_card == card
-
-    @pytest.mark.asyncio
-    async def test_broadcast_message_consumer_skips_errors(self):
-        """JSON-RPC error responses should not trigger consumers."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        client, mock_transport, card, consumed = (
-            self._make_experimental_client_with_consumer()
-        )
-
-        mock_resp = MagicMock()
-        mock_resp.type = "A2AResponse"
-        mock_resp.payload = json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": "1",
-                "error": {"code": -32600, "message": "Invalid Request"},
-            }
-        ).encode("utf-8")
-
-        async def one_response(*args, **kwargs):
-            yield mock_resp
-
-        mock_transport.gather_stream = one_response
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-        await client.broadcast_message(request, recipients=["agent-1"])
-
-        assert len(consumed) == 0
-
-    @pytest.mark.asyncio
-    async def test_broadcast_message_consumer_empty_stream(self):
-        """Empty broadcast stream should not trigger consumers."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        client, mock_transport, card, consumed = (
-            self._make_experimental_client_with_consumer()
-        )
-
-        async def empty_stream(*args, **kwargs):
-            return
-            yield  # pragma: no cover
-
-        mock_transport.gather_stream = empty_stream
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-        await client.broadcast_message(request, recipients=["agent-1"])
-
-        assert len(consumed) == 0
-
-    @pytest.mark.asyncio
-    async def test_broadcast_message_consumer_multiple_responses(self):
-        """N broadcast responses should produce N consumer invocations."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        client, mock_transport, card, consumed = (
-            self._make_experimental_client_with_consumer()
-        )
-
-        def _make_resp(task_id):
-            resp = MagicMock()
-            resp.type = "A2AResponse"
-            resp.payload = json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": "1",
-                    "result": {
-                        "kind": "task",
-                        "id": task_id,
-                        "contextId": "ctx-1",
-                        "status": {"state": "completed"},
-                    },
-                }
-            ).encode("utf-8")
-            return resp
-
-        async def three_responses(*args, **kwargs):
-            yield _make_resp("task-1")
-            yield _make_resp("task-2")
-            yield _make_resp("task-3")
-
-        mock_transport.gather_stream = three_responses
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-        await client.broadcast_message(request, recipients=["a1", "a2", "a3"])
-
-        assert len(consumed) == 3
-
-    # -- broadcast_message_streaming ----------------------------------------
-
-    @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_consumer_fires(self):
-        """broadcast_message_streaming should invoke consumers for each event."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendStreamingMessageRequest,
-            Task,
-            TaskStatusUpdateEvent,
-            TextPart,
-        )
-
-        client, mock_transport, card, consumed = (
-            self._make_experimental_client_with_consumer()
-        )
-
-        # Intermediate status-update
-        intermediate_resp = MagicMock()
-        intermediate_resp.type = "A2AStatusUpdate"
-        intermediate_resp.status_code = 200
-        intermediate_resp.payload = json.dumps(
-            {
-                "result": {
-                    "kind": "status-update",
-                    "taskId": "task-1",
-                    "contextId": "ctx-1",
-                    "status": {"state": "working"},
-                    "final": False,
-                }
-            }
-        ).encode("utf-8")
-
-        # Final task response
-        final_resp = MagicMock()
-        final_resp.type = "A2AResponse"
-        final_resp.status_code = 200
-        final_resp.payload = json.dumps(
-            {
-                "result": {
-                    "kind": "task",
-                    "id": "task-1",
-                    "contextId": "ctx-1",
-                    "status": {"state": "completed"},
-                }
-            }
-        ).encode("utf-8")
-
-        async def mixed_stream(*args, **kwargs):
-            yield intermediate_resp
-            yield final_resp
-
-        mock_transport.gather_stream = mixed_stream
-
-        request = SendStreamingMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-
-        results = []
-        async for event in client.broadcast_message_streaming(
-            request, recipients=["agent-1"]
-        ):
-            results.append(event)
-
-        # Both intermediate and final events should trigger consumers
-        assert len(consumed) == 2
-        # First consumed event: (task_stub, TaskStatusUpdateEvent)
-        first_event, first_card = consumed[0]
-        assert isinstance(first_event, tuple)
-        assert isinstance(first_event[1], TaskStatusUpdateEvent)
-        assert first_card == card
-        # Second consumed event: (Task, None)
-        second_event, second_card = consumed[1]
-        assert isinstance(second_event, tuple)
-        assert isinstance(second_event[0], Task)
-        assert second_event[1] is None
-
-    # -- start_groupchat ----------------------------------------------------
-
-    @pytest.mark.asyncio
-    async def test_start_groupchat_consumer_fires(self):
-        """start_groupchat should invoke consumers for each response."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        client, mock_transport, card, consumed = (
-            self._make_experimental_client_with_consumer()
-        )
-
-        def _make_raw_msg(task_id):
-            msg = MagicMock()
-            msg.payload = json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": "1",
-                    "result": {
-                        "kind": "task",
-                        "id": task_id,
-                        "contextId": "ctx-1",
-                        "status": {"state": "completed"},
-                    },
-                }
-            ).encode("utf-8")
-            return msg
-
-        mock_transport.start_conversation = AsyncMock(
-            return_value=[_make_raw_msg("task-1"), _make_raw_msg("task-2")]
-        )
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-        responses = await client.start_groupchat(
-            request, group_channel="grp", participants=["a", "b"]
-        )
-
-        assert len(responses) == 2
-        assert len(consumed) == 2
-
-    # -- start_streaming_groupchat ------------------------------------------
-
-    @pytest.mark.asyncio
-    async def test_start_streaming_groupchat_consumer_fires(self):
-        """start_streaming_groupchat should invoke consumers for each response."""
-        from a2a.types import (
-            Message as A2AMessage,
-            Part,
-            SendMessageRequest,
-            TextPart,
-        )
-
-        client, mock_transport, card, consumed = (
-            self._make_experimental_client_with_consumer()
-        )
-
-        def _make_raw_msg(task_id):
-            msg = MagicMock()
-            msg.payload = json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": "1",
-                    "result": {
-                        "kind": "task",
-                        "id": task_id,
-                        "contextId": "ctx-1",
-                        "status": {"state": "completed"},
-                    },
-                }
-            ).encode("utf-8")
-            return msg
-
-        async def streaming_conversation(*args, **kwargs):
-            yield _make_raw_msg("task-1")
-            yield _make_raw_msg("task-2")
-
-        mock_transport.start_streaming_conversation = streaming_conversation
-
-        request = SendMessageRequest(
-            id="req-1",
-            params=MessageSendParams(
-                message=A2AMessage(
-                    messageId=str(uuid4()),
-                    role="user",
-                    parts=[Part(root=TextPart(kind="text", text="Hi"))],
-                )
-            ),
-        )
-        results = []
-        async for event in client.start_streaming_groupchat(
-            request, group_channel="grp", participants=["a", "b"]
-        ):
-            results.append(event)
-
-        assert len(results) == 2
-        assert len(consumed) == 2
