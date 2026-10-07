@@ -114,11 +114,25 @@ class SLIMTransport(BaseTransport):
         raise NotImplementedError
 
     async def request(
-        self, recipient: str, message: Message, timeout: int = 6, **kwargs
+        self,
+        recipient: str,
+        message: Message,
+        timeout: int | float | None = None,
+        **kwargs,
     ) -> Message:
         """
         Send a message to a recipient and await a single response.
+
+        Uses the transport's configured message timeout unless an explicit
+        per-request timeout is provided.
         """
+        effective_timeout = (
+            self.message_timeout
+            if timeout is None
+            else datetime.timedelta(seconds=timeout)
+        )
+        timeout_seconds = effective_timeout.total_seconds()
+
         topic = self.sanitize_topic(recipient)
         remote_name = self.build_name(topic)
 
@@ -132,7 +146,7 @@ class SLIMTransport(BaseTransport):
 
         # create a point-to-point session
         point_to_point_session = await self._session_manager.point_to_point_session(
-            remote_name, timeout=datetime.timedelta(seconds=timeout)
+            remote_name, timeout=effective_timeout
         )
 
         if not message.headers:
@@ -146,11 +160,11 @@ class SLIMTransport(BaseTransport):
             )
             # Wait for reply from remote peer
             reply = await point_to_point_session.get_message_async(
-                timeout=datetime.timedelta(seconds=timeout)
+                timeout=effective_timeout
             )
             logger.debug(f"Received message back from {remote_name}")
         except asyncio.TimeoutError:
-            logger.warning(f"Request timed out after {timeout} seconds")
+            logger.warning(f"Request timed out after {timeout_seconds:g} seconds")
             return None
         except Exception:
             logger.exception("Failed to publish message in p2p session")
