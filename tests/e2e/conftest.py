@@ -202,9 +202,7 @@ def _probe_slimrpc(proc, log_path, endpoint, agent_name, secret, streaming, time
                 try:
                     client_config = SRPCClientConfig(
                         supported_protocol_bindings=["slimrpc"],
-                        slimrpc_channel_factory=slimrpc_channel_factory(
-                            _app, conn_id
-                        ),
+                        slimrpc_channel_factory=slimrpc_channel_factory(_app, conn_id),
                     )
                     client_factory = ClientFactory(client_config)
                     client_factory.register("slimrpc", SRPCTransport.create)  # type: ignore[arg-type]
