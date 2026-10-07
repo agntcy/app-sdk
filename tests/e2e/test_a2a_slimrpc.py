@@ -1,8 +1,6 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
-
 import pytest
 from a2a.client import ClientFactory, minimal_agent_card
 from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
@@ -75,7 +73,6 @@ async def test_client(run_a2a_slimrpc_server):
 
     # 1. Spawn SlimRPC server
     run_a2a_slimrpc_server(endpoint, name=agent_name)
-    await asyncio.sleep(2)
 
     # 2. Setup SLIM client connection
     service, slim_local_app, local_name, conn_id = await setup_slim_client(
@@ -127,7 +124,6 @@ async def test_client_factory(run_a2a_slimrpc_server):
 
     # 1. Spawn SlimRPC server
     run_a2a_slimrpc_server(endpoint, name=agent_name)
-    await asyncio.sleep(2)
 
     # 2. Setup SLIM client connection (low-level, needed for the channel factory)
     _service, slim_local_app, _local_name, conn_id = await setup_slim_client(
@@ -184,7 +180,6 @@ async def test_client_factory_deferred(run_a2a_slimrpc_server):
 
     # 1. Spawn SlimRPC server
     run_a2a_slimrpc_server(endpoint, name=agent_name)
-    await asyncio.sleep(2)
 
     # 2. Build SDK ClientConfig with deferred SlimRpcConfig — no manual
     #    setup_slim_client call needed.
@@ -241,7 +236,6 @@ async def test_task_status_events(run_a2a_slimrpc_server):
 
     # 1. Spawn SlimRPC server with streaming executor
     run_a2a_slimrpc_server(endpoint, name=agent_name, streaming=True)
-    await asyncio.sleep(2)
 
     # 2. Build SDK ClientConfig with streaming enabled + deferred SlimRpcConfig
     config = A2AClientConfig(
@@ -343,7 +337,6 @@ async def test_interceptor(run_a2a_slimrpc_server):
     print(f"\n--- test_interceptor | SlimRPC | {endpoint} ---")
 
     run_a2a_slimrpc_server(endpoint, name=agent_name)
-    await asyncio.sleep(2)
 
     interceptor = _RecordingInterceptor()
 

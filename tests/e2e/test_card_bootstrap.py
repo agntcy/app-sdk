@@ -53,13 +53,11 @@ async def test_client(run_card_bootstrap_server, transport):
     endpoint = CARD_BOOTSTRAP_TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_client (card_bootstrap) | {transport} | {endpoint} ---")
 
-    if transport == "SLIMRPC":
-        # add_a2a_card() now starts slimrpc on a dedicated SLIM connection,
-        # so it coexists with slimpatterns on the same server process.
-        run_card_bootstrap_server(transport, endpoint)
-        await asyncio.sleep(2)
-    else:
-        run_card_bootstrap_server(transport, endpoint)
+    # add_a2a_card() starts slimrpc on a dedicated SLIM connection, so it
+    # coexists with slimpatterns on the same server process.  The SlimRPC
+    # fixture returns only after a send_message probe succeeds.
+    run_card_bootstrap_server(transport, endpoint)
+    if transport != "SLIMRPC":
         await asyncio.sleep(1)
 
     factory = AgntcyFactory(enable_tracing=True)
