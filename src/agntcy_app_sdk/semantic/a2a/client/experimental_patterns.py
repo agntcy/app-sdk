@@ -336,14 +336,15 @@ class A2AExperimentalClient(Client):
         )
         try:
             broadcast_responses: List[SendMessageResponse] = []
+            finals_received = 0
             async for raw_resp in stream:
-                try:
-                    # Only collect final A2AResponse messages; skip
-                    # intermediate A2AStatusUpdate messages that streaming
-                    # agents emit.
-                    if raw_resp.type == "A2AStatusUpdate":
-                        continue
+                # Skip intermediate A2AStatusUpdate messages that streaming
+                # agents emit; every other message (including an error
+                # reply) is one recipient's final response.
+                if raw_resp.type == "A2AStatusUpdate":
+                    continue
 
+                try:
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
                     smr = self._parse_payload(
                         resp, raw_resp.status_code, SendMessageResponse()
@@ -356,12 +357,15 @@ class A2AExperimentalClient(Client):
                         context=context,
                     )
                     broadcast_responses.append(smr)
-
-                    if len(broadcast_responses) >= expected:
-                        break
                 except Exception as e:
+                    # A failed final (e.g. a JSON-RPC error reply) is skipped
+                    # but still counts, otherwise we would wait out the full
+                    # timeout for a reply that has already arrived.
                     logger.error(f"Error decoding JSON response: {e}")
-                    continue
+
+                finals_received += 1
+                if finals_received >= expected:
+                    break
 
             return broadcast_responses
         except (TimeoutError, asyncio.CancelledError):
@@ -421,6 +425,9 @@ class A2AExperimentalClient(Client):
         try:
             finals_received = 0
             async for raw_resp in stream:
+                # Only A2AStatusUpdate messages are intermediate; every other
+                # message (including an error reply) is one recipient's final.
+                is_final = raw_resp.type != "A2AStatusUpdate"
                 try:
                     logger.debug(raw_resp)
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
@@ -436,17 +443,16 @@ class A2AExperimentalClient(Client):
                         context=context,
                     )
                     yield event
+                except Exception as e:
+                    # A failed final (e.g. a JSON-RPC error reply) is skipped
+                    # but still counts, otherwise we would wait out the full
+                    # timeout for a reply that has already arrived.
+                    logger.error(f"Error decoding JSON response: {e}")
 
-                    # Intermediates don't count toward finals.
-                    if raw_resp.type == "A2AStatusUpdate":
-                        continue
-
+                if is_final:
                     finals_received += 1
                     if finals_received >= expected_finals:
                         break
-                except Exception as e:
-                    logger.error(f"Error decoding JSON response: {e}")
-                    continue
         except (TimeoutError, asyncio.CancelledError):
             raise
         except Exception as e:

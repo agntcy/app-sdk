@@ -334,6 +334,118 @@ class TestInterfaceDeclaration:
 
 
 # ---------------------------------------------------------------------------
+# Default topic must come from the handler's own pub/sub interface
+# ---------------------------------------------------------------------------
+
+_RPC_FIRST_CARD_INTERFACES = [
+    AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/rpc_agent"),
+    AgentInterface(protocol_binding="slimpatterns", url="slim://org/ns/pubsub_agent"),
+]
+
+
+class TestDefaultTopicSelection:
+    """``slimrpc`` also uses ``slim://`` URLs, so a card whose first interface
+    is another transport must never supply the topic for a pub/sub handler
+    (it would collide with the RPC server's name)."""
+
+    def test_handler_ignores_leading_slimrpc_interface(self):
+        card = _card(list(_RPC_FIRST_CARD_INTERFACES))
+
+        handler = A2AExperimentalServerHandler(
+            _config(card), transport=_mock_transport("SLIM")
+        )
+
+        assert handler._topic == "org/ns/pubsub_agent"
+
+    def test_handler_without_pubsub_interface_does_not_use_slimrpc_identity(self):
+        card = _card(
+            [AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/rpc_agent")]
+        )
+
+        handler = A2AExperimentalServerHandler(
+            _config(card), transport=_mock_transport("SLIM")
+        )
+
+        assert handler._topic == "Hello_World_Agent_1.0.0"
+
+    def test_handler_picks_interface_matching_its_own_transport(self):
+        card = _card(
+            [
+                AgentInterface(protocol_binding="natspatterns", url="nats://nats_t"),
+                AgentInterface(protocol_binding="slimpatterns", url="slim://slim_t"),
+            ]
+        )
+
+        slim = A2AExperimentalServerHandler(
+            _config(card), transport=_mock_transport("SLIM")
+        )
+        nats = A2AExperimentalServerHandler(
+            _config(card), transport=_mock_transport("NATS")
+        )
+
+        assert slim._topic == "slim_t"
+        assert nats._topic == "nats_t"
+
+    def test_handler_without_transport_uses_preferred_interface(self):
+        """Binding unknown without a transport: keep the preferred-interface lookup."""
+        card = _card(
+            [AgentInterface(protocol_binding="slimpatterns", url="slim://first")]
+        )
+
+        handler = A2AExperimentalServerHandler(_config(card))
+
+        assert handler._topic == "first"
+
+    def test_handler_explicit_topic_is_not_overridden(self):
+        card = _card(list(_RPC_FIRST_CARD_INTERFACES))
+
+        handler = A2AExperimentalServerHandler(
+            _config(card), transport=_mock_transport("SLIM"), topic="explicit"
+        )
+
+        assert handler._topic == "explicit"
+
+    def test_create_transport_uri_ignores_leading_slimrpc_interface(self):
+        card = _card(list(_RPC_FIRST_CARD_INTERFACES))
+
+        uri = A2AExperimentalServer.create_transport_uri(card, "SLIM")
+
+        assert uri == "slim://org/ns/pubsub_agent"
+
+    def test_create_transport_uri_without_pubsub_interface_falls_back_to_name(self):
+        card = _card(
+            [AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/rpc_agent")]
+        )
+
+        uri = A2AExperimentalServer.create_transport_uri(card, "SLIM")
+
+        assert uri == "slim://Hello_World_Agent_1.0.0"
+
+    def test_create_transport_uri_picks_interface_matching_transport(self):
+        card = _card(
+            [
+                AgentInterface(protocol_binding="natspatterns", url="nats://nats_t"),
+                AgentInterface(protocol_binding="slimpatterns", url="slim://slim_t"),
+            ]
+        )
+
+        assert (
+            A2AExperimentalServer.create_transport_uri(card, "SLIM") == "slim://slim_t"
+        )
+        assert (
+            A2AExperimentalServer.create_transport_uri(card, "NATS") == "nats://nats_t"
+        )
+
+    def test_create_client_card_ignores_leading_slimrpc_interface(self):
+        card = _card(list(_RPC_FIRST_CARD_INTERFACES))
+
+        client_card = A2AExperimentalServer.create_client_card(card, "SLIM")
+
+        assert preferred_transport(client_card) == "slimpatterns"
+        assert client_card.supported_interfaces[0].url == "slim://org/ns/pubsub_agent"
+
+
+# ---------------------------------------------------------------------------
 # Patterns bridge over an in-memory loopback transport
 # ---------------------------------------------------------------------------
 

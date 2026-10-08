@@ -9,6 +9,8 @@ Written against the a2a-sdk 1.x API: protobuf types, ``supported_interfaces``
 ``StreamResponse`` events.
 """
 
+import asyncio
+import dataclasses
 import json
 import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -155,6 +157,30 @@ def _async_gen(*items):
     async def _gen(*_args, **_kwargs):
         for item in items:
             yield item
+
+    return _gen
+
+
+# Error reply as a failing recipient's server handler would send it.
+_RPC_ERROR = {"code": -32603, "message": "boom"}
+
+# Upper bound for calls that must return promptly.  Generous so slow CI does
+# not flake, yet far below the 60s default transport timeout a hang would hit.
+_HANG_GUARD_S = 5.0
+
+
+def _hanging_gen(*items):
+    """Like :func:`_async_gen`, but the stream never ends after *items*.
+
+    This mimics a transport still waiting for more replies until its timeout
+    expires.  A client that fails to count an error reply as a final then
+    blocks here, which the tests turn into a failure via ``asyncio.wait_for``.
+    """
+
+    async def _gen(*_args, **_kwargs):
+        for item in items:
+            yield item
+        await asyncio.Event().wait()
 
     return _gen
 
@@ -324,6 +350,94 @@ class TestClientConfig:
             warnings.simplefilter("error")
             config = ClientConfig(slim_transport=_make_mock_transport())
         assert config.supported_transports == config.supported_protocol_bindings
+
+    def test_replace_with_deprecated_transports_overrides_populated_config(self):
+        """replace(..., supported_transports=...) must win over existing bindings."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            base = ClientConfig(slim_transport=_make_mock_transport())
+        assert base.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+
+        with pytest.warns(DeprecationWarning, match="supported_transports"):
+            replaced = dataclasses.replace(base, supported_transports=["jsonrpc"])
+
+        assert replaced.supported_protocol_bindings == ["JSONRPC"]
+        assert replaced.supported_transports == ["JSONRPC"]
+
+    def test_both_passed_with_different_values_bindings_win(self):
+        """A fresh config given both fields: the new field wins, with a warning."""
+        with pytest.warns(DeprecationWarning, match="supported_transports is ignored"):
+            config = ClientConfig(
+                supported_protocol_bindings=["jsonrpc", "slim"],
+                supported_transports=["custom_transport"],
+            )
+        assert config.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+        assert config.supported_transports == config.supported_protocol_bindings
+
+    def test_both_passed_with_equal_values_only_deprecation_warning(self):
+        """Equal after normalisation (case/alias): no 'ignored' message."""
+        with pytest.warns(DeprecationWarning, match="deprecated") as record:
+            config = ClientConfig(
+                supported_protocol_bindings=["JSONRPC", "slimpatterns"],
+                supported_transports=["jsonrpc", "slim"],
+            )
+        assert not any("ignored" in str(w.message) for w in record)
+        assert config.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+
+    def test_replace_with_both_fields_is_both_passed(self):
+        """Both overridden in replace(): treated as a fresh 'both passed'."""
+        base = ClientConfig(slim_transport=_make_mock_transport())
+        with pytest.warns(DeprecationWarning, match="supported_transports is ignored"):
+            replaced = dataclasses.replace(
+                base,
+                supported_protocol_bindings=["custom_a"],
+                supported_transports=["custom_b"],
+            )
+        assert replaced.supported_protocol_bindings == ["custom_a"]
+
+    def test_resolved_bindings_copied_with_list_count_as_user_passed(self):
+        """Copying another config's bindings drops the marker -> 'both passed'."""
+        other = ClientConfig(slim_transport=_make_mock_transport())
+        with pytest.warns(DeprecationWarning, match="supported_transports is ignored"):
+            config = ClientConfig(
+                supported_protocol_bindings=list(other.supported_protocol_bindings),
+                supported_transports=["custom_transport"],
+            )
+        assert config.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+
+    def test_resolved_bindings_passed_as_same_object_behave_like_replace(self):
+        """Documented limitation: the same resolved object is treated as replace()."""
+        other = ClientConfig(slim_transport=_make_mock_transport())
+        with pytest.warns(DeprecationWarning, match="deprecated"):
+            config = ClientConfig(
+                supported_protocol_bindings=other.supported_protocol_bindings,
+                supported_transports=["custom_transport"],
+            )
+        assert config.supported_protocol_bindings == ["custom_transport"]
+
+    def test_replace_with_bindings_not_overridden_by_stale_mirror(self):
+        """The mirror copied by replace() must not clobber new bindings."""
+        base = ClientConfig(slim_transport=_make_mock_transport())
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            replaced = dataclasses.replace(
+                base, supported_protocol_bindings=["custom_transport"]
+            )
+
+        assert replaced.supported_protocol_bindings == ["custom_transport"]
+        assert replaced.supported_transports == ["custom_transport"]
+
+    def test_replace_unrelated_field_keeps_bindings_without_warning(self):
+        base = ClientConfig(slim_transport=_make_mock_transport())
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            replaced = dataclasses.replace(base, nats_transport=_make_mock_transport())
+
+        # Bindings were already resolved on `base`, so they are kept as-is.
+        assert replaced.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+        assert replaced.supported_transports == replaced.supported_protocol_bindings
 
 
 # ---------------------------------------------------------------------------
@@ -797,6 +911,198 @@ class TestA2AExperimentalClientOperations:
 
         assert len(responses) == 1
         assert "Forbidden" in responses[0].message.parts[0].text
+
+    # -- error replies must count as finals (regression: used to hang) -----
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_error_reply_counts_as_final(self):
+        """An error reply is skipped but must not make the call wait for the
+        transport timeout (the transport here never ends on its own)."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(_message_result("ok")),
+                _rpc_response(error=_RPC_ERROR),
+            )
+        )
+
+        responses = await asyncio.wait_for(
+            experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
+            timeout=_HANG_GUARD_S,
+        )
+
+        assert len(responses) == 1
+        assert responses[0].message.parts[0].text == "ok"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_all_error_replies_return_empty(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(error=_RPC_ERROR), _rpc_response(error=_RPC_ERROR)
+            )
+        )
+
+        responses = await asyncio.wait_for(
+            experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
+            timeout=_HANG_GUARD_S,
+        )
+
+        assert responses == []
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_undecodable_reply_counts_as_final(self):
+        experimental, mock_transport, _ = _make_experimental()
+        garbage = MagicMock()
+        garbage.payload = b"not json"
+        garbage.status_code = 200
+        garbage.type = "A2AResponse"
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(_rpc_response(_message_result("ok")), garbage)
+        )
+
+        responses = await asyncio.wait_for(
+            experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
+            timeout=_HANG_GUARD_S,
+        )
+
+        assert len(responses) == 1
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_status_updates_do_not_count_as_finals(self):
+        """Intermediates must not end the call early, even with errors around."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(_status_result(), type_="A2AStatusUpdate"),
+                _rpc_response(error=_RPC_ERROR),
+                _rpc_response(_status_result(), type_="A2AStatusUpdate"),
+                _rpc_response(_message_result("late")),
+            )
+        )
+
+        responses = await asyncio.wait_for(
+            experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
+            timeout=_HANG_GUARD_S,
+        )
+
+        assert [r.message.parts[0].text for r in responses] == ["late"]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_error_reply_counts_as_final(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(_message_result("ok")),
+                _rpc_response(error=_RPC_ERROR),
+            )
+        )
+
+        async def _collect():
+            return [
+                e
+                async for e in experimental.broadcast_message_streaming(
+                    _user_request(), recipients=["a", "b"]
+                )
+            ]
+
+        events = await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S)
+
+        assert [get_stream_response_text(e) for e in events] == ["ok"]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_error_reply_first(self):
+        """The failing recipient may reply before the healthy one."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(error=_RPC_ERROR),
+                _rpc_response(_message_result("ok")),
+            )
+        )
+
+        async def _collect():
+            return [
+                e
+                async for e in experimental.broadcast_message_streaming(
+                    _user_request(), recipients=["a", "b"]
+                )
+            ]
+
+        events = await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S)
+
+        assert [get_stream_response_text(e) for e in events] == ["ok"]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_all_error_replies_end_stream(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(error=_RPC_ERROR), _rpc_response(error=_RPC_ERROR)
+            )
+        )
+
+        async def _collect():
+            return [
+                e
+                async for e in experimental.broadcast_message_streaming(
+                    _user_request(), recipients=["a", "b"]
+                )
+            ]
+
+        assert await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S) == []
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_status_updates_not_counted(self):
+        """Intermediates are yielded but never end the stream, even after an error."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(
+                    _status_result("TASK_STATE_WORKING", "w1"), type_="A2AStatusUpdate"
+                ),
+                _rpc_response(error=_RPC_ERROR),
+                _rpc_response(
+                    _status_result("TASK_STATE_WORKING", "w2"), type_="A2AStatusUpdate"
+                ),
+                _rpc_response(_message_result("late")),
+            )
+        )
+
+        async def _collect():
+            return [
+                e
+                async for e in experimental.broadcast_message_streaming(
+                    _user_request(), recipients=["a", "b"]
+                )
+            ]
+
+        events = await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S)
+
+        assert [get_stream_response_text(e) for e in events] == ["w1", "w2", "late"]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_honors_message_limit_with_errors(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(error=_RPC_ERROR),
+                _rpc_response(_message_result("one")),
+                _rpc_response(_message_result("two")),
+            )
+        )
+
+        async def _collect():
+            return [
+                e
+                async for e in experimental.broadcast_message_streaming(
+                    _user_request(), recipients=["a", "b", "c"], message_limit=2
+                )
+            ]
+
+        events = await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S)
+
+        assert [get_stream_response_text(e) for e in events] == ["one"]
 
     @pytest.mark.asyncio
     async def test_start_groupchat(self):

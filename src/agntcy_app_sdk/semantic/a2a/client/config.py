@@ -123,6 +123,17 @@ class NatsTransportConfig:
 # ---------------------------------------------------------------------------
 
 
+class _ResolvedBindings(list):
+    """Marker for binding lists resolved by ``ClientConfig.__post_init__``.
+
+    ``dataclasses.replace`` copies attributes by reference, so this lets
+    ``__post_init__`` tell values it resolved itself (on both
+    ``supported_protocol_bindings`` and the deprecated
+    ``supported_transports`` mirror) from values the caller passed.
+    Copying the list (``list(...)``, slicing, ``.copy()``) drops the marker.
+    """
+
+
 @dataclasses.dataclass
 class ClientConfig(A2AClientConfig):
     """Extended A2A client config with deferred and eager transport fields.
@@ -175,10 +186,28 @@ class ClientConfig(A2AClientConfig):
     supported_transports: list[str] | None = None
     """**Deprecated** — use ``supported_protocol_bindings``.
 
-    a2a-sdk 1.x renamed this field.  A value passed here is copied into
-    ``supported_protocol_bindings`` (with a ``DeprecationWarning``); when
-    nothing was passed it mirrors the resolved bindings for backward
-    compatibility.
+    a2a-sdk 1.x renamed this field.  Precedence when it is passed:
+
+    * Alone: copied into ``supported_protocol_bindings`` (with a
+      ``DeprecationWarning``).
+    * Together with *bindings resolved by another config* (e.g.
+      ``dataclasses.replace(cfg, supported_transports=[...])``): it
+      overrides them, so replacing it on a populated config works.
+    * Together with a ``supported_protocol_bindings`` list the caller built
+      themselves: ``supported_protocol_bindings`` wins and, if the values
+      differ, the warning says ``supported_transports`` was ignored.
+
+    When nothing was passed it mirrors the resolved bindings for backward
+    compatibility; that mirror is ignored on re-construction, so
+    ``dataclasses.replace(cfg, supported_protocol_bindings=[...])`` is never
+    overridden by a stale copy.
+
+    .. note::
+       A resolved list handed over *as the same object* (e.g.
+       ``ClientConfig(supported_protocol_bindings=other.supported_protocol_bindings,
+       supported_transports=[...])``) is indistinguishable from a
+       ``replace()`` and is treated like one.  Copy it with ``list(...)``
+       to get the "both passed" semantics above.
     """
 
     # -- Auto-derive supported_protocol_bindings -----------------------------
@@ -190,14 +219,29 @@ class ClientConfig(A2AClientConfig):
         ``supported_protocol_bindings`` (or the deprecated
         ``supported_transports``).  JSONRPC is always included as a fallback.
         """
-        if self.supported_transports and not self.supported_protocol_bindings:
-            warnings.warn(
+        # A plain (non-marker) supported_transports was passed by the caller.
+        if self.supported_transports and not isinstance(
+            self.supported_transports, _ResolvedBindings
+        ):
+            message = (
                 "ClientConfig.supported_transports is deprecated; use "
-                "supported_protocol_bindings (renamed in a2a-sdk 1.x).",
-                DeprecationWarning,
-                stacklevel=3,
+                "supported_protocol_bindings (renamed in a2a-sdk 1.x)."
             )
-            self.supported_protocol_bindings = list(self.supported_transports)
+            user_bindings = self.supported_protocol_bindings
+            if user_bindings and not isinstance(user_bindings, _ResolvedBindings):
+                # Both given explicitly: the new field wins.
+                if [wire_binding(b) for b in user_bindings] != [
+                    wire_binding(t) for t in self.supported_transports
+                ]:
+                    message += (
+                        " Both were given with different values; "
+                        "supported_transports is ignored."
+                    )
+            else:
+                # Alone, or overriding bindings resolved by another config
+                # (e.g. dataclasses.replace on a populated config).
+                self.supported_protocol_bindings = list(self.supported_transports)
+            warnings.warn(message, DeprecationWarning, stacklevel=3)
 
         if not self.supported_protocol_bindings:
             bindings: list[str] = ["JSONRPC"]
@@ -216,5 +260,9 @@ class ClientConfig(A2AClientConfig):
                 wire_binding(b) for b in self.supported_protocol_bindings
             ]
 
-        # Keep the deprecated mirror in sync for code that still reads it.
-        self.supported_transports = list(self.supported_protocol_bindings)
+        # Mark the result as resolved (see _ResolvedBindings) and keep the
+        # deprecated mirror in sync for code that still reads it.
+        self.supported_protocol_bindings = _ResolvedBindings(
+            self.supported_protocol_bindings
+        )
+        self.supported_transports = _ResolvedBindings(self.supported_protocol_bindings)

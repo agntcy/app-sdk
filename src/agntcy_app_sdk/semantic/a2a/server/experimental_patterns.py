@@ -198,9 +198,15 @@ class A2AExperimentalServer:
                 f"Unsupported transport type {transport_type!r}. "
                 f"Supported: {list(_TRANSPORT_NAME_MAP)}"
             )
-        _binding, scheme = entry
+        binding, scheme = entry
         if topic is None:
-            topic = get_agent_identifier(agent_card) or _default_topic(agent_card)
+            # Scope the lookup to this transport's pub/sub binding.  Without
+            # it the card's *first* interface is used whatever its transport,
+            # so e.g. a leading ``slimrpc`` interface would leak its RPC
+            # identity in as the pub/sub topic.
+            topic = get_agent_identifier(agent_card, binding) or _default_topic(
+                agent_card
+            )
         return f"{scheme}://{topic}"
 
     @staticmethod
@@ -632,7 +638,18 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
         if topic is None or topic == "":
             from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
 
-            topic = get_agent_identifier(server.agent_card) or _default_topic(
+            # Scope the lookup to this handler's pub/sub binding so a card
+            # whose first interface is another transport (e.g. ``slimrpc``,
+            # which also uses ``slim://`` URLs) cannot supply the topic.
+            # Without a transport the binding is unknown; fall back to the
+            # card's preferred interface.
+            entry = (
+                _TRANSPORT_NAME_MAP.get(transport.type())
+                if transport is not None
+                else None
+            )
+            binding = entry[0] if entry else None
+            topic = get_agent_identifier(server.agent_card, binding) or _default_topic(
                 server.agent_card
             )
 

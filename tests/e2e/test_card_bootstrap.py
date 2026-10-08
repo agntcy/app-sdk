@@ -10,7 +10,6 @@ transports.
 """
 
 import asyncio
-import os
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +26,10 @@ from tests.e2e.conftest import (
     make_agent_card,
     make_send_request,
 )
+from tests.server.a2a_card_bootstrap_server import (
+    get_slim_shared_secret,
+    slim_endpoint,
+)
 
 pytest_plugins = "pytest_asyncio"
 
@@ -35,7 +38,7 @@ pytest_plugins = "pytest_asyncio"
 # MCP, etc.), so we extend it here.
 CARD_BOOTSTRAP_TRANSPORT_CONFIGS = {
     **TRANSPORT_CONFIGS,
-    "SLIMRPC": "http://localhost:46357",
+    "SLIMRPC": slim_endpoint(),
 }
 
 
@@ -71,19 +74,15 @@ async def test_client(run_card_bootstrap_server, transport):
     elif transport == "SLIMRPC":
         session_start()
 
-        # The add_a2a_card() server reads SLIM_SHARED_SECRET from the
-        # environment — match that here so client and server agree.
-        slim_secret = os.environ.get(
-            "SLIM_SHARED_SECRET",
-            "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS",
-        )
+        # The add_a2a_card() server resolves its secret and endpoint the same
+        # way, so client and server agree.
         config = ClientConfig(
             slimrpc_config=SlimRpcConfig(
                 namespace="default",
                 group="default",
                 name="test_client",
-                slim_url="http://localhost:46357",
-                secret=slim_secret,
+                slim_url=slim_endpoint(),
+                secret=get_slim_shared_secret(),
             ),
         )
         card = make_agent_card("default/default/Hello_World_Agent_1.0.0", "SLIMRPC")
