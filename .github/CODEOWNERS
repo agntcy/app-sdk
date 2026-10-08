@@ -13,4 +13,4 @@
 # the following users/teams will be requested for
 # review when someone opens a pull request.
 # Once the repo reviewers group is created, this should be replaced by that group to have an interface between maintainers and the code owner setup.
-* @delthazor, @jparello, @mihaialexandrescu, @misi-bp, @pregnor
+* @delthazor @jparello @mihaialexandrescu @misi-bp @pregnor
