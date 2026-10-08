@@ -29,12 +29,11 @@ The SDK decouples _protocols_ (the semantic layer — how agents talk) from _tra
                         v                 v                      v
               A2ASRPCServerHandler   A2AJsonRpc           A2AExperimental
               (A2ASlimRpcServer-    ServerHandler         ServerHandler
-               Config)             (A2AStarlette          (A2AStarlette
-                   │                 Application,           Application
+               Config)             (A2AServerConfig,      (A2AServerConfig
                    │                 no transport)         + transport)
                    │                      │                     │
                    v                      v                     v
-             slim_bindings           Uvicorn/ASGI          JSONRPCHandler
+             slim_bindings           Uvicorn/ASGI          RequestHandler
              .Server (RPC)          (HTTP JSONRPC)        (direct dispatch)
                    │                      │                     │
                    v                      v                     v
@@ -47,8 +46,10 @@ The SDK decouples _protocols_ (the semantic layer — how agents talk) from _tra
 | Target type               | Transport provided? | Handler selected                                                                             |
 | ------------------------- | ------------------- | -------------------------------------------------------------------------------------------- |
 | `A2ASlimRpcServerConfig`  | _(ignored)_         | `A2ASRPCServerHandler` — native SLIM RPC via `slim_bindings.Server`                          |
-| `A2AStarletteApplication` | No                  | `A2AJsonRpcServerHandler` — serves over HTTP via Uvicorn                                     |
-| `A2AStarletteApplication` | Yes                 | `A2AExperimentalServerHandler` — routes transport messages directly through `JSONRPCHandler` |
+| `A2AServerConfig`         | No                  | `A2AJsonRpcServerHandler` — serves over HTTP via Uvicorn                                     |
+| `A2AServerConfig`         | Yes                 | `A2AExperimentalServerHandler` — routes transport messages directly through the `RequestHandler` |
+
+> **a2a-sdk 1.x:** the upstream `A2AStarletteApplication` was removed. `A2AServerConfig(agent_card, request_handler)` is its replacement: a plain description of what to serve that the SDK exposes over HTTP JSON-RPC, SLIM patterns, or NATS patterns. `A2AStarletteApplication` remains as a **deprecated** shim that emits a `DeprecationWarning`; see the [CHANGELOG](../CHANGELOG.md#unreleased) for the full migration notes.
 
 The following table summarizes current A2A transport support:
 
@@ -92,7 +93,7 @@ SlimRPC is the recommended path for agents communicating over SLIM. It uses the 
 ```python
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.utils import new_agent_text_message
+from a2a.helpers import new_text_message
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -118,13 +119,11 @@ skill = AgentSkill(
 agent_card = AgentCard(
     name="Weather Agent",
     description="An agent that provides weather reports",
-    url="",
     version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
+    default_input_modes=["text"],
+    default_output_modes=["text"],
     capabilities=AgentCapabilities(streaming=True),
     skills=[skill],
-    supportsAuthenticatedExtendedCard=False,
 )
 
 """
@@ -146,7 +145,7 @@ class WeatherAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         result = await self.agent.invoke()
-        await event_queue.enqueue_event(new_agent_text_message(result))
+        await event_queue.enqueue_event(new_text_message(result))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("cancel not supported")
@@ -158,9 +157,11 @@ Create an A2ASlimRpcServerConfig and serve via AppSession.
 async def main():
     factory = AgntcyFactory()
 
+    # a2a-sdk 1.x: the handler needs the card at construction time
     request_handler = DefaultRequestHandler(
         agent_executor=WeatherAgentExecutor(),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
     srpc_config = A2ASlimRpcServerConfig(
@@ -189,7 +190,8 @@ The client uses the SDK's `ClientConfig` to declare which transports it supports
 
 ```python
 from a2a.client import minimal_agent_card
-from a2a.types import Message, Part, Role, TextPart
+from a2a.helpers import get_stream_response_text, new_text_message
+from a2a.types import Role, SendMessageRequest
 from slima2a import setup_slim_client
 from slima2a.client_transport import slimrpc_channel_factory
 
@@ -222,17 +224,17 @@ async def main():
     card = minimal_agent_card("default/default/weather-agent", ["slimrpc"])
     client = await factory.a2a(config).create(card)
 
-    # 4. Send a message
-    request = Message(
-        role=Role.user,
-        message_id="msg-001",
-        parts=[Part(root=TextPart(text="Hello, Weather Agent, how is the weather?"))],
+    # 4. Send a message. Events are `StreamResponse` objects carrying a
+    #    message, a task, or a status/artifact update.
+    request = SendMessageRequest(
+        message=new_text_message(
+            "Hello, Weather Agent, how is the weather?", role=Role.ROLE_USER
+        )
     )
-    async for event in client.send_message(request=request):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    print(part.root.text)
+    async for event in client.send_message(request):
+        text = get_stream_response_text(event)
+        if text:
+            print(text)
 
 if __name__ == "__main__":
     import asyncio
@@ -242,7 +244,7 @@ if __name__ == "__main__":
 A few notes:
 
 - **Server:** `A2ASlimRpcServerConfig` bundles the agent card, request handler, and SLIM connection config into a single object — the handler auto-detection in `session.add(srpc_config).build()` selects `A2ASRPCServerHandler` automatically. SlimRPC manages its own transport internally, so you do **not** call `.with_transport()`.
-- **Client:** The SDK's `ClientConfig` declares all transports the client is capable of using. The `slimrpc_channel_factory` field enables slimrpc; `supported_transports` is auto-derived in `__post_init__` from whichever fields are populated. When `factory.a2a(config).create(card)` is called, the factory negotiates the best transport match between the config and the agent card.
+- **Client:** The SDK's `ClientConfig` declares all transports the client is capable of using. The `slimrpc_channel_factory` field enables slimrpc; `supported_protocol_bindings` is auto-derived in `__post_init__` from whichever fields are populated (the old `supported_transports` field is **deprecated** and still accepted). When `factory.a2a(config).create(card)` is called, the factory negotiates the best transport match between the config and the agent card.
 - **Multi-transport:** A single `ClientConfig` can hold slimrpc, slimpatterns, natspatterns, and JSONRPC configurations simultaneously. The factory picks the best match at connect time, so the same client config can talk to agents on different transports.
 
 ### Running
@@ -270,7 +272,7 @@ uv run python weather_client_srpc.py
 
 ## Example 2 — Card-Driven Multi-Transport Bootstrap (Recommended)
 
-The **card-driven approach** is the recommended way to serve an A2A agent over multiple transports. Instead of manually creating transports and wiring builder chains, you declare all available transports in the agent card's `additional_interfaces` and let `add_a2a_card()` handle everything automatically.
+The **card-driven approach** is the recommended way to serve an A2A agent over multiple transports. Instead of manually creating transports and wiring builder chains, you declare all available transports in the agent card's `supported_interfaces` and let `add_a2a_card()` handle everything automatically.
 
 This approach:
 
@@ -284,7 +286,7 @@ This approach:
 ```python
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.utils import new_agent_text_message
+from a2a.helpers import new_text_message
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -308,28 +310,26 @@ skill = AgentSkill(
     examples=["What's the weather like?", "Give me a weather report"],
 )
 
-# The card declares ALL available transports in additional_interfaces.
+# The card declares ALL available transports in supported_interfaces; the
+# list order is the server's preference (first entry = preferred transport).
 # add_a2a_card() reads these and creates the appropriate transports.
 name = "default/default/Weather_Agent_1.0.0"
 
 agent_card = AgentCard(
     name="Weather Agent",
     description="An agent that provides weather reports",
-    url="",
     version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
+    default_input_modes=["text"],
+    default_output_modes=["text"],
     capabilities=AgentCapabilities(streaming=True),
     skills=[skill],
-    supportsAuthenticatedExtendedCard=False,
-    preferredTransport=InterfaceTransport.SLIM_PATTERNS,
-    additional_interfaces=[
+    supported_interfaces=[
         AgentInterface(
-            transport=InterfaceTransport.SLIM_PATTERNS,
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
             url=f"slim://localhost:46357/{name}",
         ),
         AgentInterface(
-            transport=InterfaceTransport.NATS_PATTERNS,
+            protocol_binding=InterfaceTransport.NATS_PATTERNS,
             url=f"nats://localhost:4222/{name}",
         ),
     ],
@@ -354,7 +354,7 @@ class WeatherAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         result = await self.agent.invoke()
-        await event_queue.enqueue_event(new_agent_text_message(result))
+        await event_queue.enqueue_event(new_text_message(result))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("cancel not supported")
@@ -369,6 +369,7 @@ async def main():
     request_handler = DefaultRequestHandler(
         agent_executor=WeatherAgentExecutor(),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
     session = factory.create_app_session(max_sessions=10)
@@ -391,20 +392,17 @@ if __name__ == "__main__":
 
 ### Client: `weather_client_card.py`
 
-The client is unchanged — `add_a2a_card()` is server-side only. Clients still use `factory.a2a(config).create(card)` with an agent card that has matching `additional_interfaces` for topic derivation.
+The client is unchanged — `add_a2a_card()` is server-side only. Clients still use `factory.a2a(config).create(card)` with an agent card that has matching `supported_interfaces` for topic derivation.
 
 ```python
+from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
     AgentInterface,
     AgentSkill,
-    Message,
-    MessageSendParams,
-    Part,
     Role,
     SendMessageRequest,
-    TextPart,
 )
 
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -415,20 +413,18 @@ from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import A2AExperime
 # Reconstruct the same agent card as the server (for topic derivation)
 agent_card = AgentCard(
     name="Weather Agent",
-    url="",
     version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
+    default_input_modes=["text"],
+    default_output_modes=["text"],
     capabilities=AgentCapabilities(streaming=True),
     skills=[AgentSkill(id="weather_report", ...)],
-    preferredTransport=InterfaceTransport.SLIM_PATTERNS,
-    additional_interfaces=[
+    supported_interfaces=[
         AgentInterface(
-            transport=InterfaceTransport.SLIM_PATTERNS,
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
             url="slim://localhost:46357/default/default/Weather_Agent_1.0.0",
         ),
         AgentInterface(
-            transport=InterfaceTransport.NATS_PATTERNS,
+            protocol_binding=InterfaceTransport.NATS_PATTERNS,
             url="nats://localhost:4222/default/default/Weather_Agent_1.0.0",
         ),
     ],
@@ -445,27 +441,23 @@ async def main():
         name="default/default/weather_client_card",
     )
 
+    # Returns a copy of the card whose preferred (first) interface is the
+    # patterns transport, with the URL the server declares.
     card = A2AExperimentalServer.create_client_card(agent_card, transport_type)
 
     config = ClientConfig(slim_transport=transport)
     client = await factory.a2a(config).create(card)
 
     request = SendMessageRequest(
-        id="request-001",
-        params=MessageSendParams(
-            message=Message(
-                messageId="0",
-                role=Role.user,
-                parts=[Part(root=TextPart(text="Hello, Weather Agent, how is the weather?"))],
-            ),
-        ),
+        message=new_text_message(
+            "Hello, Weather Agent, how is the weather?", role=Role.ROLE_USER
+        )
     )
 
-    async for event in client.send_message(request=request.params.message):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    print(part.root.text)
+    async for event in client.send_message(request):
+        text = get_stream_response_text(event)
+        if text:
+            print(text)
 
 if __name__ == "__main__":
     import asyncio
@@ -474,7 +466,8 @@ if __name__ == "__main__":
 
 ### Notes
 
-- **Card as single source of truth:** The `AgentCard.additional_interfaces` list declares every transport the agent supports. `add_a2a_card()` iterates over these interfaces, parses the URLs, creates transports, and registers containers — all automatically.
+- **Card as single source of truth:** The `AgentCard.supported_interfaces` list declares every transport the agent supports, in server-preference order (a2a-sdk 1.x dropped `preferred_transport`, `additional_interfaces` and `url` in favour of this single list). `add_a2a_card()` iterates over these interfaces, parses the URLs, creates transports, and registers containers — all automatically.
+- **Interceptors:** Client interceptors use a2a-sdk 1.x's `ClientCallInterceptor` (`before(BeforeArgs)` / `after(AfterArgs)`); pass them to `factory.a2a(config).create(card, interceptors=[...])`. The `consumers` argument is deprecated and ignored.
 - **`InterfaceTransport` constants:** Use `InterfaceTransport.SLIM_PATTERNS`, `.NATS_PATTERNS`, `.JSONRPC`, `.SLIM_RPC` instead of raw strings. Aliases like `InterfaceTransport.SLIM` (→ `"slimpatterns"`) and `.NATS` (→ `"natspatterns"`) are also available.
 - **Fluent API options:**
   - `.with_factory(factory)` — reuse an existing `AgntcyFactory` (auto-created if omitted)

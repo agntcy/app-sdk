@@ -15,12 +15,12 @@ except ImportError:
 import argparse
 import asyncio
 
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a.server import A2AServerConfig
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 factory = AgntcyFactory(enable_tracing=True)
@@ -45,30 +45,34 @@ def _build_a2a_server(
     topic: str | None = None,
     endpoint: str | None = None,
     streaming: bool = False,
-) -> A2AStarletteApplication:
+) -> A2AServerConfig:
     """Build an A2A server with a HelloWorld agent.
 
-    When *transport_type* is provided, ``additional_interfaces`` is populated
+    When *transport_type* is provided, ``supported_interfaces`` is populated
     using the :class:`InterfaceTransport` constants so the card is ready for
-    ``add_a2a_card()``-style bootstrap.
+    ``add_a2a_card()``-style bootstrap.  The requested transport comes first
+    (list order = server preference), followed by a JSONRPC fallback.
     """
-    additional_interfaces: list[AgentInterface] | None = None
+    interfaces: list[AgentInterface] = []
     if transport_type is not None:
-        additional_interfaces = _build_interfaces(
-            transport_type, topic or name, endpoint
+        interfaces.extend(_build_interfaces(transport_type, topic or name, endpoint))
+    if not any(i.protocol_binding == InterfaceTransport.JSONRPC for i in interfaces):
+        interfaces.append(
+            AgentInterface(
+                protocol_binding=InterfaceTransport.JSONRPC,
+                url="http://localhost:9999/",
+            )
         )
 
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
-        url="http://localhost:9999/",
         version=version,
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
-        supportsAuthenticatedExtendedCard=False,
-        additional_interfaces=additional_interfaces,
+        supported_interfaces=interfaces,
     )
     executor = (
         HelloWorldStreamingAgentExecutor(name)
@@ -78,8 +82,9 @@ def _build_a2a_server(
     request_handler = DefaultRequestHandler(
         agent_executor=executor,
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
-    return A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler)
+    return A2AServerConfig(agent_card=agent_card, request_handler=request_handler)
 
 
 def _build_interfaces(
@@ -87,7 +92,7 @@ def _build_interfaces(
     topic: str,
     endpoint: str | None = None,
 ) -> list[AgentInterface]:
-    """Build ``additional_interfaces`` for an agent card.
+    """Build ``supported_interfaces`` entries for an agent card.
 
     Uses :class:`InterfaceTransport` constants and the URL format
     understood by ``card_bootstrap.parse_interface_url``.
@@ -105,7 +110,7 @@ def _build_interfaces(
             url = f"slim://{topic}"
         return [
             AgentInterface(
-                transport=InterfaceTransport.SLIM_PATTERNS,
+                protocol_binding=InterfaceTransport.SLIM_PATTERNS,
                 url=url,
             )
         ]
@@ -122,7 +127,7 @@ def _build_interfaces(
             url = f"nats://{topic}"
         return [
             AgentInterface(
-                transport=InterfaceTransport.NATS_PATTERNS,
+                protocol_binding=InterfaceTransport.NATS_PATTERNS,
                 url=url,
             )
         ]
@@ -131,7 +136,7 @@ def _build_interfaces(
         url = endpoint or "http://0.0.0.0:9999"
         return [
             AgentInterface(
-                transport=InterfaceTransport.JSONRPC,
+                protocol_binding=InterfaceTransport.JSONRPC,
                 url=url,
             )
         ]

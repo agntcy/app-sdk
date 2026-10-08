@@ -1,23 +1,15 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
-from typing import Any
-from uuid import uuid4
-
 import pytest
 from a2a.client import ClientFactory, minimal_agent_card
-from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
+from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
+from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import (
-    AgentCapabilities,
-    AgentCard,
-    Message,
-    Part,
     Role,
-    Task,
+    SendMessageRequest,
+    StreamResponse,
     TaskState,
-    TaskStatusUpdateEvent,
-    TextPart,
 )
 
 from slima2a import setup_slim_client
@@ -44,32 +36,26 @@ class _RecordingInterceptor(ClientCallInterceptor):
     """Interceptor that records every call for assertion in tests."""
 
     def __init__(self):
-        self.calls: list[tuple[str, dict, dict]] = []
+        self.calls: list[str] = []
 
-    async def intercept(
-        self,
-        method_name: str,
-        request_payload: dict[str, Any],
-        http_kwargs: dict[str, Any],
-        agent_card: AgentCard | None,
-        context: ClientCallContext | None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        self.calls.append((method_name, dict(request_payload), dict(http_kwargs)))
-        return request_payload, http_kwargs
+    async def before(self, args: BeforeArgs) -> None:
+        self.calls.append(args.method)
+
+    async def after(self, args: AfterArgs) -> None:
+        pass
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _make_send_message(text: str = "how much is 10 USD in INR?") -> SendMessageRequest:
+    """Build a simple user ``SendMessageRequest`` for the A2A client."""
+    return SendMessageRequest(message=new_text_message(text, role=Role.ROLE_USER))
 
 
-def _make_send_message(text: str = "how much is 10 USD in INR?") -> Message:
-    """Build a simple A2A Message for the slima2a client."""
-    return Message(
-        role=Role.user,
-        message_id=str(uuid4()),
-        parts=[Part(root=TextPart(text=text))],
-    )
+async def _collect_text(client, request: SendMessageRequest) -> str:
+    """Send *request* and return all text carried by the response events."""
+    output = ""
+    async for event in client.send_message(request):
+        output += get_stream_response_text(event)
+    return output
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +73,6 @@ async def test_client(run_a2a_slimrpc_server):
 
     # 1. Spawn SlimRPC server
     run_a2a_slimrpc_server(endpoint, name=agent_name)
-    await asyncio.sleep(2)
 
     # 2. Setup SLIM client connection
     service, slim_local_app, local_name, conn_id = await setup_slim_client(
@@ -99,7 +84,7 @@ async def test_client(run_a2a_slimrpc_server):
 
     # 3. Create A2A client via upstream a2a-sdk ClientFactory + SRPCTransport
     client_config = SRPCClientConfig(
-        supported_transports=["slimrpc"],
+        supported_protocol_bindings=["slimrpc"],
         slimrpc_channel_factory=slimrpc_channel_factory(slim_local_app, conn_id),
     )
     client_factory = ClientFactory(client_config)
@@ -110,19 +95,7 @@ async def test_client(run_a2a_slimrpc_server):
 
     # 4. Send message and validate response
     request = _make_send_message()
-    output = ""
-    async for event in client.send_message(request=request):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    output += part.root.text
-        else:
-            task, update = event
-            if task.status.state == "completed" and task.artifacts:
-                for artifact in task.artifacts:
-                    for part in artifact.parts:
-                        if isinstance(part.root, TextPart):
-                            output += part.root.text
+    output = await _collect_text(client, request)
 
     assert output, "Response was empty"
     assert "Hello from" in output, f"Expected 'Hello from' in response, got: {output}"
@@ -151,7 +124,6 @@ async def test_client_factory(run_a2a_slimrpc_server):
 
     # 1. Spawn SlimRPC server
     run_a2a_slimrpc_server(endpoint, name=agent_name)
-    await asyncio.sleep(2)
 
     # 2. Setup SLIM client connection (low-level, needed for the channel factory)
     _service, slim_local_app, _local_name, conn_id = await setup_slim_client(
@@ -166,9 +138,10 @@ async def test_client_factory(run_a2a_slimrpc_server):
         slimrpc_channel_factory=slimrpc_channel_factory(slim_local_app, conn_id),
     )
 
-    # Verify supported_transports was auto-derived
-    assert "slimrpc" in config.supported_transports, (
-        f"Expected 'slimrpc' in supported_transports, got: {config.supported_transports}"
+    # Verify supported_protocol_bindings was auto-derived
+    assert "slimrpc" in config.supported_protocol_bindings, (
+        f"Expected 'slimrpc' in supported_protocol_bindings, "
+        f"got: {config.supported_protocol_bindings}"
     )
 
     # 4. Create client via A2AClientFactory
@@ -178,19 +151,7 @@ async def test_client_factory(run_a2a_slimrpc_server):
 
     # 5. Send message and validate response
     request = _make_send_message()
-    output = ""
-    async for event in client.send_message(request=request):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    output += part.root.text
-        else:
-            task, update = event
-            if task.status.state == "completed" and task.artifacts:
-                for artifact in task.artifacts:
-                    for part in artifact.parts:
-                        if isinstance(part.root, TextPart):
-                            output += part.root.text
+    output = await _collect_text(client, request)
 
     assert output, "Response was empty"
     assert "Hello from" in output, f"Expected 'Hello from' in response, got: {output}"
@@ -219,7 +180,6 @@ async def test_client_factory_deferred(run_a2a_slimrpc_server):
 
     # 1. Spawn SlimRPC server
     run_a2a_slimrpc_server(endpoint, name=agent_name)
-    await asyncio.sleep(2)
 
     # 2. Build SDK ClientConfig with deferred SlimRpcConfig — no manual
     #    setup_slim_client call needed.
@@ -232,9 +192,10 @@ async def test_client_factory_deferred(run_a2a_slimrpc_server):
         ),
     )
 
-    # Verify supported_transports was auto-derived
-    assert "slimrpc" in config.supported_transports, (
-        f"Expected 'slimrpc' in supported_transports, got: {config.supported_transports}"
+    # Verify supported_protocol_bindings was auto-derived
+    assert "slimrpc" in config.supported_protocol_bindings, (
+        f"Expected 'slimrpc' in supported_protocol_bindings, "
+        f"got: {config.supported_protocol_bindings}"
     )
 
     # 3. Create client via A2AClientFactory — factory handles async setup
@@ -244,19 +205,7 @@ async def test_client_factory_deferred(run_a2a_slimrpc_server):
 
     # 4. Send message and validate response
     request = _make_send_message()
-    output = ""
-    async for event in client.send_message(request=request):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    output += part.root.text
-        else:
-            task, update = event
-            if task.status.state == "completed" and task.artifacts:
-                for artifact in task.artifacts:
-                    for part in artifact.parts:
-                        if isinstance(part.root, TextPart):
-                            output += part.root.text
+    output = await _collect_text(client, request)
 
     assert output, "Response was empty"
     assert "Hello from" in output, f"Expected 'Hello from' in response, got: {output}"
@@ -277,8 +226,8 @@ async def test_task_status_events(run_a2a_slimrpc_server):
     Uses deferred SlimRpcConfig (matching test_client_factory_deferred pattern).
     The HelloWorldStreamingAgentExecutor produces:
       1. An initial Task event
-      2. N × TaskStatusUpdateEvent with state=working (one per token)
-      3. 1 × TaskStatusUpdateEvent with state=completed, final=True
+      2. N × TaskStatusUpdateEvent with state=TASK_STATE_WORKING (one per token)
+      3. 1 × TaskStatusUpdateEvent with state=TASK_STATE_COMPLETED (terminal)
     """
     endpoint = TRANSPORT_CONFIGS["SLIM"]
     agent_name = "default/default/Hello_World_Agent_1.0.0"
@@ -287,7 +236,6 @@ async def test_task_status_events(run_a2a_slimrpc_server):
 
     # 1. Spawn SlimRPC server with streaming executor
     run_a2a_slimrpc_server(endpoint, name=agent_name, streaming=True)
-    await asyncio.sleep(2)
 
     # 2. Build SDK ClientConfig with streaming enabled + deferred SlimRpcConfig
     config = A2AClientConfig(
@@ -306,16 +254,16 @@ async def test_task_status_events(run_a2a_slimrpc_server):
     #    upstream treats as "no streaming").
     factory = A2AClientFactory(config)
     agent_card = minimal_agent_card(agent_name, ["slimrpc"])
-    agent_card.capabilities = AgentCapabilities(streaming=True)
+    agent_card.capabilities.streaming = True
     client = await factory.create(card=agent_card)
 
     # 4. Collect all events from the streaming response
     request = _make_send_message()
-    events: list[tuple[Task, TaskStatusUpdateEvent | None]] = []
-    async for event in client.send_message(request=request):
-        if isinstance(event, Message):
+    events: list[StreamResponse] = []
+    async for event in client.send_message(request):
+        if event.HasField("message"):
             pytest.fail(
-                f"Expected (Task, update) tuples but got a bare Message: {event}"
+                f"Expected Task / status updates but got a bare Message: {event}"
             )
         events.append(event)
 
@@ -327,59 +275,45 @@ async def test_task_status_events(run_a2a_slimrpc_server):
     )
 
     # --- Assertion 2: first event is the initial Task ---
-    first_task, first_update = events[0]
-    assert isinstance(first_task, Task), "First event should contain a Task"
-    assert first_update is None, "First event update should be None (initial Task)"
+    assert events[0].HasField("task"), "First event should contain a Task"
 
     # Separate status update events (skip the initial Task event)
-    status_events = [update for _, update in events[1:] if update is not None]
+    status_events = [e.status_update for e in events[1:] if e.HasField("status_update")]
     assert len(status_events) >= 2, (
         f"Expected at least 2 status updates (working + completed), got {len(status_events)}"
     )
 
-    # --- Assertion 3: all status updates have correct kind ---
-    for se in status_events:
-        assert isinstance(se, TaskStatusUpdateEvent), (
-            f"Expected TaskStatusUpdateEvent, got {type(se)}"
-        )
-        assert se.kind == "status-update", (
-            f"Expected kind='status-update', got '{se.kind}'"
-        )
-
-    # --- Assertion 4: at least one working state ---
+    # --- Assertion 3: at least one working state ---
     working_events = [
-        se for se in status_events if se.status.state == TaskState.working
+        se for se in status_events if se.status.state == TaskState.TASK_STATE_WORKING
     ]
     assert len(working_events) >= 1, "Expected at least one working status update"
 
-    # --- Assertion 5: exactly one completed state ---
+    # --- Assertion 4: exactly one completed state ---
     completed_events = [
-        se for se in status_events if se.status.state == TaskState.completed
+        se for se in status_events if se.status.state == TaskState.TASK_STATE_COMPLETED
     ]
     assert len(completed_events) == 1, (
         f"Expected exactly 1 completed status update, got {len(completed_events)}"
     )
 
-    # --- Assertion 6: last status event is completed + final ---
+    # --- Assertion 5: last status event is the (terminal) completed one ---
     last_status = status_events[-1]
-    assert last_status.status.state == TaskState.completed, (
-        f"Last status should be completed, got {last_status.status.state}"
+    assert last_status.status.state == TaskState.TASK_STATE_COMPLETED, (
+        f"Last status should be completed, got "
+        f"{TaskState.Name(last_status.status.state)}"
     )
-    assert last_status.final is True, "Last status event should have final=True"
 
-    # --- Assertion 7: working events are not final ---
+    # --- Assertion 6: working events carry a message ---
     for we in working_events:
-        assert we.final is False, (
-            f"Working status events should have final=False, got final={we.final}"
-        )
-
-    # --- Assertion 8: working events carry a message ---
-    for we in working_events:
-        assert we.status.message is not None, (
+        assert we.status.HasField("message"), (
             "Working status events should carry a message with the streamed token"
         )
 
-    print(f"Status transitions: {[se.status.state.value for se in status_events]}")
+    print(
+        "Status transitions: "
+        f"{[TaskState.Name(se.status.state) for se in status_events]}"
+    )
     print("=== test_task_status_events passed for SlimRPC ===\n")
 
 
@@ -388,20 +322,21 @@ async def test_task_status_events(run_a2a_slimrpc_server):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="SRPCTransport silently drops interceptors. "
-    "Blocked on https://github.com/agntcy/slim-a2a-python/issues/13"
-)
 @pytest.mark.asyncio
 async def test_interceptor(run_a2a_slimrpc_server):
-    """Interceptor middleware should be invoked on send_message over SlimRPC."""
+    """Interceptor middleware should be invoked on send_message over SlimRPC.
+
+    With a2a-sdk 1.x the interceptors are run by the upstream ``BaseClient``
+    that wraps the transport, so ``SRPCTransport`` does not need to handle
+    them.  This test covers that the interceptors run; it does not cover
+    forwarding of the call context, which ``SRPCTransport`` ignores.
+    """
     endpoint = TRANSPORT_CONFIGS["SLIM"]
     agent_name = "default/default/Hello_World_Agent_1.0.0"
 
     print(f"\n--- test_interceptor | SlimRPC | {endpoint} ---")
 
     run_a2a_slimrpc_server(endpoint, name=agent_name)
-    await asyncio.sleep(2)
 
     interceptor = _RecordingInterceptor()
 
@@ -419,7 +354,7 @@ async def test_interceptor(run_a2a_slimrpc_server):
     client = await factory.create(card=agent_card, interceptors=[interceptor])
 
     request = _make_send_message()
-    async for _event in client.send_message(request=request):
+    async for _event in client.send_message(request):
         pass
 
     # --- Core assertion: interceptor was called ---
@@ -428,14 +363,11 @@ async def test_interceptor(run_a2a_slimrpc_server):
         "Interceptors are likely being dropped by SRPCTransport."
     )
 
-    method_names = [call[0] for call in interceptor.calls]
-    assert "message/send" in method_names or "message/stream" in method_names, (
+    method_names = interceptor.calls
+    assert "send_message" in method_names or "send_message_streaming" in method_names, (
         f"Interceptor called with unexpected methods: {method_names}"
     )
 
-    print(
-        f"Interceptor called {len(interceptor.calls)} time(s): "
-        f"{[c[0] for c in interceptor.calls]}"
-    )
+    print(f"Interceptor called {len(interceptor.calls)} time(s): {method_names}")
 
     print("=== test_interceptor passed for SlimRPC ===\n")

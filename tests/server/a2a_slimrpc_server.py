@@ -58,16 +58,14 @@ def _build_a2a_slimrpc_config(
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
-        url="http://localhost:9999/",
         version=version,
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
-        supportsAuthenticatedExtendedCard=False,
-        additional_interfaces=[
+        supported_interfaces=[
             AgentInterface(
-                transport=InterfaceTransport.SLIM_RPC,
+                protocol_binding=InterfaceTransport.SLIM_RPC,
                 url=interface_url,
             ),
         ],
@@ -80,6 +78,7 @@ def _build_a2a_slimrpc_config(
     request_handler = DefaultRequestHandler(
         agent_executor=executor,
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
     return A2ASlimRpcServerConfig(
         agent_card=agent_card,

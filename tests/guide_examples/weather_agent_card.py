@@ -5,7 +5,7 @@
 Weather Agent server using card-driven bootstrap — adapted from
 A2A_USAGE_GUIDE.md Example 2.
 
-The agent card declares ALL available transports in ``additional_interfaces``.
+The agent card declares ALL available transports in ``supported_interfaces``.
 ``add_a2a_card()`` reads those interfaces and starts everything with a single
 call — no manual transport creation or builder chains required.
 
@@ -23,7 +23,7 @@ from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
-from a2a.utils import new_agent_text_message
+from a2a.helpers import new_text_message
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
@@ -35,7 +35,7 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 SLIM_ENDPOINT = "slim://localhost:46357"
 NATS_ENDPOINT = "nats://localhost:4222"
 
-# Map CLI --transport to InterfaceTransport preferredTransport values
+# Map CLI --transport to the preferred InterfaceTransport (protocol_binding) value
 _PREFERRED_TRANSPORT: dict[str, str] = {
     "SLIM": InterfaceTransport.SLIM_PATTERNS,
     "NATS": InterfaceTransport.NATS_PATTERNS,
@@ -62,27 +62,29 @@ def build_agent_card(
     """Build an AgentCard with transport interfaces based on the preferred transport."""
     name = "default/default/Weather_Agent_1.0.0"
 
+    interfaces = [
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
+            url=f"{slim_endpoint}/{name}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.NATS_PATTERNS,
+            url=f"{nats_endpoint}/{name}",
+        ),
+    ]
+    # List order = server preference: put the requested transport first.
+    preferred = _PREFERRED_TRANSPORT[transport_type]
+    interfaces.sort(key=lambda i: i.protocol_binding != preferred)
+
     return AgentCard(
         name="Weather Agent",
         description="An agent that provides weather reports",
-        url="",
         version="1.0.0",
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[skill],
-        supportsAuthenticatedExtendedCard=False,
-        preferredTransport=_PREFERRED_TRANSPORT[transport_type],
-        additional_interfaces=[
-            AgentInterface(
-                transport=InterfaceTransport.SLIM_PATTERNS,
-                url=f"{slim_endpoint}/{name}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.NATS_PATTERNS,
-                url=f"{nats_endpoint}/{name}",
-            ),
-        ],
+        supported_interfaces=interfaces,
     )
 
 
@@ -108,7 +110,7 @@ class WeatherAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         result = await self.agent.invoke()
-        await event_queue.enqueue_event(new_agent_text_message(result))
+        await event_queue.enqueue_event(new_text_message(result))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("cancel not supported")
@@ -125,6 +127,7 @@ async def main(transport_type: str, slim_endpoint: str, nats_endpoint: str):
     request_handler = DefaultRequestHandler(
         agent_executor=WeatherAgentExecutor(),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
     # One call does it all — add_a2a_card() reads the card's interfaces

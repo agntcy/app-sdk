@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import dataclasses
+import warnings
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from a2a.client.client import ClientConfig as A2AClientConfig
 
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.semantic.a2a.card_utils import wire_binding
 
 if TYPE_CHECKING:
     from agntcy_app_sdk.transport.base import BaseTransport
@@ -121,6 +123,17 @@ class NatsTransportConfig:
 # ---------------------------------------------------------------------------
 
 
+class _ResolvedBindings(list):
+    """Marker for binding lists resolved by ``ClientConfig.__post_init__``.
+
+    ``dataclasses.replace`` copies attributes by reference, so this lets
+    ``__post_init__`` tell values it resolved itself (on both
+    ``supported_protocol_bindings`` and the deprecated
+    ``supported_transports`` mirror) from values the caller passed.
+    Copying the list (``list(...)``, slicing, ``.copy()``) drops the marker.
+    """
+
+
 @dataclasses.dataclass
 class ClientConfig(A2AClientConfig):
     """Extended A2A client config with deferred and eager transport fields.
@@ -136,8 +149,12 @@ class ClientConfig(A2AClientConfig):
 
     If neither field is set for a transport, that transport is unavailable.
 
-    ``supported_transports`` is auto-derived in ``__post_init__`` from
-    whichever fields are populated — you should not need to set it manually.
+    ``supported_protocol_bindings`` (the a2a-sdk 1.x name for the ordered
+    list of transports the client can use) is auto-derived in
+    ``__post_init__`` from whichever fields are populated — you should not
+    need to set it manually.  Entries are normalised to the casing the
+    upstream factory expects (``"jsonrpc"`` → ``"JSONRPC"``) and aliases are
+    resolved (``"slim"`` → ``"slimpatterns"``).
     """
 
     # -- SLIM-RPC (protobuf-over-SLIM, via slima2a) --------------------------
@@ -164,23 +181,88 @@ class ClientConfig(A2AClientConfig):
     nats_transport: BaseTransport | None = None
     """Eager: a pre-built ``NatsTransport`` instance."""
 
-    # -- Auto-derive supported_transports ------------------------------------
+    # -- Deprecated ----------------------------------------------------------
+
+    supported_transports: list[str] | None = None
+    """**Deprecated** — use ``supported_protocol_bindings``.
+
+    a2a-sdk 1.x renamed this field.  Precedence when it is passed:
+
+    * Alone: copied into ``supported_protocol_bindings`` (with a
+      ``DeprecationWarning``).
+    * Together with *bindings resolved by another config* (e.g.
+      ``dataclasses.replace(cfg, supported_transports=[...])``): it
+      overrides them, so replacing it on a populated config works.
+    * Together with a ``supported_protocol_bindings`` list the caller built
+      themselves: ``supported_protocol_bindings`` wins and, if the values
+      differ, the warning says ``supported_transports`` was ignored.
+
+    When nothing was passed it mirrors the resolved bindings for backward
+    compatibility; that mirror is ignored on re-construction, so
+    ``dataclasses.replace(cfg, supported_protocol_bindings=[...])`` is never
+    overridden by a stale copy.
+
+    .. note::
+       A resolved list handed over *as the same object* (e.g.
+       ``ClientConfig(supported_protocol_bindings=other.supported_protocol_bindings,
+       supported_transports=[...])``) is indistinguishable from a
+       ``replace()`` and is treated like one.  Copy it with ``list(...)``
+       to get the "both passed" semantics above.
+    """
+
+    # -- Auto-derive supported_protocol_bindings -----------------------------
 
     def __post_init__(self) -> None:
-        """Populate ``supported_transports`` from configured fields.
+        """Populate ``supported_protocol_bindings`` from configured fields.
 
-        Only runs when the user has *not* explicitly set
-        ``supported_transports``.  JSONRPC is always included as a fallback.
+        Only derives a list when the user has *not* explicitly set
+        ``supported_protocol_bindings`` (or the deprecated
+        ``supported_transports``).  JSONRPC is always included as a fallback.
         """
-        if not self.supported_transports:
-            transports: list[str] = ["JSONRPC"]
+        # A plain (non-marker) supported_transports was passed by the caller.
+        if self.supported_transports and not isinstance(
+            self.supported_transports, _ResolvedBindings
+        ):
+            message = (
+                "ClientConfig.supported_transports is deprecated; use "
+                "supported_protocol_bindings (renamed in a2a-sdk 1.x)."
+            )
+            user_bindings = self.supported_protocol_bindings
+            if user_bindings and not isinstance(user_bindings, _ResolvedBindings):
+                # Both given explicitly: the new field wins.
+                if [wire_binding(b) for b in user_bindings] != [
+                    wire_binding(t) for t in self.supported_transports
+                ]:
+                    message += (
+                        " Both were given with different values; "
+                        "supported_transports is ignored."
+                    )
+            else:
+                # Alone, or overriding bindings resolved by another config
+                # (e.g. dataclasses.replace on a populated config).
+                self.supported_protocol_bindings = list(self.supported_transports)
+            warnings.warn(message, DeprecationWarning, stacklevel=3)
+
+        if not self.supported_protocol_bindings:
+            bindings: list[str] = ["JSONRPC"]
             if self.slim_config is not None or self.slim_transport is not None:
-                transports.append("slimpatterns")
+                bindings.append("slimpatterns")
             if self.nats_config is not None or self.nats_transport is not None:
-                transports.append("natspatterns")
+                bindings.append("natspatterns")
             if (
                 self.slimrpc_config is not None
                 or self.slimrpc_channel_factory is not None
             ):
-                transports.append("slimrpc")
-            self.supported_transports = transports
+                bindings.append("slimrpc")
+            self.supported_protocol_bindings = bindings
+        else:
+            self.supported_protocol_bindings = [
+                wire_binding(b) for b in self.supported_protocol_bindings
+            ]
+
+        # Mark the result as resolved (see _ResolvedBindings) and keep the
+        # deprecated mirror in sync for code that still reads it.
+        self.supported_protocol_bindings = _ResolvedBindings(
+            self.supported_protocol_bindings
+        )
+        self.supported_transports = _ResolvedBindings(self.supported_protocol_bindings)

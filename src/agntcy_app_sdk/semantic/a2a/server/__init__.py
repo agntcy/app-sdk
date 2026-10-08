@@ -7,6 +7,10 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
     ServeCardPlan,
     parse_interface_url,
 )
+from agntcy_app_sdk.semantic.a2a.server.config import (
+    A2AServerConfig,
+    A2AStarletteApplication,
+)
 from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
     A2AExperimentalServer,
     A2AExperimentalServerHandler,
@@ -21,6 +25,8 @@ from agntcy_app_sdk.semantic.a2a.transport_types import InterfaceTransport
 
 __all__ = [
     "BaseA2AServerHandler",
+    "A2AServerConfig",
+    "A2AStarletteApplication",  # deprecated shim; use A2AServerConfig
     "A2AJsonRpcServerHandler",
     "A2AExperimentalServerHandler",
     "A2AExperimentalServer",

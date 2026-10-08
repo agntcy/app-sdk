@@ -8,7 +8,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from a2a.types import AgentCapabilities, AgentCard
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 
 from agntcy_app_sdk.app_sessions import AppContainer
 
@@ -18,12 +18,14 @@ pytest_plugins = "pytest_asyncio"
 def _minimal_card() -> AgentCard:
     return AgentCard(
         name="dir-test-agent",
-        url="http://localhost:9000",
+        supported_interfaces=[
+            AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000")
+        ],
         version="1.0.0",
         description="A test agent for directory tests",
         capabilities=AgentCapabilities(),
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         skills=[],
     )
 

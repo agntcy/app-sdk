@@ -4,8 +4,8 @@
 """A2A server that bootstraps via ``add_a2a_card()`` — the way a real user would.
 
 The agent card is the **single source of truth**.  It declares *all*
-available transports in ``additional_interfaces`` (SLIM, NATS, HTTP) and
-uses ``preferredTransport`` to signal which one clients should favour.
+available transports in ``supported_interfaces`` (SLIM, NATS, HTTP); the
+list order signals which one clients should favour (first = preferred).
 ``add_a2a_card()`` reads those interfaces and wires everything up — no
 manual builder chain required.
 
@@ -25,6 +25,7 @@ except ImportError:
 import argparse
 import asyncio
 import os
+from urllib.parse import urlparse
 
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
@@ -33,9 +34,50 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
-# Well-known test-service endpoints (must match docker-compose / conftest)
-SLIM_ENDPOINT = "slim://localhost:46357"
-NATS_ENDPOINT = "nats://localhost:4222"
+# ---------------------------------------------------------------------------
+# Shared test-service settings (single source of truth)
+#
+# This module is the one place where the e2e server, the e2e fixtures and the
+# e2e clients get the SLIM / NATS endpoints and the SLIM shared secret from.
+# The defaults match docker-compose (``services/docker/docker-compose.yaml``);
+# set ``SLIM_ENDPOINT`` / ``NATS_ENDPOINT`` / ``SLIM_SHARED_SECRET`` to point
+# the tests at other services.  The first two are the same variables the SDK's
+# ``add_a2a_card()`` reads, so the SDK and the tests always agree.  Values are
+# read when called, and the server subprocess inherits the environment.
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SLIM_ENDPOINT = "http://localhost:46357"
+_DEFAULT_NATS_ENDPOINT = "nats://localhost:4222"
+
+# Placeholder SLIM MLS secret used when SLIM_SHARED_SECRET is unset.  Same
+# value as the SDK's own default (SLIMTransport).  Not a production credential.
+DEFAULT_SLIM_SHARED_SECRET = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+
+
+def slim_endpoint() -> str:
+    """SLIM dataplane endpoint as the SDK expects it: ``http://host:port``."""
+    return os.environ.get("SLIM_ENDPOINT", _DEFAULT_SLIM_ENDPOINT)
+
+
+def nats_endpoint() -> str:
+    """NATS endpoint as the SDK expects it: ``nats://host:port``."""
+    return os.environ.get("NATS_ENDPOINT", _DEFAULT_NATS_ENDPOINT)
+
+
+def slim_card_endpoint() -> str:
+    """SLIM endpoint in agent-card form (``slim://host:port``)."""
+    return f"slim://{urlparse(slim_endpoint()).netloc}"
+
+
+def nats_card_endpoint() -> str:
+    """NATS endpoint in agent-card form (``nats://host:port``)."""
+    return nats_endpoint()
+
+
+def get_slim_shared_secret() -> str:
+    """Secret the server uses: ``SLIM_SHARED_SECRET`` if set, else the default."""
+    return os.environ.get("SLIM_SHARED_SECRET", DEFAULT_SLIM_SHARED_SECRET)
+
 
 DEFAULT_SKILL = AgentSkill(
     id="hello_world",
@@ -45,7 +87,7 @@ DEFAULT_SKILL = AgentSkill(
     examples=["hi", "hello world"],
 )
 
-# Map CLI --transport values to InterfaceTransport preferredTransport strings
+# Map CLI --transport values to the InterfaceTransport (protocol_binding) strings
 _PREFERRED_TRANSPORT: dict[str, str] = {
     "SLIM": InterfaceTransport.SLIM_PATTERNS,
     "NATS": InterfaceTransport.NATS_PATTERNS,
@@ -71,40 +113,52 @@ async def main(
     # -- Build the card as a real user would: declare ALL transports --------
     # The *name* is the agent's routable identity, stamped into the SLIM/NATS
     # interface URLs.  add_a2a_card() reads those URLs and subscribes accordingly.
+    interfaces = [
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
+            url=f"{slim_card_endpoint()}/{name}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.NATS_PATTERNS,
+            url=f"{nats_card_endpoint()}/{name}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.JSONRPC,
+            url=f"http://0.0.0.0:{port}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_RPC,
+            url=f"{slim_card_endpoint()}/{name}",
+        ),
+    ]
+    # List order = server preference: move the requested transport to the front.
+    preferred = _PREFERRED_TRANSPORT[transport_type]
+
+    # SLIM 2.x delivers a session to ONE subscriber of a name, so a pub/sub
+    # (slim) interface and an RPC (slimrpc) interface must not share the same
+    # identity.  Declare only the SLIM flavour that the test exercises.
+    if preferred == InterfaceTransport.SLIM_RPC:
+        unused = {InterfaceTransport.SLIM_PATTERNS}
+    else:
+        unused = {InterfaceTransport.SLIM_RPC}
+    interfaces = [i for i in interfaces if i.protocol_binding not in unused]
+    interfaces.sort(key=lambda i: i.protocol_binding != preferred)
+
     agent_card = AgentCard(
         name="Hello World Agent",
         description="Just a hello world agent",
-        url=f"http://localhost:{port}/",
         version=version,
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[DEFAULT_SKILL],
-        supportsAuthenticatedExtendedCard=False,
-        preferredTransport=_PREFERRED_TRANSPORT[transport_type],
-        additional_interfaces=[
-            AgentInterface(
-                transport=InterfaceTransport.SLIM_PATTERNS,
-                url=f"{SLIM_ENDPOINT}/{name}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.NATS_PATTERNS,
-                url=f"{NATS_ENDPOINT}/{name}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.JSONRPC,
-                url=f"http://0.0.0.0:{port}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.SLIM_RPC,
-                url=f"{SLIM_ENDPOINT}/{name}",
-            ),
-        ],
+        supported_interfaces=interfaces,
     )
 
     request_handler = DefaultRequestHandler(
         agent_executor=HelloWorldAgentExecutor(name),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
     # -- One call does it all -----------------------------------------------
@@ -118,12 +172,8 @@ async def main(
 
 
 if __name__ == "__main__":
-    # Set SLIM_SHARED_SECRET if not already set — add_a2a_card() requires it
-    # for SLIM transports.  Use the same default as SLIMTransport.__init__.
-    if "SLIM_SHARED_SECRET" not in os.environ:
-        os.environ["SLIM_SHARED_SECRET"] = (
-            "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
-        )
+    # add_a2a_card() requires SLIM_SHARED_SECRET for SLIM transports.
+    os.environ["SLIM_SHARED_SECRET"] = get_slim_shared_secret()
 
     parser = argparse.ArgumentParser(
         description="Run the A2A server using add_a2a_card() bootstrap."
@@ -145,7 +195,11 @@ if __name__ == "__main__":
         "--endpoint",
         type=str,
         default="localhost:4222",
-        help="Endpoint (kept for CLI compatibility, card endpoints are authoritative)",
+        help=(
+            "Ignored; kept for CLI compatibility.  Endpoints come from the "
+            "SLIM_ENDPOINT / NATS_ENDPOINT environment variables "
+            "(default: localhost, see docker-compose)."
+        ),
     )
     parser.add_argument(
         "--version",

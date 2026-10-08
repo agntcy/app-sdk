@@ -2,37 +2,45 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import re
 import signal
 import socket
 import subprocess
+import tempfile
 import time
 import uuid
-from typing import Any
+import warnings
 
 import pytest
+from a2a.helpers import new_text_message
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
     AgentInterface,
     Message,
-    MessageSendParams,
+    Role,
     SendMessageRequest,
-    SendStreamingMessageRequest,
 )
 
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
+from tests.server.a2a_card_bootstrap_server import (
+    get_slim_shared_secret,
+    nats_card_endpoint,
+    nats_endpoint,
+    slim_card_endpoint,
+    slim_endpoint,
+)
 
+# SLIM / NATS endpoints (and the SLIM secret) come from one shared place so the
+# server, these fixtures and the clients cannot drift apart.  Defaults match
+# docker-compose; override with SLIM_ENDPOINT / NATS_ENDPOINT.
 TRANSPORT_CONFIGS = {
-    "NATS": "localhost:4222",
-    "SLIM": "http://localhost:46357",
+    "NATS": nats_endpoint().removeprefix("nats://"),
+    "SLIM": slim_endpoint(),
     "JSONRPC": "http://localhost:9999",
 }
 
-# Well-known test-service endpoints (must match docker-compose)
-SLIM_ENDPOINT = "slim://localhost:46357"
-NATS_ENDPOINT = "nats://localhost:4222"
-
-# Map CLI/test transport labels → InterfaceTransport preferred_transport values
+# Map CLI/test transport labels → InterfaceTransport protocol_binding values
 PREFERRED_TRANSPORT: dict[str, str] = {
     "SLIM": InterfaceTransport.SLIM_PATTERNS,
     "NATS": InterfaceTransport.NATS_PATTERNS,
@@ -47,40 +55,26 @@ PREFERRED_TRANSPORT: dict[str, str] = {
 
 
 def make_message(text: str = "how much is 10 USD in INR?") -> Message:
-    """Build a simple A2A Message for ``client.send_message()``."""
-    return Message(
-        role="user",
-        parts=[{"type": "text", "text": text}],
-        messageId=str(uuid.uuid4()),
-    )
+    """Build a simple user ``Message`` (a2a-sdk 1.x protobuf type)."""
+    return new_text_message(text, role=Role.ROLE_USER)
 
 
 def make_send_request(text: str = "how much is 10 USD in INR?") -> SendMessageRequest:
-    """Build a simple A2A SendMessageRequest (for broadcast/groupchat)."""
-    payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": text}],
-            "messageId": str(uuid.uuid4()),
-        },
-    }
-    return SendMessageRequest(id=str(uuid.uuid4()), params=MessageSendParams(**payload))
+    """Build a ``SendMessageRequest`` for ``client.send_message()`` and
+    the broadcast / groupchat helpers."""
+    return SendMessageRequest(message=make_message(text))
 
 
 def make_streaming_send_request(
     text: str = "how much is 10 USD in INR?",
-) -> SendStreamingMessageRequest:
-    """Build a SendStreamingMessageRequest (for broadcast streaming with status events)."""
-    payload: dict[str, Any] = {
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": text}],
-            "messageId": str(uuid.uuid4()),
-        },
-    }
-    return SendStreamingMessageRequest(
-        id=str(uuid.uuid4()), params=MessageSendParams(**payload)
-    )
+) -> SendMessageRequest:
+    """Alias of :func:`make_send_request`.
+
+    a2a-sdk 1.x has no separate streaming request type: whether the call
+    streams is decided by the client method / card capabilities.  Kept so
+    tests that exercise streaming broadcast read naturally.
+    """
+    return make_send_request(text)
 
 
 def make_agent_card(
@@ -91,18 +85,19 @@ def make_agent_card(
 ) -> AgentCard:
     """Build a single AgentCard that declares all transports.
 
-    The card lists SLIM, NATS, HTTP, and SlimRPC in ``additional_interfaces``
-    and sets ``preferredTransport`` based on *transport_type*.  Both client and
-    server can share this card — the only thing that varies per test is
-    the *name* (the agent's routable identity, stamped into SLIM/NATS
-    interface URLs) and which transport is preferred.
+    The card lists SLIM, NATS, HTTP, and SlimRPC in ``supported_interfaces``
+    and orders them so that *transport_type* comes first (list order =
+    server preference).  Both client and server can share this card — the
+    only thing that varies per test is the *name* (the agent's routable
+    identity, stamped into SLIM/NATS interface URLs) and which transport is
+    preferred.
 
     Args:
         name: The agent's routable identity, stamped into SLIM/NATS
             interface URLs and used as the card ``name``.
         transport_type: ``"SLIM"``, ``"NATS"``, ``"JSONRPC"``, or
-            ``"SLIMRPC"`` — sets ``preferredTransport`` so the client
-            negotiation picks this transport first.
+            ``"SLIMRPC"`` — moved to the front of ``supported_interfaces``
+            so the client negotiation picks this transport first.
         http_port: Port for the JSONRPC interface (default 9999).
         streaming: If ``True``, set ``capabilities.streaming = True`` on
             the card so the upstream ``BaseClient`` takes the streaming
@@ -110,47 +105,38 @@ def make_agent_card(
     """
     preferred = PREFERRED_TRANSPORT[transport_type]
 
-    # card.url is set per the preferred transport so that negotiation
-    # finds the right entry in {preferred_transport: card.url}
-    if transport_type == "SLIM":
-        url = f"{SLIM_ENDPOINT}/{name}"
-    elif transport_type == "NATS":
-        url = f"{NATS_ENDPOINT}/{name}"
-    elif transport_type == "SLIMRPC":
-        url = f"{SLIM_ENDPOINT}/{name}"
-    else:
-        url = f"http://localhost:{http_port}/"
+    interfaces = [
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
+            url=f"{slim_card_endpoint()}/{name}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.NATS_PATTERNS,
+            url=f"{nats_card_endpoint()}/{name}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.JSONRPC,
+            url=f"http://0.0.0.0:{http_port}",
+        ),
+        AgentInterface(
+            protocol_binding=InterfaceTransport.SLIM_RPC,
+            url=f"{slim_card_endpoint()}/{name}",
+        ),
+    ]
+    # Stable sort: the preferred transport first, others keep their order.
+    interfaces.sort(key=lambda i: i.protocol_binding != preferred)
 
     return AgentCard(
         name=name,
         description="Test agent",
-        url=url,
         version="1.0.0",
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text"],
+        default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True)
         if streaming
         else AgentCapabilities(),
         skills=[],
-        preferredTransport=preferred,
-        additional_interfaces=[
-            AgentInterface(
-                transport=InterfaceTransport.SLIM_PATTERNS,
-                url=f"{SLIM_ENDPOINT}/{name}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.NATS_PATTERNS,
-                url=f"{NATS_ENDPOINT}/{name}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.JSONRPC,
-                url=f"http://0.0.0.0:{http_port}",
-            ),
-            AgentInterface(
-                transport=InterfaceTransport.SLIM_RPC,
-                url=f"{SLIM_ENDPOINT}/{name}",
-            ),
-        ],
+        supported_interfaces=interfaces,
     )
 
 
@@ -159,12 +145,187 @@ def make_agent_card(
 # ---------------------------------------------------------------------------
 
 
-def _spawn_server(procs, script, transport, endpoint, extra_args=None):
-    """Launch a test server subprocess and track it for cleanup."""
+def _server_log_tail(log_path, limit=2000):
+    """Return the last *limit* characters of a server log, if it can be read."""
+    try:
+        with open(log_path, errors="replace") as fh:
+            return fh.read()[-limit:]
+    except OSError:
+        return ""
+
+
+def _probe_slimrpc(
+    proc,
+    log_path,
+    endpoint,
+    agent_name,
+    secret,
+    streaming,
+    timeout,
+    expected=None,
+):
+    """Block until *agent_name* answers a real SlimRPC ``send_message``.
+
+    A reply is accepted when it is non-empty and, if *expected* is given,
+    contains that text.  A completed round trip already proves the server is
+    ready, so by default the content of the reply is not checked and the
+    probe is not tied to any particular agent's greeting.
+
+    Runs in a helper thread with its own event loop because this is called
+    from synchronous fixtures, sometimes while the test loop is already
+    running.  The probe connection is closed before return, and SLIM globals
+    are cleared so the test builds its own client afterwards.
+
+    Raises ``TimeoutError`` (with the server log tail) if the process exits
+    or no acceptable reply arrives within *timeout* seconds.
+    """
+    import asyncio
+    import threading
+
+    from a2a.client import ClientFactory, minimal_agent_card
+    from a2a.helpers import get_stream_response_text
+    from slima2a import setup_slim_client
+    from slima2a.client_transport import (
+        ClientConfig as SRPCClientConfig,
+    )
+    from slima2a.client_transport import (
+        SRPCTransport,
+        slimrpc_channel_factory,
+    )
+
+    holder: dict = {}
+
+    async def _roundtrip(client) -> str:
+        request = SendMessageRequest(
+            message=new_text_message("ready?", role=Role.ROLE_USER)
+        )
+        output = ""
+        async for event in client.send_message(request):
+            output += get_stream_response_text(event)
+        return output
+
+    async def _attempt() -> None:
+        deadline = time.monotonic() + timeout
+        last_error: object = "no attempt yet"
+        service, _app, _local_name, conn_id = await setup_slim_client(
+            namespace="default",
+            group="default",
+            name="e2e-ready-probe",
+            slim_url=endpoint,
+            secret=secret,
+            log_level="error",
+        )
+        try:
+            card = minimal_agent_card(agent_name, ["slimrpc"])
+            if streaming:
+                card.capabilities.streaming = True
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    break
+                try:
+                    # A fresh client (and so a fresh SLIM session) per attempt
+                    # on purpose: like the real clients the tests build next,
+                    # it cannot be stuck on a session that went bad while the
+                    # server was still starting.
+                    client_config = SRPCClientConfig(
+                        supported_protocol_bindings=["slimrpc"],
+                        slimrpc_channel_factory=slimrpc_channel_factory(_app, conn_id),
+                    )
+                    client_factory = ClientFactory(client_config)
+                    client_factory.register("slimrpc", SRPCTransport.create)  # type: ignore[arg-type]
+                    client = client_factory.create(card=card)
+                    try:
+                        output = await asyncio.wait_for(_roundtrip(client), timeout=5)
+                    finally:
+                        # Release each attempt's client instead of leaking it.
+                        try:
+                            await client.close()
+                        except Exception:
+                            pass
+                    if output and (expected is None or expected in output):
+                        return
+                    last_error = f"unexpected response: {output!r}"
+                except Exception as exc:
+                    last_error = exc
+                await asyncio.sleep(0.3)
+        finally:
+            try:
+                service.disconnect(conn_id)
+            except Exception:
+                pass
+        raise TimeoutError(
+            f"SlimRPC server {agent_name!r} did not answer within {timeout}s "
+            f"(exit code: {proc.poll()}). Last error: {last_error}\n"
+            f"Server output:\n{_server_log_tail(log_path)}"
+        )
+
+    def _run() -> None:
+        try:
+            asyncio.run(_attempt())
+        except Exception as exc:
+            holder["error"] = exc
+
+    thread = threading.Thread(target=_run, name="slimrpc-ready-probe", daemon=True)
+    thread.start()
+    # The attempt enforces *timeout* itself and then returns.
+    thread.join(timeout + 15)
+    try:
+        if thread.is_alive():
+            raise TimeoutError(
+                f"SlimRPC readiness probe for {agent_name!r} is still running "
+                f"after {timeout}s (exit code: {proc.poll()}).\n"
+                f"Server output:\n{_server_log_tail(log_path)}"
+            )
+        if "error" in holder:
+            raise holder["error"]
+    finally:
+        # Drop the probe's event-loop pin and connections. Do not shut the
+        # SLIM runtime down: shutdown_blocking leaves the datapath closed and
+        # the test cannot initialize a client afterwards.
+        _reset_slim_globals()
+
+
+# Tag put on every spawned server's command line (``python -X <tag>=<id>``).
+# Python ignores unknown ``-X`` options, so the servers need no changes, and
+# the id is visible to ``ps`` / ``pgrep``:  pgrep -fl e2e_server_id=
+_SERVER_ID_OPTION = "e2e_server_id"
+
+
+def _server_id() -> str:
+    """Unique, human-readable id: ``e2e-<current test name>-<random>``."""
+    current = os.environ.get("PYTEST_CURRENT_TEST", "manual")
+    test_name = current.rsplit(" (", 1)[0].split("::")[-1]
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", test_name).strip("-")[:40] or "unknown"
+    return f"e2e-{slug}-{uuid.uuid4().hex[:6]}"
+
+
+def _spawn_server(
+    procs,
+    script,
+    transport,
+    endpoint,
+    extra_args=None,
+    slimrpc_probe=None,
+    ready_timeout=60,
+):
+    """Launch a test server subprocess and track it for cleanup.
+
+    If *slimrpc_probe* is given, block until a SlimRPC ``send_message`` to
+    that agent returns a non-empty reply.  Otherwise sleep one second, as
+    before.
+
+    *slimrpc_probe* keys: ``agent_name``, ``secret``, and optional
+    ``streaming`` (default False) and ``expected`` (text the reply must
+    contain; default None, i.e. any non-empty reply).  The dataplane URL is
+    *endpoint*.
+    """
+    server_id = _server_id()
     cmd = [
         "uv",
         "run",
         "python",
+        "-X",
+        f"{_SERVER_ID_OPTION}={server_id}",
         script,
     ]
     if transport is not None:
@@ -173,9 +334,37 @@ def _spawn_server(procs, script, transport, endpoint, extra_args=None):
     if extra_args:
         cmd.extend(extra_args)
 
-    proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
+    if slimrpc_probe is None:
+        proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
+        proc.e2e_server_id = server_id  # type: ignore[attr-defined]
+        procs.append(proc)
+        time.sleep(1)
+        return proc
+
+    log_fd, log_path = tempfile.mkstemp(prefix="e2e-server-", suffix=".log")
+    with os.fdopen(log_fd, "w") as log_file:
+        proc = subprocess.Popen(
+            cmd,
+            preexec_fn=os.setsid,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    proc.e2e_server_id = server_id  # type: ignore[attr-defined]
     procs.append(proc)
-    time.sleep(1)
+    try:
+        _probe_slimrpc(
+            proc,
+            log_path,
+            endpoint,
+            slimrpc_probe["agent_name"],
+            slimrpc_probe["secret"],
+            slimrpc_probe.get("streaming", False),
+            ready_timeout,
+            expected=slimrpc_probe.get("expected"),
+        )
+    finally:
+        if proc.poll() is None:
+            os.unlink(log_path)
     return proc
 
 
@@ -191,11 +380,99 @@ def _wait_for_port(host, port, timeout=30):
     raise TimeoutError(f"Port {host}:{port} not ready after {timeout}s")
 
 
-def _cleanup_procs(procs):
-    """Terminate all tracked subprocesses."""
+def _signal_group(proc, sig):
+    """Send *sig* to *proc*'s whole process group (ignoring an empty group).
+
+    Servers are started with ``os.setsid``, so the group id equals the pid of
+    the ``uv`` launcher and covers the Python server underneath it.  The pid
+    is used directly because ``os.getpgid`` fails once the launcher is gone,
+    even while its children still run.
+    """
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def _group_alive(proc) -> bool:
+    """True while any process of *proc*'s group is still running."""
+    try:
+        os.killpg(proc.pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _cleanup_procs(procs, grace=15):
+    """Terminate all tracked subprocesses and wait until they are gone.
+
+    Waiting matters: a server that is still shutting down keeps its SLIM
+    subscription, so the next test would talk to a dying server (or race it).
+
+    Waiting on the ``uv`` launcher alone is not enough: it can exit while the
+    Python server underneath keeps running.  So the whole process group is
+    checked and SIGKILLed if needed; every escalation is reported with the
+    server's id (see ``_server_id``) as a warning.
+    """
     for proc in procs:
-        if proc.poll() is None:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        _signal_group(proc, signal.SIGTERM)
+    for proc in procs:
+        server_id = getattr(proc, "e2e_server_id", f"pid-{proc.pid}")
+        try:
+            proc.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            warnings.warn(
+                f"e2e server {server_id} ignored SIGTERM for {grace}s; sending SIGKILL",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _signal_group(proc, signal.SIGKILL)
+            proc.wait()
+        # The launcher is gone; make sure nothing is left in its group.
+        deadline = time.monotonic() + grace
+        while _group_alive(proc) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if _group_alive(proc):
+            warnings.warn(
+                f"e2e server {server_id} left processes running after the launcher "
+                "exited; sending SIGKILL to its process group",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _signal_group(proc, signal.SIGKILL)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Report any test server still running when the session ends.
+
+    Looks for the ``-X e2e_server_id=<id>`` tag every spawned server carries,
+    so a leak names the test that started it.
+    """
+    try:
+        out = subprocess.run(
+            ["pgrep", "-fl", f"{_SERVER_ID_OPTION}="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+    except Exception:
+        return
+    leftovers = [
+        (line.split(" ", 1)[0], match.group(1))
+        for line in out.splitlines()
+        if (match := re.search(rf"{_SERVER_ID_OPTION}=(\S+)", line))
+    ]
+    if not leftovers:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    write = reporter.write_line if reporter else print
+    write("")
+    write(f"WARNING: {len(leftovers)} e2e server process(es) still running:")
+    for pid, server_id in leftovers:
+        write(f"  pid {pid}  id {server_id}")
+    write(f"  inspect: pgrep -fl {_SERVER_ID_OPTION}=")
 
 
 def _reset_slim_globals():
@@ -210,11 +487,14 @@ def _reset_slim_globals():
     from agntcy_app_sdk.transport.slim import common as slim_common
 
     # Disconnect ALL connections from SLIM service.
-    # Tests may create multiple connections (the global singleton connection
-    # at "http://…:46357" AND a dedicated slimrpc connection at
-    # "http://…:46357/").  The dedicated connection ID is not stored in any
-    # global, so we brute-force disconnect IDs 0..9 to cover all possible
-    # open connections.
+    # Tests may create several connections (the global singleton connection
+    # at "http://…:46357", a dedicated slimrpc connection at
+    # "http://…:46357/", and ones the SDK opens internally).  Their ids are not
+    # all stored anywhere (and looking them up by endpoint misses some, which
+    # makes the next SLIM test fail with "connection not found"), so we
+    # brute-force disconnect ids 0..9.  SLIM 2.x logs a harmless
+    # "connection unknown" ERROR line for every id that is not open; pytest
+    # hides that output unless a test fails.
     try:
         service = slim_bindings.get_global_service()
         for conn_id in range(10):
@@ -236,7 +516,10 @@ def _reset_slim_globals():
 
     # Clear the cached event loop so subsequent calls fall back to
     # asyncio.get_running_loop() and pick up the new test's loop.
+    # slim-bindings 2.x keeps one loop global per UniFFI namespace
+    # (core + slimrpc); clear both.
     slim_bindings._slim_bindings.slim_bindings._UNIFFI_GLOBAL_EVENT_LOOP = None
+    slim_bindings._slim_bindings.slim_rpc._UNIFFI_GLOBAL_EVENT_LOOP = None
 
     # Clear the cached SLIM singleton so a fresh connection is created.
     slim_common.global_slim = None
@@ -310,12 +593,19 @@ def run_card_bootstrap_server():
             "--port",
             str(port),
         ]
+        # Same secret the card-bootstrap server resolves for itself.
+        slim_secret = get_slim_shared_secret()
         proc = _spawn_server(
             procs,
             "tests/server/a2a_card_bootstrap_server.py",
             transport,
             endpoint,
             extra_args=extra_args,
+            slimrpc_probe=(
+                {"agent_name": name, "secret": slim_secret}
+                if transport == "SLIMRPC"
+                else None
+            ),
         )
         # For JSONRPC (HTTP), wait until the server is accepting connections
         if transport == "JSONRPC":
@@ -391,12 +681,24 @@ def run_a2a_slimrpc_server():
         ]
         if streaming:
             extra_args.append("--streaming")
+        # The dedicated SlimRPC test server hardcodes this placeholder.
+        # Read it from the server config so the probe uses the same value.
+        from tests.server.a2a_slimrpc_server import _build_a2a_slimrpc_config
+
+        secret = _build_a2a_slimrpc_config(
+            name=name, endpoint=endpoint, streaming=streaming
+        ).connection.shared_secret
         return _spawn_server(
             procs,
             "tests/server/a2a_slimrpc_server.py",
             transport=None,
             endpoint=endpoint,
             extra_args=extra_args,
+            slimrpc_probe={
+                "agent_name": name,
+                "secret": secret,
+                "streaming": streaming,
+            },
         )
 
     yield _run

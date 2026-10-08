@@ -14,7 +14,8 @@ import argparse
 import asyncio
 
 from a2a.client import minimal_agent_card
-from a2a.types import Message, Part, Role, TextPart
+from a2a.helpers import get_stream_response_text, new_text_message
+from a2a.types import Role, SendMessageRequest
 from slima2a import setup_slim_client
 from slima2a.client_transport import slimrpc_channel_factory
 
@@ -43,28 +44,19 @@ async def main(endpoint: str, agent_name: str):
     client = await factory.a2a(config).create(card)
 
     # 4. Send a message
-    request = Message(
-        role=Role.user,
-        message_id="msg-001",
-        parts=[Part(root=TextPart(text="Hello, Weather Agent, how is the weather?"))],
+    request = SendMessageRequest(
+        message=new_text_message(
+            "Hello, Weather Agent, how is the weather?", role=Role.ROLE_USER
+        )
     )
+
+    # send_message yields StreamResponse events (message / task / status updates)
     output = ""
-    async for event in client.send_message(request=request):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    output += part.root.text
-                    print(part.root.text)
-        else:
-            # Task-based response
-            task, _update = event
-            if task.history:
-                for msg in task.history:
-                    if msg.role == Role.agent:
-                        for part in msg.parts:
-                            if isinstance(part.root, TextPart):
-                                output += part.root.text
-                                print(part.root.text)
+    async for event in client.send_message(request):
+        text = get_stream_response_text(event)
+        if text:
+            output += text
+            print(text)
 
     if not output:
         print("ERROR: No response received")

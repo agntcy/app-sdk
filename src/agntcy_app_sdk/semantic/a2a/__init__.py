@@ -3,6 +3,7 @@
 
 from agntcy_app_sdk.semantic.a2a.server import (
     BaseA2AServerHandler,
+    A2AServerConfig,
     A2AJsonRpcServerHandler,
     A2AExperimentalServerHandler,
     A2AExperimentalServer,
@@ -26,6 +27,7 @@ from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
 
 __all__ = [
     "BaseA2AServerHandler",
+    "A2AServerConfig",
     "A2AJsonRpcServerHandler",
     "A2AExperimentalServerHandler",
     "A2AExperimentalServer",

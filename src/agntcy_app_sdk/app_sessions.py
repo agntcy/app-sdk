@@ -27,10 +27,10 @@ def _get_handler_map() -> dict[type, type]:
     """Lazily build server-type → handler-class mapping."""
     global _HANDLER_MAP
     if _HANDLER_MAP is None:
-        from a2a.server.apps import A2AStarletteApplication
         from mcp.server.fastmcp import FastMCP
         from mcp.server.lowlevel import Server as MCPServer
 
+        from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
         from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
             A2AExperimentalServerHandler,
         )
@@ -41,8 +41,10 @@ def _get_handler_map() -> dict[type, type]:
         from agntcy_app_sdk.semantic.fast_mcp.handler import FastMCPServerHandler
         from agntcy_app_sdk.semantic.mcp.handler import MCPServerHandler
 
+        # ``A2AStarletteApplication`` (deprecated shim) subclasses
+        # ``A2AServerConfig`` so it resolves through the same entry.
         _HANDLER_MAP = {
-            A2AStarletteApplication: A2AExperimentalServerHandler,
+            A2AServerConfig: A2AExperimentalServerHandler,
             A2ASlimRpcServerConfig: A2ASRPCServerHandler,
             MCPServer: MCPServerHandler,
             FastMCP: FastMCPServerHandler,
@@ -75,6 +77,7 @@ class ContainerBuilder:
         self._session_id: Optional[str] = None
         self._host: Optional[str] = None
         self._port: Optional[int] = None
+        self._public_url: Optional[str] = None
 
     def with_transport(self, transport: BaseTransport) -> ContainerBuilder:
         self._transport = transport
@@ -100,6 +103,25 @@ class ContainerBuilder:
         self._port = port
         return self
 
+    def with_public_url(self, url: str) -> ContainerBuilder:
+        """Set the externally reachable URL of the HTTP JSON-RPC endpoint.
+
+        Only used when an A2A server is served over HTTP (no transport). If
+        the agent card has no ``JSONRPC`` entry in ``supported_interfaces``,
+        one with this URL is appended so clients can discover the endpoint.
+        A ``JSONRPC`` interface already declared on the card is left as is.
+
+        The bind address from ``.with_host()`` / ``.with_port()`` is never
+        written to the card, because it is often not reachable by clients
+        (``0.0.0.0``, in-container addresses, behind a proxy).
+        """
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"public URL must start with http:// or https://, got {url!r}"
+            )
+        self._public_url = url
+        return self
+
     def build(self) -> AppContainer:
         """Resolve handler from target type, construct AppContainer, register it."""
         handler_class = _resolve_handler_class(self._target)
@@ -107,7 +129,7 @@ class ContainerBuilder:
         # A2ASRPCServerHandler takes (config) — no transport or topic
         from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASRPCServerHandler
 
-        # When the target is an A2AStarletteApplication but no transport was
+        # When the target is an A2AServerConfig but no transport was
         # provided, serve it over native HTTP JSONRPC instead of going through
         # the patterns handler (which requires a transport).
         from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
@@ -126,6 +148,7 @@ class ContainerBuilder:
                 self._target,
                 host=self._host,
                 port=self._port,
+                public_url=self._public_url,
             )
         elif handler_class is A2ASRPCServerHandler:
             if self._transport is not None or self._topic is not None:
@@ -137,6 +160,11 @@ class ContainerBuilder:
                 self._target,
             )
         else:
+            if self._public_url is not None:
+                logger.warning(
+                    "public_url only applies to A2A served over HTTP "
+                    "(no transport); it is ignored here."
+                )
             handler = handler_class(
                 self._target,
                 transport=self._transport,

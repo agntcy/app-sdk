@@ -4,7 +4,7 @@
 """Card-driven multi-transport server bootstrap for A2A agents.
 
 Provides :class:`CardBuilder` which reads an ``AgentCard``'s
-``additional_interfaces``, parses each URL into transport-specific config,
+``supported_interfaces``, parses each URL into transport-specific config,
 and starts all sessions via a fluent API.
 
 Example::
@@ -23,18 +23,18 @@ Each transport accepts **two** URL styles:
 
 **Topic-only** (compatible with ``create_transport_uri`` / client cards)::
 
-    AgentInterface(transport="slimpatterns", url="slim://my_topic")
-    AgentInterface(transport="natspatterns", url="nats://my_topic")
-    AgentInterface(transport="slimrpc",     url="slim://org/ns/agent")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://my_topic")
+    AgentInterface(protocol_binding="natspatterns", url="nats://my_topic")
+    AgentInterface(protocol_binding="slimrpc",     url="slim://org/ns/agent")
 
 Endpoint is resolved from ``SLIM_ENDPOINT`` / ``NATS_ENDPOINT`` env vars,
 defaulting to ``localhost`` with the standard port.
 
 **Explicit endpoint** (endpoint + path encoded in one URL)::
 
-    AgentInterface(transport="slimpatterns", url="slim://host:46357/my_topic")
-    AgentInterface(transport="natspatterns", url="nats://host:4222/my_topic")
-    AgentInterface(transport="slimrpc",     url="slim://host:46357/org/ns/agent")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/my_topic")
+    AgentInterface(protocol_binding="natspatterns", url="nats://host:4222/my_topic")
+    AgentInterface(protocol_binding="slimrpc",     url="slim://host:46357/org/ns/agent")
 
 Detection heuristic: if ``urlparse`` finds a port **or** a non-empty path,
 the URL is treated as ``scheme://host[:port]/path``; otherwise the
@@ -148,7 +148,7 @@ def parse_interface_url(interface: AgentInterface) -> dict[str, str | int]:
     Raises:
         ValueError: If the URL cannot be parsed for the given transport.
     """
-    transport_type = _normalize_transport(interface.transport)
+    transport_type = _normalize_transport(interface.protocol_binding)
     url = interface.url
     parsed = urlparse(url)
 
@@ -292,7 +292,7 @@ class CardBuilder:
     """Fluent builder that expands an AgentCard's interfaces into containers.
 
     Constructed via :meth:`AppSession.add_a2a_card`.  The builder reads
-    ``agent_card.additional_interfaces``, creates transport/config objects
+    ``agent_card.supported_interfaces``, creates transport/config objects
     for each, and registers ``AppContainer`` instances on the session.
 
     Use :meth:`override` to supply a pre-built config or transport for a
@@ -325,7 +325,7 @@ class CardBuilder:
 
         For ``slimrpc``: pass a pre-built ``A2ASlimRpcServerConfig``.
         For ``slimpatterns`` / ``natspatterns``: pass a pre-built ``BaseTransport``.
-        For ``jsonrpc`` / ``http``: pass a pre-built ``A2AStarletteApplication``.
+        For ``jsonrpc`` / ``http``: pass a pre-built ``A2AServerConfig``.
         """
         self._overrides[_normalize_transport(transport_type)] = target
         return self
@@ -345,6 +345,36 @@ class CardBuilder:
         self._shared_secret = secret
         return self
 
+    # -- Helpers ------------------------------------------------------------
+
+    def _warn_on_slim_name_collision(self, interfaces: list[AgentInterface]) -> None:
+        """Warn when ``slim`` (pub/sub) and ``slimrpc`` share one SLIM name.
+
+        SLIM 2.x hands an incoming session to a single subscriber of a name.
+        If a pub/sub app and an RPC server subscribe under the same name, RPC
+        calls can be delivered to the pub/sub app (which has no RPC handler)
+        and hang until they time out.
+        """
+        rpc_names: set[str] = set()
+        pubsub_names: set[str] = set()
+        for interface in interfaces:
+            transport_type = _normalize_transport(interface.protocol_binding)
+            if transport_type in self._skips:
+                continue
+            if transport_type == "slimrpc":
+                rpc_names.add(str(parse_interface_url(interface)["identity"]))
+            elif transport_type == "slimpatterns":
+                pubsub_names.add(str(parse_interface_url(interface)["topic"]))
+
+        for name in sorted(rpc_names & pubsub_names):
+            logger.warning(
+                "The card declares both a 'slim' and a 'slimrpc' interface "
+                "for '%s'. SLIM 2.x delivers a session to only one subscriber "
+                "of a name, so slimrpc calls may never be answered. Give the "
+                "two interfaces different identities, or .skip() one of them.",
+                name,
+            )
+
     # -- Terminal operations ------------------------------------------------
 
     async def dry_run(self) -> ServeCardPlan:
@@ -363,9 +393,8 @@ class CardBuilder:
         self, *, dry_run: bool, keep_alive: bool
     ) -> ServeCardPlan | None:
         """Internal execution engine (shared by :meth:`start` and :meth:`dry_run`)."""
-        from a2a.server.apps import A2AStarletteApplication
-
         from agntcy_app_sdk.factory import AgntcyFactory
+        from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
         from agntcy_app_sdk.semantic.a2a.server.srpc import (
             A2ASlimRpcServerConfig,
             SlimRpcConnectionConfig,
@@ -379,27 +408,29 @@ class CardBuilder:
             self._factory = AgntcyFactory()
         factory = self._factory
 
-        interfaces = agent_card.additional_interfaces or []
+        interfaces = list(agent_card.supported_interfaces)
         if not interfaces:
             raise ValueError(
-                "agent_card.additional_interfaces is empty; nothing to serve"
+                "agent_card.supported_interfaces is empty; nothing to serve"
             )
 
         plan = ServeCardPlan()
 
-        # Build the A2AStarletteApplication once for transports that need it
-        # (slim/nats patterns and jsonrpc all share the same app instance).
-        a2a_app = A2AStarletteApplication(
-            agent_card=agent_card, http_handler=request_handler
+        # Build the A2AServerConfig once for transports that need it
+        # (slim/nats patterns and jsonrpc all share the same config instance).
+        a2a_app = A2AServerConfig(
+            agent_card=agent_card, request_handler=request_handler
         )
 
+        self._warn_on_slim_name_collision(interfaces)
+
         for i, interface in enumerate(interfaces):
-            transport_type = _normalize_transport(interface.transport)
+            transport_type = _normalize_transport(interface.protocol_binding)
 
             if transport_type not in _CANONICAL_TRANSPORTS:
                 logger.warning(
                     "Unknown transport type '%s' on interface %d, skipping",
-                    interface.transport,
+                    interface.protocol_binding,
                     i,
                 )
                 continue

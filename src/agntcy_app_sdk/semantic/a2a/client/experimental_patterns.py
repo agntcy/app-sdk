@@ -9,7 +9,7 @@ two agents. This module extends that model with experimental operations
 non-HTTP transports such as SLIM and NATS.
 
 The client preserves core A2A benefits: AgentCard-based discovery,
-JSON-RPC message envelopes, and typed ``MessageSendParams`` payloads.
+JSON-RPC message envelopes, and typed ``SendMessageRequest`` payloads.
 Standard A2A operations (send_message, get_task, etc.) delegate to the
 inner upstream ``Client``; experimental operations (broadcast_message,
 start_groupchat) delegate directly to the underlying ``BaseTransport``.
@@ -19,33 +19,63 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, List
+from collections.abc import AsyncIterator
+from typing import Any, Callable, List
 from uuid import uuid4
 
-from a2a.client.client import Client, ClientEvent
-from a2a.client.middleware import ClientCallContext, ClientCallInterceptor
+from a2a.client.client import Client, ClientCallContext
+from a2a.client.interceptors import ClientCallInterceptor
 from a2a.types import (
     AgentCard,
-    GetTaskPushNotificationConfigParams,
+    CancelTaskRequest,
+    DeleteTaskPushNotificationConfigRequest,
+    GetExtendedAgentCardRequest,
+    GetTaskPushNotificationConfigRequest,
+    GetTaskRequest,
+    ListTaskPushNotificationConfigsRequest,
+    ListTaskPushNotificationConfigsResponse,
+    ListTasksRequest,
+    ListTasksResponse,
     SendMessageRequest,
     SendMessageResponse,
-    SendStreamingMessageRequest,
-    Message as A2AMessage,
+    StreamResponse,
+    SubscribeToTaskRequest,
     Task,
-    TaskIdParams,
     TaskPushNotificationConfig,
-    TaskQueryParams,
-    TaskStatusUpdateEvent,
 )
+from google.protobuf.json_format import MessageToDict, ParseDict
+from google.protobuf.message import Message as ProtoMessage
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.client.utils import (
+    create_rpc_error,
     get_identity_auth_error,
     message_translator,
+    run_after_interceptors,
+    run_before_interceptors,
 )
 from agntcy_app_sdk.transport.base import BaseTransport
 
 logger = get_logger(__name__)
+
+# Method names as seen by interceptors (identical to the upstream
+# ``BaseClient``) and the JSON-RPC (A2A v1) method each maps to on the wire.
+_METHOD_SEND = "send_message"
+_METHOD_SEND_STREAMING = "send_message_streaming"
+_WIRE_METHODS = {
+    _METHOD_SEND: "SendMessage",
+    _METHOD_SEND_STREAMING: "SendStreamingMessage",
+}
+
+
+def _stream_response_from_message(resp: SendMessageResponse) -> StreamResponse:
+    """Convert a ``SendMessageResponse`` into the equivalent ``StreamResponse``."""
+    out = StreamResponse()
+    if resp.HasField("task"):
+        out.task.CopyFrom(resp.task)
+    elif resp.HasField("message"):
+        out.message.CopyFrom(resp.message)
+    return out
 
 
 class A2AExperimentalClient(Client):
@@ -58,6 +88,9 @@ class A2AExperimentalClient(Client):
     This class is only returned by the factory when negotiation selects
     a patterns transport (``slimpatterns`` / ``natspatterns``).  The
     ``transport`` and ``topic`` fields are therefore always present.
+
+    Interceptors registered on the client run (``before`` / ``after``) around
+    experimental operations just like they do around standard ones.
     """
 
     def __init__(
@@ -68,16 +101,11 @@ class A2AExperimentalClient(Client):
         topic: str,
         interceptors: list[ClientCallInterceptor] | None = None,
     ) -> None:
-        # Initialise the ABC with the inner client's consumers/middleware
-        super().__init__(
-            consumers=list(client._consumers),
-            middleware=list(client._middleware),
-        )
+        super().__init__(interceptors=list(interceptors or []))
         self._client = client
         self._agent_card = agent_card
         self._transport = transport
         self._topic = topic
-        self._interceptors = interceptors or []
 
     # ------------------------------------------------------------------
     # Properties
@@ -107,80 +135,60 @@ class A2AExperimentalClient(Client):
     # Interceptor support
     # ------------------------------------------------------------------
 
-    async def _apply_interceptors(
+    async def add_interceptor(self, interceptor: ClientCallInterceptor) -> None:
+        """Attach an interceptor to this client *and* the inner client."""
+        await super().add_interceptor(interceptor)
+        await self._client.add_interceptor(interceptor)
+
+    async def _build_message(
         self,
-        method_name: str,
-        request_payload: dict[str, Any],
-        context: ClientCallContext | None = None,
-    ) -> dict[str, Any]:
-        """Apply the interceptor chain to the request payload.
+        method: str,
+        request: SendMessageRequest,
+        context: ClientCallContext | None,
+    ) -> Any:
+        """Run ``before`` interceptors and wrap *request* as a transport ``Message``.
 
-        Experimental operations don't use HTTP, so ``http_kwargs`` is
-        passed as an empty dict to satisfy the interceptor ABC contract.
+        *method* is the interceptor-level name (``send_message`` /
+        ``send_message_streaming``); it is mapped to the JSON-RPC method.
         """
-        current_payload = request_payload
-        http_kwargs: dict[str, Any] = {}
-        for interceptor in self._interceptors:
-            current_payload, http_kwargs = await interceptor.intercept(
-                method_name,
-                current_payload,
-                http_kwargs,
-                self._agent_card,
-                context,
-            )
-        return current_payload
+        if context is None and self._interceptors:
+            context = ClientCallContext()
+        request, context = await run_before_interceptors(
+            self._interceptors,
+            method=method,
+            request=request,
+            agent_card=self._agent_card,
+            context=context,
+        )
+        payload = {
+            "jsonrpc": "2.0",
+            "id": str(uuid4()),
+            "method": _WIRE_METHODS[method],
+            "params": MessageToDict(request),
+        }
+        headers: dict[str, str] = {}
+        if context is not None and context.service_parameters:
+            headers.update(context.service_parameters)
+        return message_translator(request=payload, headers=headers), context
 
-    # ------------------------------------------------------------------
-    # Consumer support — fire registered consumers for experimental ops
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _parse_payload(
+        payload: dict[str, Any],
+        status_code: int | None,
+        proto: ProtoMessage,
+    ) -> ProtoMessage:
+        """Parse a raw transport payload (JSON-RPC response) into *proto*.
 
-    async def _consume_response(self, response: SendMessageResponse) -> None:
-        """Extract a consumable event from a ``SendMessageResponse`` and
-        feed it to registered consumers.
-
-        A ``SendMessageResponse`` is a JSON-RPC envelope whose inner
-        result is either a ``Task`` or a ``Message``.  Error responses
-        are silently skipped (no meaningful event to deliver).
+        Identity-auth rejections become a synthetic agent message; JSON-RPC
+        errors raise the matching ``A2AError``.
         """
-        from a2a.types import JSONRPCErrorResponse, SendMessageSuccessResponse
-
-        inner = response.root
-        if isinstance(inner, JSONRPCErrorResponse):
-            return
-
-        if isinstance(inner, SendMessageSuccessResponse):
-            result = inner.result
-            if isinstance(result, Task):
-                await self.consume((result, None), self._agent_card)
-            elif isinstance(result, A2AMessage):
-                await self.consume(result, self._agent_card)
-
-    async def _consume_typed_event(
-        self,
-        event: SendMessageResponse | TaskStatusUpdateEvent | Task,
-    ) -> None:
-        """Consume a typed event produced by streaming experimental methods.
-
-        Handles the three object types that ``broadcast_message_streaming``
-        yields:
-
-        * ``Task`` — consumed as ``(task, None)``
-        * ``TaskStatusUpdateEvent`` — a minimal ``Task`` stub is built from
-          the event's ``task_id`` / ``context_id`` / ``status`` so that
-          consumers receive a ``(task_stub, update)`` pair.
-        * ``SendMessageResponse`` — delegates to ``_consume_response()``.
-        """
-        if isinstance(event, Task):
-            await self.consume((event, None), self._agent_card)
-        elif isinstance(event, TaskStatusUpdateEvent):
-            task_stub = Task(
-                id=event.task_id,
-                contextId=event.context_id,
-                status=event.status,
-            )
-            await self.consume((task_stub, event), self._agent_card)
-        elif isinstance(event, SendMessageResponse):
-            await self._consume_response(event)
+        if payload.get("error") == "forbidden" or status_code == 403:
+            logger.warning("Received forbidden error in A2A response: %s", payload)
+            payload = get_identity_auth_error()
+        elif "error" in payload:
+            raise create_rpc_error(payload["error"])
+        result = payload.get("result", payload)
+        return ParseDict(result, proto, ignore_unknown_fields=True)
 
     # ------------------------------------------------------------------
     # Client ABC — delegate to upstream Client
@@ -188,90 +196,110 @@ class A2AExperimentalClient(Client):
 
     async def send_message(
         self,
-        request: A2AMessage,
+        request: SendMessageRequest,
         *,
         context: ClientCallContext | None = None,
-        request_metadata: dict[str, Any] | None = None,
-        extensions: list[str] | None = None,
-    ) -> AsyncIterator[ClientEvent | A2AMessage]:
+    ) -> AsyncIterator[StreamResponse]:
         """Send a message via the upstream client."""
-        async for event in self._client.send_message(
-            request,
-            context=context,
-            request_metadata=request_metadata,
-            extensions=extensions,
-        ):
+        async for event in self._client.send_message(request, context=context):
             yield event
 
     async def get_task(
         self,
-        request: TaskQueryParams,
+        request: GetTaskRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> Task:
         """Retrieve a task from the upstream client."""
-        return await self._client.get_task(
-            request, context=context, extensions=extensions
-        )
+        return await self._client.get_task(request, context=context)
+
+    async def list_tasks(
+        self,
+        request: ListTasksRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> ListTasksResponse:
+        """List tasks via the upstream client."""
+        return await self._client.list_tasks(request, context=context)
 
     async def cancel_task(
         self,
-        request: TaskIdParams,
+        request: CancelTaskRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> Task:
         """Cancel a task via the upstream client."""
-        return await self._client.cancel_task(
-            request, context=context, extensions=extensions
-        )
+        return await self._client.cancel_task(request, context=context)
 
-    async def set_task_callback(
+    async def create_task_push_notification_config(
         self,
         request: TaskPushNotificationConfig,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> TaskPushNotificationConfig:
-        """Set push notification config via the upstream client."""
-        return await self._client.set_task_callback(
-            request, context=context, extensions=extensions
+        """Create push notification config via the upstream client."""
+        return await self._client.create_task_push_notification_config(
+            request, context=context
         )
 
-    async def get_task_callback(
+    async def get_task_push_notification_config(
         self,
-        request: GetTaskPushNotificationConfigParams,
+        request: GetTaskPushNotificationConfigRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
     ) -> TaskPushNotificationConfig:
         """Get push notification config via the upstream client."""
-        return await self._client.get_task_callback(
-            request, context=context, extensions=extensions
+        return await self._client.get_task_push_notification_config(
+            request, context=context
         )
 
-    async def resubscribe(
+    async def list_task_push_notification_configs(
         self,
-        request: TaskIdParams,
+        request: ListTaskPushNotificationConfigsRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
-    ) -> AsyncIterator[ClientEvent]:
-        """Resubscribe to task updates via the upstream client."""
-        async for event in self._client.resubscribe(
-            request, context=context, extensions=extensions
-        ):
+    ) -> ListTaskPushNotificationConfigsResponse:
+        """List push notification configs via the upstream client."""
+        return await self._client.list_task_push_notification_configs(
+            request, context=context
+        )
+
+    async def delete_task_push_notification_config(
+        self,
+        request: DeleteTaskPushNotificationConfigRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> None:
+        """Delete push notification config via the upstream client."""
+        await self._client.delete_task_push_notification_config(
+            request, context=context
+        )
+
+    async def subscribe(
+        self,
+        request: SubscribeToTaskRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> AsyncIterator[StreamResponse]:
+        """Subscribe to task updates via the upstream client."""
+        async for event in self._client.subscribe(request, context=context):
             yield event
 
-    async def get_card(
+    async def get_extended_agent_card(
         self,
+        request: GetExtendedAgentCardRequest,
         *,
         context: ClientCallContext | None = None,
-        extensions: list[str] | None = None,
+        signature_verifier: Callable[[AgentCard], None] | None = None,
     ) -> AgentCard:
-        """Return the locally-cached agent card."""
-        return self._agent_card
+        """Return the agent card (see ``PatternsClientTransport``)."""
+        return await self._client.get_extended_agent_card(
+            request, context=context, signature_verifier=signature_verifier
+        )
+
+    async def close(self) -> None:
+        """Close the inner client (and with it the underlying transport)."""
+        await self._client.close()
 
     # ------------------------------------------------------------------
     # Experimental operations — broadcast & groupchat via BaseTransport
@@ -279,7 +307,7 @@ class A2AExperimentalClient(Client):
 
     async def broadcast_message(
         self,
-        request: SendMessageRequest | SendStreamingMessageRequest,
+        request: SendMessageRequest,
         *,
         context: ClientCallContext | None = None,
         recipients: List[str] | None = None,
@@ -293,43 +321,51 @@ class A2AExperimentalClient(Client):
         ``A2AResponse``.  This method filters those out and returns
         only the final responses (one per recipient).
         """
-        if not request.id:
-            request.id = str(uuid4())
-
-        payload = request.model_dump(mode="json", exclude_none=True)
-        payload = await self._apply_interceptors("message/send", payload, context)
-        msg = message_translator(request=payload)
+        msg, context = await self._build_message(_METHOD_SEND, request, context)
 
         if not broadcast_topic:
             broadcast_topic = self._topic
 
         expected = len(recipients) if recipients else 1
 
+        stream = self._transport.gather_stream(
+            broadcast_topic,
+            msg,
+            recipients=recipients,
+            timeout=timeout,
+        )
         try:
             broadcast_responses: List[SendMessageResponse] = []
-            async for raw_resp in self._transport.gather_stream(
-                broadcast_topic,
-                msg,
-                recipients=recipients,
-                timeout=timeout,
-            ):
-                try:
-                    # Only collect final A2AResponse messages; skip
-                    # intermediate A2AStatusUpdate messages that streaming
-                    # agents emit.
-                    if raw_resp.type == "A2AStatusUpdate":
-                        continue
-
-                    resp = json.loads(raw_resp.payload.decode("utf-8"))
-                    smr = SendMessageResponse(resp)
-                    await self._consume_response(smr)
-                    broadcast_responses.append(smr)
-
-                    if len(broadcast_responses) >= expected:
-                        break
-                except Exception as e:
-                    logger.error(f"Error decoding JSON response: {e}")
+            finals_received = 0
+            async for raw_resp in stream:
+                # Skip intermediate A2AStatusUpdate messages that streaming
+                # agents emit; every other message (including an error
+                # reply) is one recipient's final response.
+                if raw_resp.type == "A2AStatusUpdate":
                     continue
+
+                try:
+                    resp = json.loads(raw_resp.payload.decode("utf-8"))
+                    smr = self._parse_payload(
+                        resp, raw_resp.status_code, SendMessageResponse()
+                    )
+                    smr = await run_after_interceptors(
+                        self._interceptors,
+                        method=_METHOD_SEND,
+                        result=smr,
+                        agent_card=self._agent_card,
+                        context=context,
+                    )
+                    broadcast_responses.append(smr)
+                except Exception as e:
+                    # A failed final (e.g. a JSON-RPC error reply) is skipped
+                    # but still counts, otherwise we would wait out the full
+                    # timeout for a reply that has already arrived.
+                    logger.error(f"Error decoding JSON response: {e}")
+
+                finals_received += 1
+                if finals_received >= expected:
+                    break
 
             return broadcast_responses
         except (TimeoutError, asyncio.CancelledError):
@@ -339,30 +375,33 @@ class A2AExperimentalClient(Client):
                 f"Error gathering A2A request with transport {self._transport.type()}: {e}"
             )
             return []
+        finally:
+            # ``break`` does not close an async generator; close it now so the
+            # transport releases its sessions instead of at loop shutdown.
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     async def broadcast_message_streaming(
         self,
-        request: SendStreamingMessageRequest,
+        request: SendMessageRequest,
         *,
         context: ClientCallContext | None = None,
         recipients: List[str] | None = None,
         broadcast_topic: str | None = None,
         message_limit: int | None = None,
         timeout: float = 60.0,
-    ) -> AsyncIterator[SendMessageResponse | TaskStatusUpdateEvent | Task]:
+    ) -> AsyncIterator[StreamResponse]:
         """Broadcast with streaming responses, including intermediate status events.
 
-        Yields intermediate ``TaskStatusUpdateEvent`` and ``Task`` objects as
-        they arrive from each recipient, plus a final ``SendMessageResponse``
-        per recipient.  The stream ends after *message_limit* final responses
-        have been received (defaults to ``len(recipients)``).
+        Yields a ``StreamResponse`` for every event as it arrives from each
+        recipient: intermediate ``status_update`` / ``task`` events, plus one
+        final response per recipient.  The stream ends after *message_limit*
+        final responses have been received (defaults to ``len(recipients)``).
         """
-        if not request.id:
-            request.id = str(uuid4())
-
-        payload = request.model_dump(mode="json", exclude_none=True)
-        payload = await self._apply_interceptors("message/send", payload, context)
-        msg = message_translator(request=payload)
+        msg, context = await self._build_message(
+            _METHOD_SEND_STREAMING, request, context
+        )
 
         if not broadcast_topic:
             broadcast_topic = self._topic
@@ -377,78 +416,43 @@ class A2AExperimentalClient(Client):
         # Do NOT pass message_limit to the transport — let it stream
         # everything (intermediates + finals).  We manage the stop
         # condition here based on final response count.
+        stream = self._transport.gather_stream(
+            broadcast_topic,
+            msg,
+            recipients=recipients,
+            timeout=timeout,
+        )
         try:
             finals_received = 0
-            async for raw_resp in self._transport.gather_stream(
-                broadcast_topic,
-                msg,
-                recipients=recipients,
-                timeout=timeout,
-            ):
+            async for raw_resp in stream:
+                # Only A2AStatusUpdate messages are intermediate; every other
+                # message (including an error reply) is one recipient's final.
+                is_final = raw_resp.type != "A2AStatusUpdate"
                 try:
                     logger.debug(raw_resp)
                     resp = json.loads(raw_resp.payload.decode("utf-8"))
 
-                    if resp.get("error") == "forbidden" or raw_resp.status_code == 403:
-                        logger.warning(
-                            f"Received forbidden error in broadcast streaming response: {resp}"
-                        )
-                        error_resp = SendMessageResponse(get_identity_auth_error())
-                        await self._consume_response(error_resp)
-                        yield error_resp
-                        finals_received += 1
-                    elif raw_resp.type == "A2AStatusUpdate":
-                        # Intermediate status event — parse the same way
-                        # PatternsClientTransport.send_message_streaming does.
-                        result = resp.get("result", resp)
-                        if isinstance(result, dict):
-                            kind = result.get("kind")
-                            if kind == "status-update":
-                                event = TaskStatusUpdateEvent.model_validate(result)
-                                await self._consume_typed_event(event)
-                                yield event
-                            elif kind == "task" or "status" in result:
-                                event = Task.model_validate(result)
-                                await self._consume_typed_event(event)
-                                yield event
-                            else:
-                                # Unrecognised intermediate — skip
-                                logger.debug(
-                                    f"Unrecognised A2AStatusUpdate kind: {kind}"
-                                )
-                        continue  # intermediates don't count toward finals
-                    else:
-                        # Final A2AResponse.  For streaming handlers the payload
-                        # is a raw A2A result (e.g. TaskStatusUpdateEvent dump)
-                        # without a JSON-RPC envelope.  For non-streaming
-                        # handlers the payload IS a JSON-RPC response.  Try the
-                        # envelope first; fall back to kind-based parsing.
-                        result = resp.get("result", resp)
-                        if isinstance(result, dict):
-                            kind = result.get("kind")
-                            if kind == "status-update":
-                                event = TaskStatusUpdateEvent.model_validate(result)
-                                await self._consume_typed_event(event)
-                                yield event
-                            elif kind == "task" or "status" in result:
-                                event = Task.model_validate(result)
-                                await self._consume_typed_event(event)
-                                yield event
-                            else:
-                                smr = SendMessageResponse(resp)
-                                await self._consume_response(smr)
-                                yield smr
-                        else:
-                            smr = SendMessageResponse(resp)
-                            await self._consume_response(smr)
-                            yield smr
-                        finals_received += 1
+                    event = self._parse_payload(
+                        resp, raw_resp.status_code, StreamResponse()
+                    )
+                    event = await run_after_interceptors(
+                        self._interceptors,
+                        method=_METHOD_SEND_STREAMING,
+                        result=event,
+                        agent_card=self._agent_card,
+                        context=context,
+                    )
+                    yield event
+                except Exception as e:
+                    # A failed final (e.g. a JSON-RPC error reply) is skipped
+                    # but still counts, otherwise we would wait out the full
+                    # timeout for a reply that has already arrived.
+                    logger.error(f"Error decoding JSON response: {e}")
 
+                if is_final:
+                    finals_received += 1
                     if finals_received >= expected_finals:
                         break
-                except Exception as e:
-                    logger.error(f"Error decoding JSON response: {e}")
-                    continue
         except (TimeoutError, asyncio.CancelledError):
             raise
         except Exception as e:
@@ -456,6 +460,12 @@ class A2AExperimentalClient(Client):
                 f"Error gathering streaming A2A request with transport {self._transport.type()}: {e}"
             )
             return
+        finally:
+            # ``break`` does not close an async generator; close it now so the
+            # transport releases its sessions instead of at loop shutdown.
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     async def start_groupchat(
         self,
@@ -468,12 +478,7 @@ class A2AExperimentalClient(Client):
         end_message: str = "work-done",
     ) -> List[SendMessageResponse]:
         """Start a group chat conversation via transport."""
-        if not init_message.id:
-            init_message.id = str(uuid4())
-
-        payload = init_message.model_dump(mode="json", exclude_none=True)
-        payload = await self._apply_interceptors("message/send", payload, context)
-        msg = message_translator(request=payload)
+        msg, context = await self._build_message(_METHOD_SEND, init_message, context)
         try:
             member_messages = await self._transport.start_conversation(
                 group_channel=group_channel,
@@ -486,8 +491,16 @@ class A2AExperimentalClient(Client):
             for raw_msg in member_messages:
                 try:
                     resp = json.loads(raw_msg.payload.decode("utf-8"))
-                    smr = SendMessageResponse(resp)
-                    await self._consume_response(smr)
+                    smr = self._parse_payload(
+                        resp, raw_msg.status_code, SendMessageResponse()
+                    )
+                    smr = await run_after_interceptors(
+                        self._interceptors,
+                        method=_METHOD_SEND,
+                        result=smr,
+                        agent_card=self._agent_card,
+                        context=context,
+                    )
                     groupchat_messages.append(smr)
                 except Exception as e:
                     logger.error(f"Error decoding JSON response: {e}")
@@ -511,14 +524,14 @@ class A2AExperimentalClient(Client):
         participants: List[str],
         timeout: float = 60,
         end_message: str = "work-done",
-    ) -> AsyncIterator[SendMessageResponse]:
-        """Start a streaming group chat conversation via transport."""
-        if not init_message.id:
-            init_message.id = str(uuid4())
+    ) -> AsyncIterator[StreamResponse]:
+        """Start a streaming group chat conversation via transport.
 
-        payload = init_message.model_dump(mode="json", exclude_none=True)
-        payload = await self._apply_interceptors("message/send", payload, context)
-        msg = message_translator(request=payload)
+        Yields one ``StreamResponse`` per participant message (a superset of
+        ``SendMessageResponse``: it can carry a task, a message, or a status
+        / artifact update).
+        """
+        msg, context = await self._build_message(_METHOD_SEND, init_message, context)
 
         async for raw_member_message in self._transport.start_streaming_conversation(
             group_channel=group_channel,
@@ -528,6 +541,13 @@ class A2AExperimentalClient(Client):
             timeout=timeout,
         ):
             message = json.loads(raw_member_message.payload.decode("utf-8"))
-            smr = SendMessageResponse(message)
-            await self._consume_response(smr)
-            yield smr
+            event = self._parse_payload(
+                message, raw_member_message.status_code, StreamResponse()
+            )
+            yield await run_after_interceptors(
+                self._interceptors,
+                method=_METHOD_SEND,
+                result=event,
+                agent_card=self._agent_card,
+                context=context,
+            )
