@@ -424,7 +424,10 @@ class A2AClientFactory:
 
         import slim_bindings
 
-        from agntcy_app_sdk.transport.slim.common import get_or_init_slim_service
+        from agntcy_app_sdk.transport.slim.common import (
+            get_or_init_slim_service,
+            new_client_config,
+        )
         from slima2a.client_transport import (
             slimrpc_channel_factory as _slimrpc_channel_factory,
         )
@@ -443,7 +446,9 @@ class A2AClientFactory:
         #    endpoint key — avoids "client already connected" when
         #    slimpatterns already holds a connection to the same host.
         rpc_endpoint = rpc_cfg.slim_url.rstrip("/") + "/"
-        rpc_client_config = slim_bindings.new_insecure_client_config(rpc_endpoint)
+        rpc_client_config = new_client_config(
+            rpc_endpoint, insecure=rpc_cfg.tls_insecure
+        )
         conn_id = await service.connect_async(rpc_client_config)
 
         # 3) Create a separate App under a unique name so that the

@@ -14,7 +14,11 @@ from a2a.types import AgentCard
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
-from agntcy_app_sdk.transport.slim.common import get_or_init_slim_service, split_id
+from agntcy_app_sdk.transport.slim.common import (
+    get_or_init_slim_service,
+    new_client_config,
+    split_id,
+)
 
 from slima2a.handler import SRPCHandler
 from slima2a.types.v1.a2a_pb2_slimrpc import add_A2AServiceServicer_to_server
@@ -38,6 +42,8 @@ class SlimRpcConnectionConfig:
     shared_secret: str
     endpoint: str = "http://localhost:46357"
     tls_insecure: bool = True
+    """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3
+    with certificate verification against the system CA pool."""
 
 
 @dataclass
@@ -167,7 +173,9 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         # Open a dedicated connection for slimrpc by appending a trailing
         # slash so the SLIM service sees it as a distinct endpoint key.
         rpc_endpoint = endpoint.rstrip("/") + "/"
-        rpc_client_config = slim_bindings.new_insecure_client_config(rpc_endpoint)
+        rpc_client_config = new_client_config(
+            rpc_endpoint, insecure=self._config.connection.tls_insecure
+        )
         connection_id = await service.connect_async(rpc_client_config)
 
         # Create a separate App under a unique name so that the SLIM

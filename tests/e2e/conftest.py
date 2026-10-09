@@ -525,6 +525,8 @@ def _reset_slim_globals():
     slim_common.global_slim = None
     slim_common.global_slim_service = None
     slim_common.global_connection_id = None
+    slim_common.global_slim_insecure = None
+    slim_common.global_slim_endpoint = None
 
 
 # ---------------------------------------------------------------------------

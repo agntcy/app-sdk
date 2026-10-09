@@ -45,6 +45,10 @@ class SlimRpcConfig:
     secret: str = "secretsecretsecretsecretsecretsecret"
     """Shared secret for SLIM authentication."""
 
+    tls_insecure: bool = True
+    """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3
+    with certificate verification against the system CA pool."""
+
     log_level: Literal["trace", "debug", "info", "warn", "error"] = "info"
     """Log level for the underlying SLIM client."""
 
@@ -73,7 +77,8 @@ class SlimTransportConfig:
     """MLS shared secret.  Must be ≥ 32 characters for SLIM v0.7+."""
 
     tls_insecure: bool = True
-    """Skip TLS certificate verification."""
+    """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3
+    with certificate verification against the system CA pool."""
 
     jwt: str | None = None
     """JWT token for authentication."""
