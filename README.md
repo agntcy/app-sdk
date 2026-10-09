@@ -353,6 +353,19 @@ responses = await client.broadcast_message(
 for resp in responses:
     print(f"Response: {resp}")
 
+# A broadcast only returns normally when *every* recipient replied
+# successfully. Otherwise it raises A2ABroadcastError, which keeps the
+# partial result:
+from agntcy_app_sdk.semantic.a2a import A2ABroadcastError
+
+try:
+    responses = await client.broadcast_message(request, recipients=[...])
+except A2ABroadcastError as err:
+    responses = err.responses             # the successful replies
+    for failure in err.failures:          # error replies, with their sender
+        print(f"{failure.sender} failed: {failure.error}")
+    print(f"missing: {err.missing_recipients or err.missing}")
+
 # Streaming variant — yields a StreamResponse for each event as it arrives
 async for resp in client.broadcast_message_streaming(
     request,
@@ -365,7 +378,12 @@ async for resp in client.broadcast_message_streaming(
     message_limit=3,
 ):
     print(f"Streaming response: {resp}")
+# The streaming variant yields every successful event first, then raises
+# A2ABroadcastError at the end if a final reply failed or never arrived
+# (err.responses is empty there, err.succeeded names who answered).
 ```
+
+**How a missing reply surfaces depends on the transport.** SLIM raises at the `timeout`, so you get `A2ABroadcastTimeoutError` (a subclass of both `A2ABroadcastError` and `TimeoutError`). NATS ends the stream at the `timeout` without raising, so you get a plain `A2ABroadcastError` with `err.missing > 0`. Replies are matched to recipients through the `x-a2a-sender` header that SDK servers set to their topic, so a recipient that replies twice is counted once. `missing_recipients` is only filled when every reply names one of the `recipients`. A recipient that rejects the caller's identity (HTTP 403 / `"forbidden"`) shows up in `err.failures`, not as a reply. Transport failures, such as not being connected or passing no `recipients`, raise the transport's own exception.
 
 </details>
 

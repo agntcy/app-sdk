@@ -18,6 +18,7 @@ from uuid import uuid4
 
 import pytest
 from a2a.client.client import Client, ClientCallContext
+from a2a.client.errors import A2AClientError
 from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
 from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import (
@@ -34,7 +35,7 @@ from a2a.types import (
     Task,
     TaskState,
 )
-from a2a.utils.errors import TaskNotFoundError
+from a2a.utils.errors import InternalError, TaskNotFoundError
 
 from agntcy_app_sdk.semantic.a2a.client.config import (
     ClientConfig,
@@ -43,6 +44,8 @@ from agntcy_app_sdk.semantic.a2a.client.config import (
     SlimTransportConfig,
 )
 from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+    A2ABroadcastError,
+    A2ABroadcastTimeoutError,
     A2AExperimentalClient,
 )
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
@@ -50,6 +53,7 @@ from agntcy_app_sdk.semantic.a2a.client.transports import (
     PatternsClientTransport,
     _parse_topic_from_url,
 )
+from agntcy_app_sdk.semantic.a2a.transport_types import SENDER_HEADER
 
 pytest_plugins = "pytest_asyncio"
 
@@ -137,8 +141,12 @@ def _rpc_response(
     type_: str = "A2AResponse",
     status_code: int = 200,
     error: dict | None = None,
+    sender: str | None = None,
 ) -> MagicMock:
-    """Create a mock transport response with a JSON-RPC payload."""
+    """Create a mock transport response with a JSON-RPC payload.
+
+    *sender* sets the ``x-a2a-sender`` header an SDK server stamps on replies.
+    """
     resp = MagicMock()
     payload: dict = {"jsonrpc": "2.0", "id": "1"}
     if error is not None:
@@ -148,6 +156,7 @@ def _rpc_response(
     resp.payload = json.dumps(payload).encode("utf-8")
     resp.status_code = status_code
     resp.type = type_
+    resp.headers = {SENDER_HEADER: sender} if sender else {}
     return resp
 
 
@@ -183,6 +192,28 @@ def _hanging_gen(*items):
         await asyncio.Event().wait()
 
     return _gen
+
+
+def _timeout_gen(*items):
+    """Like :func:`_async_gen`, then raise ``TimeoutError`` as SLIM does."""
+
+    async def _gen(*_args, **_kwargs):
+        for item in items:
+            yield item
+        raise asyncio.TimeoutError("Timeout while waiting for replies")
+
+    return _gen
+
+
+async def _drain(stream):
+    """Consume a broadcast stream; return ``(events, A2ABroadcastError | None)``."""
+    events, error = [], None
+    try:
+        async for event in stream:
+            events.append(event)
+    except A2ABroadcastError as exc:
+        error = exc
+    return events, error
 
 
 def _sent_rpc(mock_call) -> dict:
@@ -897,27 +928,67 @@ class TestA2AExperimentalClientOperations:
         assert len(events) == 2
 
     @pytest.mark.asyncio
-    async def test_broadcast_forbidden_response_becomes_agent_message(self):
+    async def test_broadcast_forbidden_response_is_a_failure(self):
+        """A refusal is not an answer: it must not count as a success."""
         experimental, mock_transport, _ = _make_experimental()
         forbidden = MagicMock()
         forbidden.payload = json.dumps({"error": "forbidden"}).encode("utf-8")
         forbidden.status_code = 403
         forbidden.type = "A2AResponse"
-        mock_transport.gather_stream = MagicMock(side_effect=_async_gen(forbidden))
-
-        responses = await experimental.broadcast_message(
-            _user_request(), recipients=["a"]
+        forbidden.headers = {SENDER_HEADER: "b"}
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(_message_result("ok"), sender="a"), forbidden
+            )
         )
 
-        assert len(responses) == 1
-        assert "Forbidden" in responses[0].message.parts[0].text
+        with patch(
+            "agntcy_app_sdk.semantic.a2a.client.experimental_patterns.logger"
+        ) as log:
+            with pytest.raises(A2ABroadcastError) as exc_info:
+                await experimental.broadcast_message(
+                    _user_request(), recipients=["a", "b"]
+                )
 
-    # -- error replies must count as finals (regression: used to hang) -----
+        err = exc_info.value
+        assert [r.message.parts[0].text for r in err.responses] == ["ok"]
+        assert len(err.failures) == 1 and err.failures[0].sender == "b"
+        assert isinstance(err.failures[0].error, A2AClientError)
+        assert "forbidden" in str(err.failures[0].error).lower()
+        assert any(
+            "Broadcast recipient 'b' refused access" in str(c)
+            for c in log.warning.call_args_list
+        )
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_error_reply_counts_as_final(self):
-        """An error reply is skipped but must not make the call wait for the
-        transport timeout (the transport here never ends on its own)."""
+    async def test_broadcast_streaming_forbidden_by_status_code_is_a_failure(self):
+        """A bare 403 (no ``"forbidden"`` body) is a refusal too."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response(_message_result(), status_code=403))
+        )
+
+        events, error = await _drain(
+            experimental.broadcast_message_streaming(_user_request())
+        )
+
+        assert events == []
+        assert error is not None
+        assert isinstance(error.errors[0], A2AClientError)
+
+    def test_groupchat_parsing_keeps_forbidden_as_message(self):
+        """Group chat still uses the synthetic message (unchanged)."""
+        smr = A2AExperimentalClient._parse_payload(
+            {"error": "forbidden"}, 403, SendMessageResponse()
+        )
+        assert "Forbidden" in smr.message.parts[0].text
+
+    # -- error replies: count as finals (no hang) AND surface as an error ----
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_error_reply_raises_without_hanging(self):
+        """An error reply must not make the call wait for the transport timeout
+        (the transport here never ends on its own) and must not be silent."""
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -926,16 +997,21 @@ class TestA2AExperimentalClientOperations:
             )
         )
 
-        responses = await asyncio.wait_for(
-            experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
-            timeout=_HANG_GUARD_S,
-        )
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await asyncio.wait_for(
+                experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
+                timeout=_HANG_GUARD_S,
+            )
 
-        assert len(responses) == 1
-        assert responses[0].message.parts[0].text == "ok"
+        err = exc_info.value
+        assert err.received == 2
+        assert len(err.errors) == 1 and isinstance(err.errors[0], InternalError)
+        # The healthy recipient's reply is not lost.
+        assert [r.message.parts[0].text for r in err.responses] == ["ok"]
+        assert "boom" in str(err)
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_all_error_replies_return_empty(self):
+    async def test_broadcast_message_all_error_replies_raise(self):
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -943,15 +1019,17 @@ class TestA2AExperimentalClientOperations:
             )
         )
 
-        responses = await asyncio.wait_for(
-            experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
-            timeout=_HANG_GUARD_S,
-        )
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await asyncio.wait_for(
+                experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
+                timeout=_HANG_GUARD_S,
+            )
 
-        assert responses == []
+        assert len(exc_info.value.errors) == 2
+        assert exc_info.value.responses == []
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_undecodable_reply_counts_as_final(self):
+    async def test_broadcast_message_undecodable_reply_raises_and_logs_decoding(self):
         experimental, mock_transport, _ = _make_experimental()
         garbage = MagicMock()
         garbage.payload = b"not json"
@@ -961,12 +1039,61 @@ class TestA2AExperimentalClientOperations:
             side_effect=_hanging_gen(_rpc_response(_message_result("ok")), garbage)
         )
 
-        responses = await asyncio.wait_for(
-            experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
-            timeout=_HANG_GUARD_S,
+        with patch(
+            "agntcy_app_sdk.semantic.a2a.client.experimental_patterns.logger"
+        ) as log:
+            with pytest.raises(A2ABroadcastError) as exc_info:
+                await asyncio.wait_for(
+                    experimental.broadcast_message(
+                        _user_request(), recipients=["a", "b"]
+                    ),
+                    timeout=_HANG_GUARD_S,
+                )
+
+        assert isinstance(exc_info.value.errors[0], json.JSONDecodeError)
+        assert len(exc_info.value.responses) == 1
+        # A genuine decode failure keeps the "decoding" heading.
+        assert any(
+            "Error decoding JSON response" in str(c) for c in log.error.call_args_list
         )
 
-        assert len(responses) == 1
+    @pytest.mark.asyncio
+    async def test_broadcast_message_rpc_error_is_not_logged_as_decoding(self):
+        """A well-formed JSON-RPC error is the recipient's failure, not a
+        decoding problem, so it must not be logged as one."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(_rpc_response(error=_RPC_ERROR))
+        )
+
+        with patch(
+            "agntcy_app_sdk.semantic.a2a.client.experimental_patterns.logger"
+        ) as log:
+            with pytest.raises(A2ABroadcastError):
+                await asyncio.wait_for(
+                    experimental.broadcast_message(_user_request()),
+                    timeout=_HANG_GUARD_S,
+                )
+
+        assert not any("Error decoding" in str(c) for c in log.error.call_args_list)
+        assert log.warning.called
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_non_object_payload_is_a_decode_error(self):
+        experimental, mock_transport, _ = _make_experimental()
+        weird = MagicMock()
+        weird.payload = b"[1, 2]"
+        weird.status_code = 200
+        weird.type = "A2AResponse"
+        mock_transport.gather_stream = MagicMock(side_effect=_hanging_gen(weird))
+
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await asyncio.wait_for(
+                experimental.broadcast_message(_user_request()),
+                timeout=_HANG_GUARD_S,
+            )
+
+        assert isinstance(exc_info.value.errors[0], ValueError)
 
     @pytest.mark.asyncio
     async def test_broadcast_message_status_updates_do_not_count_as_finals(self):
@@ -981,15 +1108,34 @@ class TestA2AExperimentalClientOperations:
             )
         )
 
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await asyncio.wait_for(
+                experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
+                timeout=_HANG_GUARD_S,
+            )
+
+        assert exc_info.value.received == 2
+        assert [r.message.parts[0].text for r in exc_info.value.responses] == ["late"]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_without_errors_does_not_raise(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(_message_result("one")),
+                _rpc_response(_message_result("two")),
+            )
+        )
+
         responses = await asyncio.wait_for(
             experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
             timeout=_HANG_GUARD_S,
         )
 
-        assert [r.message.parts[0].text for r in responses] == ["late"]
+        assert [r.message.parts[0].text for r in responses] == ["one", "two"]
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_error_reply_counts_as_final(self):
+    async def test_broadcast_message_streaming_error_reply_raises_after_events(self):
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -998,17 +1144,19 @@ class TestA2AExperimentalClientOperations:
             )
         )
 
-        async def _collect():
-            return [
-                e
-                async for e in experimental.broadcast_message_streaming(
+        events, error = await asyncio.wait_for(
+            _drain(
+                experimental.broadcast_message_streaming(
                     _user_request(), recipients=["a", "b"]
                 )
-            ]
+            ),
+            timeout=_HANG_GUARD_S,
+        )
 
-        events = await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S)
-
+        # Every successful event reaches the caller before the error.
         assert [get_stream_response_text(e) for e in events] == ["ok"]
+        assert error is not None and error.received == 2
+        assert isinstance(error.errors[0], InternalError)
 
     @pytest.mark.asyncio
     async def test_broadcast_message_streaming_error_reply_first(self):
@@ -1021,20 +1169,20 @@ class TestA2AExperimentalClientOperations:
             )
         )
 
-        async def _collect():
-            return [
-                e
-                async for e in experimental.broadcast_message_streaming(
+        events, error = await asyncio.wait_for(
+            _drain(
+                experimental.broadcast_message_streaming(
                     _user_request(), recipients=["a", "b"]
                 )
-            ]
-
-        events = await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S)
+            ),
+            timeout=_HANG_GUARD_S,
+        )
 
         assert [get_stream_response_text(e) for e in events] == ["ok"]
+        assert error is not None and len(error.errors) == 1
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_all_error_replies_end_stream(self):
+    async def test_broadcast_message_streaming_all_error_replies_raise(self):
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -1042,15 +1190,17 @@ class TestA2AExperimentalClientOperations:
             )
         )
 
-        async def _collect():
-            return [
-                e
-                async for e in experimental.broadcast_message_streaming(
+        events, error = await asyncio.wait_for(
+            _drain(
+                experimental.broadcast_message_streaming(
                     _user_request(), recipients=["a", "b"]
                 )
-            ]
+            ),
+            timeout=_HANG_GUARD_S,
+        )
 
-        assert await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S) == []
+        assert events == []
+        assert error is not None and len(error.errors) == 2
 
     @pytest.mark.asyncio
     async def test_broadcast_message_streaming_status_updates_not_counted(self):
@@ -1069,17 +1219,17 @@ class TestA2AExperimentalClientOperations:
             )
         )
 
-        async def _collect():
-            return [
-                e
-                async for e in experimental.broadcast_message_streaming(
+        events, error = await asyncio.wait_for(
+            _drain(
+                experimental.broadcast_message_streaming(
                     _user_request(), recipients=["a", "b"]
                 )
-            ]
-
-        events = await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S)
+            ),
+            timeout=_HANG_GUARD_S,
+        )
 
         assert [get_stream_response_text(e) for e in events] == ["w1", "w2", "late"]
+        assert error is not None and error.received == 2
 
     @pytest.mark.asyncio
     async def test_broadcast_message_streaming_honors_message_limit_with_errors(self):
@@ -1092,17 +1242,379 @@ class TestA2AExperimentalClientOperations:
             )
         )
 
-        async def _collect():
-            return [
-                e
-                async for e in experimental.broadcast_message_streaming(
+        events, error = await asyncio.wait_for(
+            _drain(
+                experimental.broadcast_message_streaming(
                     _user_request(), recipients=["a", "b", "c"], message_limit=2
                 )
-            ]
-
-        events = await asyncio.wait_for(_collect(), timeout=_HANG_GUARD_S)
+            ),
+            timeout=_HANG_GUARD_S,
+        )
 
         assert [get_stream_response_text(e) for e in events] == ["one"]
+        assert error is not None and error.received == 2
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_malformed_intermediate_is_skipped(self):
+        """Only *final* failures fail the call; a bad status update is logged."""
+        experimental, mock_transport, _ = _make_experimental()
+        garbage = MagicMock()
+        garbage.payload = b"not json"
+        garbage.status_code = 200
+        garbage.type = "A2AStatusUpdate"
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(garbage, _rpc_response(_message_result("ok")))
+        )
+
+        events, error = await asyncio.wait_for(
+            _drain(experimental.broadcast_message_streaming(_user_request())),
+            timeout=_HANG_GUARD_S,
+        )
+
+        assert [get_stream_response_text(e) for e in events] == ["ok"]
+        assert error is None
+
+    # -- missing replies, timeouts, sender identity ------------------------
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_stream_ending_early_raises(self):
+        """NATS ends the stream at its timeout without raising: a missing
+        reply must not be reported as success."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response(_message_result("ok"), sender="a"))
+        )
+
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await experimental.broadcast_message(_user_request(), recipients=["a", "b"])
+
+        err = exc_info.value
+        assert not isinstance(err, TimeoutError)
+        assert err.timed_out is False
+        assert (err.expected, err.received, err.missing) == (2, 1, 1)
+        assert err.missing_recipients == ["b"]
+        assert err.failures == []
+        assert [r.message.parts[0].text for r in err.responses] == ["ok"]
+        assert err.succeeded == ["a"]
+        assert "1 of 2" in str(err) and "1 missing [b]" in str(err)
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_empty_stream_raises(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(side_effect=_async_gen())
+
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await experimental.broadcast_message(_user_request(), recipients=["a", "b"])
+
+        assert exc_info.value.missing_recipients == ["a", "b"]
+        assert exc_info.value.responses == []
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_transport_timeout_keeps_partial_responses(self):
+        """SLIM raises at its timeout: the replies already received survive."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_timeout_gen(
+                _rpc_response(_message_result("ok"), sender="a"),
+                _rpc_response(error=_RPC_ERROR, sender="b"),
+            )
+        )
+
+        with pytest.raises(A2ABroadcastTimeoutError) as exc_info:
+            await experimental.broadcast_message(
+                _user_request(), recipients=["a", "b", "c"]
+            )
+
+        err = exc_info.value
+        # Existing ``except TimeoutError`` handlers still catch it.
+        assert isinstance(err, TimeoutError)
+        assert isinstance(err, asyncio.TimeoutError)
+        assert isinstance(err, A2ABroadcastError)
+        assert err.timed_out is True
+        assert isinstance(err.__cause__, asyncio.TimeoutError)
+        assert [r.message.parts[0].text for r in err.responses] == ["ok"]
+        assert [f.sender for f in err.failures] == ["b"]
+        assert err.missing_recipients == ["c"]
+        assert str(err).startswith("Broadcast timed out")
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_failure_names_its_sender(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response(_message_result("ok"), sender="a"),
+                _rpc_response(error=_RPC_ERROR, sender="b"),
+            )
+        )
+
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await asyncio.wait_for(
+                experimental.broadcast_message(_user_request(), recipients=["a", "b"]),
+                timeout=_HANG_GUARD_S,
+            )
+
+        err = exc_info.value
+        assert len(err.failures) == 1
+        assert err.failures[0].sender == "b"
+        assert isinstance(err.failures[0].error, InternalError)
+        assert err.errors == [err.failures[0].error]
+        assert err.succeeded == ["a"]
+        assert err.missing_recipients == []
+        assert "b: InternalError" in str(err)
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_duplicate_final_does_not_count_twice(self):
+        """One recipient answering twice must not stand in for a silent one."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(_message_result("first"), sender="a"),
+                _rpc_response(_message_result("again"), sender="a"),
+            )
+        )
+
+        with patch(
+            "agntcy_app_sdk.semantic.a2a.client.experimental_patterns.logger"
+        ) as log:
+            with pytest.raises(A2ABroadcastError) as exc_info:
+                await experimental.broadcast_message(
+                    _user_request(), recipients=["a", "b"]
+                )
+
+        err = exc_info.value
+        assert err.received == 1
+        assert [r.message.parts[0].text for r in err.responses] == ["first"]
+        assert err.missing_recipients == ["b"]
+        assert any("duplicate" in str(c) for c in log.warning.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_anonymous_replies_are_counted(self):
+        """Replies without a sender header (older servers) still count, but
+        the missing recipients can no longer be named."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(_message_result("one")),
+                _rpc_response(_message_result("two")),
+            )
+        )
+
+        responses = await experimental.broadcast_message(
+            _user_request(), recipients=["a", "b"]
+        )
+        assert len(responses) == 2
+
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response(_message_result("one")))
+        )
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await experimental.broadcast_message(_user_request(), recipients=["a", "b"])
+        assert exc_info.value.missing == 1
+        assert exc_info.value.missing_recipients == []
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_unknown_sender_does_not_guess_missing(self):
+        """A sender id that is not one of the recipient names (e.g. a SLIM
+        topic that differs from its app name) must not make the client
+        blame a recipient that may well have answered."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response(_message_result(), sender="x"))
+        )
+
+        with pytest.raises(A2ABroadcastError) as exc_info:
+            await experimental.broadcast_message(_user_request(), recipients=["a", "b"])
+
+        assert exc_info.value.missing == 1
+        assert exc_info.value.missing_recipients == []
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_bad_result_is_logged_as_decoding(self):
+        """A reply with a ``result`` that does not fit the schema is a decode
+        problem, not the recipient replying with an error."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(
+                _rpc_response({"message": {"parts": "not a list"}}, sender="a")
+            )
+        )
+
+        with patch(
+            "agntcy_app_sdk.semantic.a2a.client.experimental_patterns.logger"
+        ) as log:
+            with pytest.raises(A2ABroadcastError):
+                await asyncio.wait_for(
+                    experimental.broadcast_message(_user_request(), recipients=["a"]),
+                    timeout=_HANG_GUARD_S,
+                )
+
+        assert any(
+            "Error decoding JSON response from 'a'" in str(c)
+            for c in log.error.call_args_list
+        )
+        assert not any(
+            "replied with an error" in str(c) for c in log.warning.call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_error_reply_log_names_sender(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_hanging_gen(_rpc_response(error=_RPC_ERROR, sender="b"))
+        )
+
+        with patch(
+            "agntcy_app_sdk.semantic.a2a.client.experimental_patterns.logger"
+        ) as log:
+            with pytest.raises(A2ABroadcastError):
+                await asyncio.wait_for(
+                    experimental.broadcast_message(_user_request(), recipients=["b"]),
+                    timeout=_HANG_GUARD_S,
+                )
+
+        assert any(
+            "Broadcast recipient 'b' replied with an error" in str(c)
+            for c in log.warning.call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_stream_ending_early_raises(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(
+                    _status_result("TASK_STATE_WORKING", "w"),
+                    type_="A2AStatusUpdate",
+                    sender="b",
+                ),
+                _rpc_response(_message_result("ok"), sender="a"),
+            )
+        )
+
+        events, error = await _drain(
+            experimental.broadcast_message_streaming(
+                _user_request(), recipients=["a", "b"]
+            )
+        )
+
+        # Events are yielded first; a status update from "b" is not a final.
+        assert [get_stream_response_text(e) for e in events] == ["w", "ok"]
+        assert error is not None and not isinstance(error, TimeoutError)
+        assert error.missing_recipients == ["b"]
+        assert error.succeeded == ["a"]
+        assert error.responses == []
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_transport_timeout_raises(self):
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_timeout_gen(_rpc_response(_message_result("ok"), sender="a"))
+        )
+
+        events, error = await _drain(
+            experimental.broadcast_message_streaming(
+                _user_request(), recipients=["a", "b"]
+            )
+        )
+
+        assert [get_stream_response_text(e) for e in events] == ["ok"]
+        assert isinstance(error, A2ABroadcastTimeoutError)
+        assert isinstance(error, TimeoutError)
+        assert error.missing_recipients == ["b"]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_partial_limit_names_no_one(self):
+        """With message_limit below len(recipients) any subset may answer, so
+        a shortfall cannot be pinned on particular recipients."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.gather_stream = MagicMock(
+            side_effect=_async_gen(_rpc_response(_message_result("ok"), sender="a"))
+        )
+
+        _, error = await _drain(
+            experimental.broadcast_message_streaming(
+                _user_request(), recipients=["a", "b", "c"], message_limit=2
+            )
+        )
+
+        assert error is not None and error.missing == 1
+        assert error.missing_recipients == []
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_transport_failure_propagates(self):
+        """A broadcast that never went out must not look like "no replies"."""
+        experimental, mock_transport, _ = _make_experimental()
+        closed = asyncio.Event()
+
+        async def _gen(*_args, **_kwargs):
+            try:
+                raise RuntimeError("NATS client is not connected")
+                yield  # pragma: no cover - makes this an async generator
+            finally:
+                closed.set()
+
+        mock_transport.gather_stream = MagicMock(side_effect=_gen)
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            await experimental.broadcast_message(_user_request(), recipients=["a"])
+        assert closed.is_set()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_missing_recipients_error_propagates(self):
+        experimental, mock_transport, _ = _make_experimental()
+
+        async def _gen(*_args, recipients=None, **_kwargs):
+            if not recipients:
+                raise ValueError("recipients list must be provided")
+            yield  # pragma: no cover
+
+        mock_transport.gather_stream = MagicMock(side_effect=_gen)
+
+        with pytest.raises(ValueError, match="recipients"):
+            await experimental.broadcast_message(_user_request())
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_transport_failure_propagates(self):
+        experimental, mock_transport, _ = _make_experimental()
+
+        async def _gen(*_args, **_kwargs):
+            yield _rpc_response(_message_result("ok"), sender="a")
+            raise RuntimeError("publish failed")
+
+        mock_transport.gather_stream = MagicMock(side_effect=_gen)
+
+        events = []
+        with pytest.raises(RuntimeError, match="publish failed"):
+            async for event in experimental.broadcast_message_streaming(
+                _user_request(), recipients=["a", "b"]
+            ):
+                events.append(event)
+        assert [get_stream_response_text(e) for e in events] == ["ok"]
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_early_stop_does_not_raise(self):
+        """A caller that stops iterating gets no error for replies it did
+        not wait for, and the transport stream is closed."""
+        experimental, mock_transport, _ = _make_experimental()
+        closed = asyncio.Event()
+
+        async def _gen(*_args, **_kwargs):
+            try:
+                yield _rpc_response(_message_result("one"), sender="a")
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+
+        mock_transport.gather_stream = MagicMock(side_effect=_gen)
+
+        stream = experimental.broadcast_message_streaming(
+            _user_request(), recipients=["a", "b"]
+        )
+        async for _event in stream:
+            break
+        await stream.aclose()
+
+        assert closed.is_set()
 
     @pytest.mark.asyncio
     async def test_start_groupchat(self):

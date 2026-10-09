@@ -69,6 +69,7 @@ from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.card_utils import add_interface, clone_card
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
+from agntcy_app_sdk.semantic.a2a.transport_types import SENDER_HEADER
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 
@@ -151,14 +152,26 @@ class A2AExperimentalServer:
     full ASGI / Starlette stack that is unnecessary for non-HTTP transports.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, sender_id: str | None = None) -> None:
+        """
+        Args:
+            sender_id: This server's identity, stamped on every reply in the
+                ``x-a2a-sender`` header so broadcast clients can attribute
+                replies.  :class:`A2AExperimentalServerHandler` passes its
+                topic.  ``None`` sends no header.
+        """
         self._server: A2AServerConfig | None = None
         self._handler: Any | None = None
         self._auth_enabled: bool = False
         self._identity_sdk: IdentityServiceSdk | None = None
+        self._sender_id = sender_id
 
     def type(self):
         return "A2A"
+
+    def _reply_headers(self) -> dict[str, str]:
+        """Headers for every reply this server sends (its sender identity)."""
+        return {SENDER_HEADER: self._sender_id} if self._sender_id else {}
 
     @staticmethod
     def create_transport_uri(
@@ -453,6 +466,7 @@ class A2AExperimentalServer:
                 type="A2AResponse",
                 payload=payload,
                 reply_to=message.reply_to,
+                headers=self._reply_headers(),
             )
 
         try:
@@ -584,7 +598,10 @@ class A2AExperimentalServer:
 
         def _reply(payload: bytes) -> Message:
             return Message(
-                type="A2AResponse", payload=payload, reply_to=message.reply_to
+                type="A2AResponse",
+                payload=payload,
+                reply_to=message.reply_to,
+                headers=self._reply_headers(),
             )
 
         stream = getattr(self._handler, handler_attr)(typed_request, context)
@@ -602,6 +619,7 @@ class A2AExperimentalServer:
                             type="A2AStatusUpdate",
                             payload=_envelope(last_item),
                             reply_to=message.reply_to,
+                            headers=self._reply_headers(),
                         )
                     )
                 last_item = item
@@ -654,7 +672,8 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
             )
 
         super().__init__(server, transport=transport, topic=topic)
-        self._protocol = A2AExperimentalServer()
+        # The topic is what broadcast clients name in ``recipients``.
+        self._protocol = A2AExperimentalServer(sender_id=topic)
 
     # -- agent_card property (required by BaseA2AServerHandler) -----------
 

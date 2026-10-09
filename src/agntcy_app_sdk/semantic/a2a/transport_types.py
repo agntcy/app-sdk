@@ -12,6 +12,11 @@ form before matching or dispatch.
 
 from __future__ import annotations
 
+# Header an experimental (SLIM / NATS patterns) A2A server stamps on every
+# reply with its own identity (the topic it subscribed to, i.e. the name
+# broadcast ``recipients`` refer to), so a broadcast client can tell which
+# recipient a reply came from.
+SENDER_HEADER = "x-a2a-sender"
 
 # ---------------------------------------------------------------------------
 # Interface transport types — valid values for ``AgentInterface.protocol_binding``

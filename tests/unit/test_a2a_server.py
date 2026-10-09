@@ -47,6 +47,7 @@ from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
     A2AExperimentalServer,
     A2AExperimentalServerHandler,
 )
+from agntcy_app_sdk.semantic.a2a.transport_types import SENDER_HEADER
 from agntcy_app_sdk.semantic.message import Message
 from tests.server.agent_executor import (
     HelloWorldAgentExecutor,
@@ -713,6 +714,73 @@ class TestPatternsBridgeProtocol:
         assert reply["result"]["statusUpdate"]["status"]["state"] == (
             "TASK_STATE_COMPLETED"
         )
+
+    @staticmethod
+    def _send(method: str = "SendMessage") -> Message:
+        return Message(
+            type="A2ARequest",
+            payload=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "h1",
+                    "method": method,
+                    "params": MessageToDict(_user_request()),
+                }
+            ).encode(),
+            headers={},
+        )
+
+    @pytest.mark.asyncio
+    async def test_reply_carries_sender_header(self):
+        server = A2AExperimentalServer(sender_id="org/ns/agent_a")
+        server.bind_server(_config())
+
+        reply = await server.handle_message(self._send())
+
+        assert reply.headers[SENDER_HEADER] == "org/ns/agent_a"
+
+    @pytest.mark.asyncio
+    async def test_error_reply_carries_sender_header(self):
+        server = A2AExperimentalServer(sender_id="agent_a")
+        server.bind_server(_config())
+
+        reply = await server.handle_message(
+            Message(type="A2ARequest", payload=b"{not json", headers={})
+        )
+
+        assert reply.headers[SENDER_HEADER] == "agent_a"
+
+    @pytest.mark.asyncio
+    async def test_streaming_replies_carry_sender_header(self):
+        server = A2AExperimentalServer(sender_id="agent_s")
+        server.bind_server(_config(streaming=True))
+        published: list[Message] = []
+
+        async def _publish(msg: Message) -> None:
+            published.append(msg)
+
+        reply = await server.handle_message(
+            self._send("SendStreamingMessage"), publish_fn=_publish
+        )
+
+        assert published
+        assert all(m.headers[SENDER_HEADER] == "agent_s" for m in published)
+        assert reply.headers[SENDER_HEADER] == "agent_s"
+
+    @pytest.mark.asyncio
+    async def test_without_sender_id_no_header_is_added(self):
+        server, _ = _loopback(streaming=False)
+
+        reply = await server.handle_message(self._send())
+
+        assert SENDER_HEADER not in (reply.headers or {})
+
+    def test_handler_stamps_its_topic(self):
+        handler = A2AExperimentalServerHandler(
+            _config(), transport=_mock_transport("NATS"), topic="agent_t"
+        )
+
+        assert handler._protocol._sender_id == "agent_t"
 
 
 class TestPatternsBridgeIdentityAuth:
