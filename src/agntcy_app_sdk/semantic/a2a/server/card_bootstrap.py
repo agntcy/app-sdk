@@ -51,7 +51,11 @@ from urllib.parse import urlparse
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.transport_types import (
     CANONICAL_TRANSPORTS as _CANONICAL_TRANSPORTS,
+)
+from agntcy_app_sdk.semantic.a2a.transport_types import (
     InterfaceTransport,
+)
+from agntcy_app_sdk.semantic.a2a.transport_types import (
     normalize_transport as _normalize_transport,
 )
 
@@ -312,6 +316,7 @@ class CardBuilder:
         self._overrides: dict[str, object] = {}  # canonical transport_type -> pre-built
         self._skips: set[str] = set()  # canonical transport_types to skip
         self._shared_secret: str | None = None
+        self._http_bind_host: str | None = None
 
     # -- Fluent setters -----------------------------------------------------
 
@@ -343,6 +348,18 @@ class CardBuilder:
         time if neither is available and a SLIM-based transport is declared.
         """
         self._shared_secret = secret
+        return self
+
+    def with_http_bind_host(self, host: str) -> CardBuilder:
+        """Set the interface JSONRPC/HTTP interfaces bind to.
+
+        This is independent of the advertised card URL host. When not
+        called, the bind host is resolved from the
+        ``AGNTCY_A2A_HTTP_BIND_HOST`` environment variable, falling back to
+        ``0.0.0.0`` (bind all interfaces).  Use ``127.0.0.1`` to restrict
+        binding to loopback.
+        """
+        self._http_bind_host = host
         return self
 
     # -- Terminal operations ------------------------------------------------
@@ -574,13 +591,16 @@ class CardBuilder:
                     continue
 
                 app_target = override if override is not None else a2a_app
-                (
+                builder = (
                     session.add(app_target)
                     .with_host(str(parsed["host"]))
                     .with_port(int(parsed["port"]))
                     .with_session_id(session_id)
-                    .build()
                 )
+
+                if self._http_bind_host is not None:
+                    builder.with_bind_host(self._http_bind_host)
+                builder.build()
 
         if dry_run:
             return plan

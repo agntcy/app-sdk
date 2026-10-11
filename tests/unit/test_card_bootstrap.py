@@ -704,6 +704,7 @@ class TestCardBuilderBuildsContainers:
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
         mock_builder.with_port.return_value = mock_builder
+        mock_builder.with_bind_host.return_value = mock_builder
         mock_builder.with_session_id.return_value = mock_builder
         mock_builder.build.return_value = MagicMock()
 
@@ -717,7 +718,7 @@ class TestCardBuilderBuildsContainers:
             interfaces=[
                 AgentInterface(
                     transport="jsonrpc",
-                    url="http://0.0.0.0:9999",
+                    url="http://example.com:9999",
                 )
             ]
         )
@@ -725,13 +726,48 @@ class TestCardBuilderBuildsContainers:
         builder = CardBuilder(session, card, handler)
         builder.with_factory(factory)
 
-        await builder.start()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGNTCY_A2A_HTTP_BIND_HOST", None)
+            await builder.start()
 
         session.add.assert_called_once()
-        mock_builder.with_host.assert_called_once_with("0.0.0.0")
+        mock_builder.with_host.assert_called_once_with("example.com")
         mock_builder.with_port.assert_called_once_with(9999)
+        mock_builder.with_bind_host.assert_not_called()
         mock_builder.with_session_id.assert_called_once_with("http-0")
         session.start_all_sessions.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_http_bind_host_setter_forwarded(self):
+        """`.with_http_bind_host()` is forwarded to the container builder."""
+        mock_builder = MagicMock()
+        mock_builder.with_host.return_value = mock_builder
+        mock_builder.with_port.return_value = mock_builder
+        mock_builder.with_bind_host.return_value = mock_builder
+        mock_builder.with_session_id.return_value = mock_builder
+        mock_builder.build.return_value = MagicMock()
+
+        session = MagicMock()
+        session.add.return_value = mock_builder
+        session.start_all_sessions = AsyncMock()
+
+        card = _make_card(
+            interfaces=[
+                AgentInterface(transport="jsonrpc", url="http://example.com:9999")
+            ]
+        )
+        handler = MagicMock()
+        builder = CardBuilder(session, card, handler)
+        builder.with_factory(MagicMock())
+        builder.with_http_bind_host("127.0.0.1")
+
+        with patch.dict(
+            os.environ, {"AGNTCY_A2A_HTTP_BIND_HOST": "10.0.0.1"}, clear=False
+        ):
+            await builder.start()
+
+        mock_builder.with_host.assert_called_once_with("example.com")
+        mock_builder.with_bind_host.assert_called_once_with("127.0.0.1")
 
     @pytest.mark.asyncio
     async def test_builds_slim_container_topic_only(self):
@@ -1381,6 +1417,7 @@ class TestCardBuilderSkip:
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
         mock_builder.with_port.return_value = mock_builder
+        mock_builder.with_bind_host.return_value = mock_builder
         mock_builder.with_session_id.return_value = mock_builder
         mock_builder.build.return_value = MagicMock()
 

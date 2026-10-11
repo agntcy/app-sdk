@@ -480,8 +480,10 @@ if __name__ == "__main__":
   - `.with_factory(factory)` — reuse an existing `AgntcyFactory` (auto-created if omitted)
   - `.skip(transport_type)` — exclude a specific transport (e.g., `.skip("jsonrpc")`)
   - `.override(transport_type, target)` — supply a pre-built transport or config for a specific interface
+  - `.with_http_bind_host(host)` — set the interface `jsonrpc`/`http` servers bind to, decoupled from the advertised card URL host
   - `.dry_run()` — returns a `ServeCardPlan` describing what _would_ be started, without starting anything
 - **`SLIM_SHARED_SECRET`:** Required environment variable for any SLIM-based transport. Set it before calling `start()`.
+- **JSONRPC/HTTP bind host:** `jsonrpc`/`http` interfaces bind all interfaces (`0.0.0.0`) by default, decoupled from the advertised card URL host. This lets you advertise a routable DNS name (e.g. a Kubernetes Service) while still binding correctly inside the pod. Override with `.with_http_bind_host("127.0.0.1")` or the `AGNTCY_A2A_HTTP_BIND_HOST` env var (precedence: setter > env > `0.0.0.0`).
 - **URL formats:** Each interface URL supports two styles:
   - **Topic-only:** `slim://my_topic` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`)
   - **Explicit endpoint:** `slim://host:46357/my_topic` — endpoint extracted from the URL
