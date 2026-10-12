@@ -24,6 +24,7 @@ Each transport accepts **two** URL styles:
 **Topic-only** (compatible with ``create_transport_uri`` / client cards)::
 
     AgentInterface(protocol_binding="slimpatterns", url="slim://my_topic")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://org/ns/agent")
     AgentInterface(protocol_binding="natspatterns", url="nats://my_topic")
     AgentInterface(protocol_binding="slimrpc",     url="slim://org/ns/agent")
 
@@ -33,12 +34,19 @@ defaulting to ``localhost`` with the standard port.
 **Explicit endpoint** (endpoint + path encoded in one URL)::
 
     AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/my_topic")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/org/ns/agent")
     AgentInterface(protocol_binding="natspatterns", url="nats://host:4222/my_topic")
     AgentInterface(protocol_binding="slimrpc",     url="slim://host:46357/org/ns/agent")
 
-Detection heuristic: if ``urlparse`` finds a port **or** a non-empty path,
-the URL is treated as ``scheme://host[:port]/path``; otherwise the
-authority segment is the topic/identity itself.
+Detection heuristic:
+
+- **SLIM** (``slim``, ``slimpatterns``, ``slimrpc``): a port marks an
+  explicit endpoint. Without a port the whole remainder is the name, so
+  ``slim://org/ns/agent`` is the identity ``org/ns/agent`` on the default
+  dataplane. A path alone is not a host.
+- **NATS**: a port **or** a non-empty path marks an explicit endpoint
+  (``nats://host:4222/topic``, ``nats://host/topic``). Otherwise the
+  authority segment is the topic.
 """
 
 from __future__ import annotations
@@ -106,21 +114,43 @@ def _resolve_nats_endpoint() -> str:
 
 
 def _has_explicit_endpoint(parsed_url: object) -> bool:
-    """Determine whether a ``urlparse`` result contains a real host:port.
+    """Whether a NATS URL names a host rather than a bare topic.
 
-    Returns ``True`` when the URL has an explicit port **or** a non-empty
-    path — indicating the authority section is a network address, not a
-    topic/identity string.
+    A port or a non-empty path means ``nats://host[:port]/topic``.
+    SLIM does not use this helper: only a port marks a SLIM endpoint,
+    because a path is part of an ``org/ns/name``.
 
     Examples:
-        ``slim://host:46357/topic``  →  port=46357, path="/topic" → True
-        ``slim://my_topic``          →  port=None, path=""        → False
-        ``slim://org/ns/name``       →  port=None, path="/ns/name" → True
-        ``nats://host:4222/topic``   →  port=4222, path="/topic"  → True
-        ``nats://my_topic``          →  port=None, path=""        → False
+        ``nats://host:4222/topic``  →  port=4222, path="/topic" → True
+        ``nats://host/topic``       →  port=None, path="/topic" → True
+        ``nats://my_topic``         →  port=None, path=""       → False
     """
     p = parsed_url  # type: ignore[assignment]
     return p.port is not None or bool(p.path and p.path != "/")
+
+
+def _slim_endpoint_and_name(parsed: object) -> tuple[str, str]:
+    """Split a SLIM URL into ``(endpoint, name)``.
+
+    A port marks the dataplane address (``slim://host:46357/org/ns/agent``).
+    Without a port the remainder is the name (``slim://my_topic``,
+    ``slim://org/ns/agent``) and the endpoint comes from ``SLIM_ENDPOINT``
+    or ``http://localhost:46357``.
+
+    ``urlparse`` lowercases the host, so the first segment of a port-less
+    name is lowercased.
+    """
+    p = parsed  # type: ignore[assignment]
+    if p.port is not None:
+        host = p.hostname or "localhost"
+        endpoint = f"http://{host}:{p.port}"
+        name = p.path.lstrip("/")
+    else:
+        endpoint = _resolve_slim_endpoint()
+        hostname = p.hostname or ""
+        path = p.path.lstrip("/")
+        name = f"{hostname}/{path}" if path else hostname
+    return endpoint, name
 
 
 # ---------------------------------------------------------------------------
@@ -182,20 +212,7 @@ def _parse_slimrpc(url: str, parsed: object) -> dict[str, str | int]:
         slim://org/ns/agent_name            → topic-only (identity = org/ns/agent_name)
         slim://host:46357/org/ns/agent_name → explicit endpoint
     """
-    p = parsed  # type: ignore[assignment]
-
-    if _has_explicit_endpoint(p) and p.port is not None:
-        # Explicit: slim://host:port/org/ns/agent_name
-        host = p.hostname or "localhost"
-        endpoint = f"http://{host}:{p.port}"
-        identity = p.path.lstrip("/")
-    else:
-        # Topic-only: slim://org/ns/agent_name
-        # urlparse sees hostname="org", path="/ns/agent_name"
-        endpoint = _resolve_slim_endpoint()
-        hostname = p.hostname or ""
-        path = p.path.lstrip("/")
-        identity = f"{hostname}/{path}" if path else hostname
+    endpoint, identity = _slim_endpoint_and_name(parsed)
 
     if not identity:
         raise ValueError(f"slimrpc URL must include an identity path: {url!r}")
@@ -208,21 +225,12 @@ def _parse_slim_patterns(url: str, parsed: object) -> dict[str, str | int]:
 
     Accepted formats::
 
-        slim://my_topic            → topic-only
-        slim://host:46357/my_topic → explicit endpoint
+        slim://my_topic                → topic-only
+        slim://org/ns/agent            → topic-only (topic = org/ns/agent)
+        slim://host:46357/my_topic     → explicit endpoint
+        slim://host:46357/org/ns/agent → explicit endpoint
     """
-    p = parsed  # type: ignore[assignment]
-
-    if _has_explicit_endpoint(p):
-        # Explicit: slim://host[:port]/topic
-        host = p.hostname or "localhost"
-        port = p.port or _SLIM_DEFAULT_PORT
-        endpoint = f"http://{host}:{port}"
-        topic = p.path.lstrip("/")
-    else:
-        # Topic-only: slim://my_topic
-        endpoint = _resolve_slim_endpoint()
-        topic = p.hostname or ""
+    endpoint, topic = _slim_endpoint_and_name(parsed)
 
     if not topic:
         raise ValueError(f"slim URL must include a topic: {url!r}")

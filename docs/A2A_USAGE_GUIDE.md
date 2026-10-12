@@ -477,8 +477,8 @@ if __name__ == "__main__":
   - `.dry_run()` — returns a `ServeCardPlan` describing what _would_ be started, without starting anything
 - **`SLIM_SHARED_SECRET`:** Required environment variable for any SLIM-based transport. Set it before calling `start()`.
 - **URL formats:** Each interface URL supports two styles:
-  - **Topic-only:** `slim://my_topic` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`)
-  - **Explicit endpoint:** `slim://host:46357/my_topic` — endpoint extracted from the URL
+  - **Topic-only:** `slim://my_topic` or `slim://org/ns/agent` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`). A path without a port is part of the SLIM name, not a host.
+  - **Explicit endpoint:** `slim://host:46357/my_topic` or `slim://host:46357/org/ns/agent` — endpoint extracted from the URL. A port is what marks the dataplane address.
 
 ### Running
 

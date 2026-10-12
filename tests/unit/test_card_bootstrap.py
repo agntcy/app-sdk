@@ -150,12 +150,15 @@ class TestParseSlimExplicitEndpoint:
         assert result["endpoint"] == "http://host:12345"
         assert result["topic"] == "agent_topic"
 
-    def test_without_port_but_with_path(self):
-        """slim://host/topic has a path, so treated as explicit."""
-        iface = AgentInterface(protocol_binding="slim", url="slim://host/my_topic")
+    def test_three_part_name_with_port(self):
+        """A port keeps the whole path as the SLIM name."""
+        iface = AgentInterface(
+            protocol_binding="slimpatterns",
+            url="slim://localhost:46357/org/ns/agent",
+        )
         result = parse_interface_url(iface)
-        assert result["endpoint"] == "http://host:46357"
-        assert result["topic"] == "my_topic"
+        assert result["endpoint"] == "http://localhost:46357"
+        assert result["topic"] == "org/ns/agent"
 
 
 class TestParseSlimTopicOnly:
@@ -183,6 +186,29 @@ class TestParseSlimTopicOnly:
         )
         result = parse_interface_url(iface)
         assert result["topic"] == "hello_world_agent_1.0.0"
+        assert result["endpoint"] == "http://localhost:46357"
+
+    def test_three_part_name_is_the_topic(self):
+        """slim://org/ns/agent is the topic org/ns/agent on the default endpoint."""
+        iface = AgentInterface(
+            protocol_binding="slimpatterns", url="slim://org/ns/agent"
+        )
+        result = parse_interface_url(iface)
+        assert result["topic"] == "org/ns/agent"
+        assert result["endpoint"] == "http://localhost:46357"
+
+    def test_three_part_name_uses_slim_endpoint_env(self):
+        iface = AgentInterface(protocol_binding="slim", url="slim://org/ns/agent")
+        with patch.dict(os.environ, {"SLIM_ENDPOINT": "http://custom:11111"}):
+            result = parse_interface_url(iface)
+        assert result["topic"] == "org/ns/agent"
+        assert result["endpoint"] == "http://custom:11111"
+
+    def test_path_without_port_is_part_of_the_name(self):
+        """slim://host/my_topic has no port, so both segments are the name."""
+        iface = AgentInterface(protocol_binding="slim", url="slim://host/my_topic")
+        result = parse_interface_url(iface)
+        assert result["topic"] == "host/my_topic"
         assert result["endpoint"] == "http://localhost:46357"
 
     def test_empty_topic_raises(self):
@@ -953,6 +979,30 @@ class TestSlimNameCollisionWarning:
             await builder.dry_run()
 
         mock_logger.warning.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_topic_only_same_name_warns(self):
+        """slim://org/ns/agent on both interfaces is one SLIM name."""
+        builder = _make_builder(
+            [
+                AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/agent"),
+                AgentInterface(
+                    protocol_binding="slimpatterns", url="slim://org/ns/agent"
+                ),
+            ]
+        )
+
+        with (
+            patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}),
+            patch(self._LOGGER) as mock_logger,
+        ):
+            plan = await builder.dry_run()
+
+        mock_logger.warning.assert_called_once()
+        assert "org/ns/agent" in mock_logger.warning.call_args.args
+        slim = next(c for c in plan.containers if c["transport"] == "slimpatterns")
+        assert "topic=org/ns/agent" in slim["detail"]
+        assert "endpoint=http://localhost:46357" in slim["detail"]
 
 
 # =========================================================================
