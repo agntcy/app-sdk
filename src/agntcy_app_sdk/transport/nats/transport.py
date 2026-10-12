@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import os
 
 import nats
 from identityservice.sdk import IdentityServiceSdk
@@ -11,11 +10,19 @@ from nats.aio.client import Client as NATS
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.common.tracing import instrument_if_ready
 from agntcy_app_sdk.semantic.message import Message
 from typing import Callable, List, Optional, Any, Awaitable, AsyncIterator
 from uuid import uuid4
 
 logger = get_logger(__name__)
+
+
+def _instrument_nats() -> None:
+    from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
+
+    NATSInstrumentor().instrument()
+
 
 """
 Nats implementation of BaseTransport.
@@ -52,11 +59,8 @@ class NatsTransport(BaseTransport):
         self.max_reconnect_attempts = kwargs.get("max_reconnect_attempts", 30)
         self.drain_timeout = kwargs.get("drain_timeout", 2)
 
-        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
+        if instrument_if_ready("NatsTransport", _instrument_nats):
             logger.debug("NatsTransport initialized with tracing enabled")
-            from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
-
-            NATSInstrumentor().instrument()
             self.tracing_enabled = True
 
     # -----------------------------------------------------------------------------

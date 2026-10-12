@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional, Callable, List, AsyncIterator
-import os
 import asyncio
 import datetime
 import slim_bindings
@@ -14,6 +13,7 @@ from .common import (
     split_id,
 )
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.common.tracing import instrument_if_ready
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
@@ -21,6 +21,13 @@ from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
 logger = get_logger(__name__)
+
+
+def _instrument_slim() -> None:
+    from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
+
+    SLIMInstrumentor().instrument()
+
 
 """
 SLIM implementation of the BaseTransport interface.
@@ -98,11 +105,7 @@ class SLIMTransport(BaseTransport):
         self._shutdown_event = asyncio.Event()
 
         self.enable_opentelemetry = False
-        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            # Initialize tracing if enabled
-            from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
-
-            SLIMInstrumentor().instrument()
+        if instrument_if_ready("SLIMTransport", _instrument_slim):
             logger.debug("SLIMTransport initialized with tracing enabled")
 
         logger.debug(f"SLIMTransport initialized with endpoint: {endpoint}")

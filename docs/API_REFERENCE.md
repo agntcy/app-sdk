@@ -1499,7 +1499,7 @@ redis_transport = factory.create_transport(
 
 | Variable             | Description                      | Default                           |
 | -------------------- | -------------------------------- | --------------------------------- |
-| `TRACING_ENABLED`    | Enable/disable tracing           | Set by `enable_tracing` parameter |
+| `TRACING_ENABLED`    | Request instrumentation. Honored only after `Observe.init()` has run in this process. `enable_tracing=True` does not set this variable, so child processes do not inherit it. | unset (off)                   |
 | `OTLP_HTTP_ENDPOINT` | OpenTelemetry collector endpoint | `http://localhost:4318`           |
 
 ---
