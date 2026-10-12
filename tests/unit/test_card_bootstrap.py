@@ -223,6 +223,54 @@ class TestParseSlimTopicOnly:
             parse_interface_url(iface)
 
 
+class TestParseSlimUrlEdgeCases:
+    @pytest.mark.parametrize(
+        "binding, url, key",
+        [
+            ("slimpatterns", "slim://org/ns/agent/", "topic"),
+            ("slimpatterns", "slim://localhost:46357/org/ns/agent/", "topic"),
+            ("slimrpc", "slim://org/ns/agent/", "identity"),
+            ("slimrpc", "slim://localhost:46357/org/ns/agent/", "identity"),
+        ],
+    )
+    def test_trailing_slash_is_not_part_of_the_name(self, binding, url, key):
+        result = parse_interface_url(AgentInterface(protocol_binding=binding, url=url))
+        assert result[key] == "org/ns/agent"
+
+    def test_ipv6_slim_host_is_bracketed(self):
+        iface = AgentInterface(
+            protocol_binding="slimrpc", url="slim://[::1]:46357/org/ns/agent"
+        )
+        result = parse_interface_url(iface)
+        assert result["endpoint"] == "http://[::1]:46357"
+        assert result["identity"] == "org/ns/agent"
+
+    def test_https_explicit_endpoint_keeps_its_scheme(self):
+        iface = AgentInterface(
+            protocol_binding="slimrpc",
+            url="https://slim.example:46357/org/ns/agent",
+        )
+        result = parse_interface_url(iface)
+        assert result["endpoint"] == "https://slim.example:46357"
+        assert result["identity"] == "org/ns/agent"
+
+    def test_https_ipv6_endpoint_keeps_brackets_and_scheme(self):
+        iface = AgentInterface(
+            protocol_binding="slim", url="https://[::1]:46357/org/ns/agent"
+        )
+        result = parse_interface_url(iface)
+        assert result["endpoint"] == "https://[::1]:46357"
+        assert result["topic"] == "org/ns/agent"
+
+    def test_ipv6_nats_host_is_bracketed(self):
+        iface = AgentInterface(
+            protocol_binding="natspatterns", url="nats://[::1]:4222/my_topic"
+        )
+        result = parse_interface_url(iface)
+        assert result["endpoint"] == "nats://[::1]:4222"
+        assert result["topic"] == "my_topic"
+
+
 # =========================================================================
 # parse_interface_url — nats / natspatterns
 # =========================================================================
@@ -810,6 +858,7 @@ class TestCardBuilderBuildsContainers:
             endpoint="http://slim:46357",
             name="my_topic",
             shared_secret_identity="secret" * 6,
+            tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
 
@@ -850,6 +899,7 @@ class TestCardBuilderBuildsContainers:
             endpoint="http://host:46357",
             name="my_topic",
             shared_secret_identity="secret" * 6,
+            tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
 
@@ -1273,6 +1323,7 @@ class TestCardBuilderAliasedBuilds:
             endpoint="http://localhost:46357",
             name="my_topic",
             shared_secret_identity="secret" * 6,
+            tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
         mock_builder.with_session_id.assert_called_once_with("slim-0")
@@ -1859,6 +1910,186 @@ class TestCardBuilderPublicUrl:
 
         with pytest.raises(ValueError, match="explicit host and port"):
             await builder.with_public_url(_PUBLIC_URL).dry_run()
+
+
+# =========================================================================
+# CardBuilder.with_slim_tls() / https SLIM endpoints
+# =========================================================================
+
+
+def _recording_session() -> MagicMock:
+    mock_builder = MagicMock()
+    for method in ("with_transport", "with_topic", "with_session_id"):
+        getattr(mock_builder, method).return_value = mock_builder
+    session = MagicMock()
+    session.add.return_value = mock_builder
+    session.start_all_sessions = AsyncMock()
+    return session
+
+
+class TestCardBuilderSlimTls:
+    _ENV = {"SLIM_SHARED_SECRET": "secret" * 6}
+
+    def test_returns_self(self):
+        builder = _make_builder([])
+        assert builder.with_slim_tls() is builder
+
+    @pytest.mark.asyncio
+    async def test_https_slim_endpoint_turns_tls_on(self):
+        factory = MagicMock()
+        builder = _make_builder(
+            [AgentInterface(protocol_binding="slim", url="slim://org/ns/agent")],
+            session=_recording_session(),
+            factory=factory,
+        )
+
+        env = {**self._ENV, "SLIM_ENDPOINT": "https://slim.example:443"}
+        with patch.dict(os.environ, env):
+            await builder.start()
+
+        kwargs = factory.create_transport.call_args.kwargs
+        assert kwargs["endpoint"] == "https://slim.example:443"
+        assert kwargs["tls_insecure"] is False
+
+    @pytest.mark.asyncio
+    async def test_explicit_endpoint_is_dialled_over_https(self):
+        factory = MagicMock()
+        builder = _make_builder(
+            [
+                AgentInterface(
+                    protocol_binding="slim", url="slim://slim.example:46357/org/ns/a"
+                )
+            ],
+            session=_recording_session(),
+            factory=factory,
+        ).with_slim_tls()
+
+        with patch.dict(os.environ, self._ENV):
+            await builder.start()
+
+        kwargs = factory.create_transport.call_args.kwargs
+        assert kwargs["endpoint"] == "https://slim.example:46357"
+        assert kwargs["tls_insecure"] is False
+
+    @pytest.mark.asyncio
+    async def test_slimrpc_connection_gets_tls(self):
+        from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig
+
+        session = _recording_session()
+        builder = _make_builder(
+            [
+                AgentInterface(
+                    protocol_binding="slimrpc",
+                    url="slim://slim.example:46357/org/ns/a",
+                )
+            ],
+            session=session,
+        ).with_slim_tls()
+        builder.with_factory(MagicMock())
+
+        with patch.dict(os.environ, self._ENV):
+            await builder.start()
+
+        config = session.add.call_args.args[0]
+        assert isinstance(config, A2ASlimRpcServerConfig)
+        assert config.connection.endpoint == "https://slim.example:46357"
+        assert config.connection.tls_insecure is False
+
+    @pytest.mark.asyncio
+    async def test_http_slim_endpoint_is_refused_with_tls(self):
+        """A topic-only URL takes SLIM_ENDPOINT as written; with TLS requested
+        an http:// one is an error, not a silent plaintext connection."""
+        builder = _make_builder(
+            [AgentInterface(protocol_binding="slim", url="slim://org/ns/agent")]
+        ).with_slim_tls()
+
+        env = {**self._ENV, "SLIM_ENDPOINT": "http://localhost:46357"}
+        with patch.dict(os.environ, env), pytest.raises(ValueError, match="https"):
+            await builder.dry_run()
+
+    @pytest.mark.asyncio
+    async def test_dry_run_shows_tls(self):
+        builder = _make_builder(
+            [
+                AgentInterface(
+                    protocol_binding="slimrpc", url="slim://h:46357/org/ns/rpc"
+                ),
+                AgentInterface(protocol_binding="slim", url="slim://h:46357/org/ns/a"),
+            ]
+        ).with_slim_tls()
+
+        with patch.dict(os.environ, self._ENV):
+            plan = await builder.dry_run()
+
+        for container in plan.containers:
+            assert "endpoint=https://h:46357" in container["detail"]
+            assert "tls=on" in container["detail"]
+
+    @pytest.mark.asyncio
+    async def test_default_stays_plaintext(self):
+        factory = MagicMock()
+        builder = _make_builder(
+            [AgentInterface(protocol_binding="slim", url="slim://h:46357/org/ns/a")],
+            session=_recording_session(),
+            factory=factory,
+        )
+
+        with patch.dict(os.environ, self._ENV):
+            plan = await builder.dry_run()
+            await builder.start()
+
+        assert "tls=on" not in plan.containers[0]["detail"]
+        kwargs = factory.create_transport.call_args.kwargs
+        assert kwargs["endpoint"] == "http://h:46357"
+        assert kwargs["tls_insecure"] is True
+
+    @pytest.mark.asyncio
+    async def test_https_interface_url_turns_tls_on(self):
+        """An https:// card URL is the endpoint, scheme included."""
+        factory = MagicMock()
+        builder = _make_builder(
+            [
+                AgentInterface(
+                    protocol_binding="slim",
+                    url="https://slim.example:46357/org/ns/agent",
+                )
+            ],
+            session=_recording_session(),
+            factory=factory,
+        )
+
+        with patch.dict(os.environ, self._ENV):
+            await builder.start()
+
+        kwargs = factory.create_transport.call_args.kwargs
+        assert kwargs["endpoint"] == "https://slim.example:46357"
+        assert kwargs["tls_insecure"] is False
+
+    @pytest.mark.asyncio
+    async def test_override_is_used_as_given_when_slim_tls_is_requested(self):
+        """with_slim_tls() must not reject or relabel an override."""
+        session = _recording_session()
+        factory = MagicMock()
+        user_transport = MagicMock(name="UserSlimTransport")
+        builder = (
+            _make_builder(
+                [AgentInterface(protocol_binding="slim", url="slim://org/ns/agent")],
+                session=session,
+                factory=factory,
+            )
+            .with_slim_tls()
+            .override("slim", user_transport)
+        )
+
+        env = {**self._ENV, "SLIM_ENDPOINT": "http://localhost:46357"}
+        with patch.dict(os.environ, env):
+            plan = await builder.dry_run()
+            await builder.start()
+
+        assert "tls=on" not in plan.containers[0]["detail"]
+        assert "(source: override)" in plan.containers[0]["detail"]
+        factory.create_transport.assert_not_called()
+        session.add.return_value.with_transport.assert_called_once_with(user_transport)
 
 
 # =========================================================================

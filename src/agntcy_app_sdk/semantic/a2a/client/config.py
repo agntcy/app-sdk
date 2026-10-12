@@ -201,6 +201,8 @@ class ClientConfig(A2AClientConfig):
     * Together with a ``supported_protocol_bindings`` list the caller built
       themselves: ``supported_protocol_bindings`` wins and, if the values
       differ, the warning says ``supported_transports`` was ignored.
+    * Assigned after construction (``cfg.supported_transports = [...]``):
+      replaces ``supported_protocol_bindings`` (with a ``DeprecationWarning``).
 
     When nothing was passed it mirrors the resolved bindings for backward
     compatibility; that mirror is ignored on re-construction, so
@@ -271,3 +273,24 @@ class ClientConfig(A2AClientConfig):
             self.supported_protocol_bindings
         )
         self.supported_transports = _ResolvedBindings(self.supported_protocol_bindings)
+        self.__dict__["_post_init_done"] = True
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # The factory reads supported_protocol_bindings, so a plain assignment
+        # to the deprecated field after construction would otherwise do nothing.
+        if (
+            name == "supported_transports"
+            and self.__dict__.get("_post_init_done")
+            and value
+            and not isinstance(value, _ResolvedBindings)
+        ):
+            warnings.warn(
+                "ClientConfig.supported_transports is deprecated; use "
+                "supported_protocol_bindings (renamed in a2a-sdk 1.x).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            bindings = _ResolvedBindings(wire_binding(b) for b in value)
+            super().__setattr__("supported_protocol_bindings", bindings)
+            value = _ResolvedBindings(bindings)
+        super().__setattr__(name, value)

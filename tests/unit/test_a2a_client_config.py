@@ -395,6 +395,30 @@ class TestClientConfig:
         assert replaced.supported_protocol_bindings == ["JSONRPC"]
         assert replaced.supported_transports == ["JSONRPC"]
 
+    def test_assigning_deprecated_transports_after_construction_takes_effect(self):
+        """The factory reads supported_protocol_bindings, so assigning the old
+        field must update it rather than be silently ignored."""
+        config = ClientConfig(slim_transport=_make_mock_transport())
+
+        with pytest.warns(DeprecationWarning, match="supported_transports"):
+            config.supported_transports = ["slim"]
+
+        assert config.supported_protocol_bindings == ["slimpatterns"]
+        assert config.supported_transports == ["slimpatterns"]
+        # Still a resolved list: a later replace() is not a "both passed".
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            replaced = dataclasses.replace(config)
+        assert replaced.supported_protocol_bindings == ["slimpatterns"]
+
+    def test_assigning_bindings_after_construction_does_not_warn(self):
+        config = ClientConfig()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            config.supported_protocol_bindings = ["slimrpc"]
+            config.use_client_preference = True
+        assert config.supported_protocol_bindings == ["slimrpc"]
+
     def test_both_passed_with_different_values_bindings_win(self):
         """A fresh config given both fields: the new field wins, with a warning."""
         with pytest.warns(DeprecationWarning, match="supported_transports is ignored"):
@@ -1976,6 +2000,31 @@ class TestMultiTransportNegotiation:
         )
         with pytest.raises(ValueError, match="No compatible transports"):
             factory._negotiate(card)
+
+    def test_same_binding_prefers_protocol_version_1_0(self):
+        """Like upstream: a 1.0 interface wins over an earlier 0.3 one."""
+        factory = A2AClientFactory(ClientConfig())
+        legacy = _iface("JSONRPC", "http://old:9999")
+        legacy.protocol_version = "0.3"
+        current = _iface("JSONRPC", "http://new:9999")
+        current.protocol_version = "1.0"
+
+        assert factory._negotiate(_make_agent_card([legacy, current])) == (
+            "JSONRPC",
+            "http://new:9999",
+        )
+
+    def test_protocol_version_does_not_override_binding_preference(self):
+        """Version only breaks ties within the negotiated binding."""
+        factory, _ = _make_multi_transport_factory()
+        rpc = _iface("slimrpc", "default/default/agent")
+        http = _iface("JSONRPC", "http://localhost:9999")
+        http.protocol_version = "1.0"
+
+        assert factory._negotiate(_make_agent_card([rpc, http])) == (
+            "slimrpc",
+            "default/default/agent",
+        )
 
     # -- create() dispatches to correct path --------------------------------
 

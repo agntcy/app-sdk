@@ -744,6 +744,29 @@ def override(transport_type: str, target: object) -> CardBuilder
 
 ---
 
+##### with_slim_tls()
+
+Connect the `slim` and `slimrpc` interfaces over TLS (`tls_insecure=False`).
+
+```python
+def with_slim_tls() -> CardBuilder
+```
+
+A `slim://` URL cannot say whether the dataplane speaks TLS. A connection uses TLS when the resolved endpoint is `https://`: an interface URL that is already `https://host:port/...`, or a topic-only URL whose `SLIM_ENDPOINT` is `https://`.
+
+**Behavior:**
+
+- An `https://host:port/org/ns/agent` interface URL is dialled as written, with `tls_insecure=False`, without this option.
+- Explicit `slim://` endpoints (`slim://host:46357/org/ns/agent`) are dialled as `https://host:46357` when this option is set.
+- Topic-only URLs use `SLIM_ENDPOINT` as written; an `http://` one raises `ValueError` from `.dry_run()` and `.start()` instead of connecting in plaintext.
+- `.dry_run()` adds `tls=on` to each SLIM entry that this builder connects.
+- `.override()` configs are used as given. This option does not rewrite them, reject them, or mark them `tls=on`.
+- The dataplane must present a certificate this host trusts.
+
+**Returns:** `CardBuilder` (for chaining)
+
+---
+
 ##### with_public_url()
 
 Advertise a reachable URL for the HTTP JSON-RPC interface, instead of the address it binds to.

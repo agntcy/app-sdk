@@ -217,7 +217,8 @@ class A2AClientFactory:
         Replicates the upstream ``ClientFactory.create()`` negotiation
         logic over ``card.supported_interfaces``.  By default, server
         preference (list order) wins unless ``use_client_preference`` is set
-        on the config.
+        on the config.  Among interfaces with the chosen binding, the one
+        upstream would pick wins (protocol version 1.0 first).
 
         Returns:
             A ``(transport_label, url)`` tuple.
@@ -274,6 +275,19 @@ class A2AClientFactory:
                 f"Server offers {[label for label, _ in server_set]}, "
                 f"client supports {list(client_set)}.{hint}"
             )
+
+        # Several interfaces may share the negotiated binding (e.g. a legacy
+        # 0.3 and a 1.0 JSON-RPC endpoint); pick among them as upstream does.
+        wanted = normalize_transport(transport_protocol)
+        candidates = [
+            iface
+            for iface in card.supported_interfaces
+            if iface.protocol_binding
+            and normalize_transport(iface.protocol_binding) == wanted
+        ]
+        best = UpstreamClientFactory._find_best_interface(candidates)
+        if best is not None:
+            transport_protocol, transport_url = best.protocol_binding, best.url
 
         return transport_protocol, transport_url
 

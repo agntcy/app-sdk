@@ -49,7 +49,7 @@ The SDK decouples _protocols_ (the semantic layer — how agents talk) from _tra
 | `A2AServerConfig`         | No                  | `A2AJsonRpcServerHandler` — serves over HTTP via Uvicorn                                     |
 | `A2AServerConfig`         | Yes                 | `A2AExperimentalServerHandler` — routes transport messages directly through the `RequestHandler` |
 
-> **a2a-sdk 1.x:** the upstream `A2AStarletteApplication` was removed. `A2AServerConfig(agent_card, request_handler)` is its replacement: a plain description of what to serve that the SDK exposes over HTTP JSON-RPC, SLIM patterns, or NATS patterns. `A2AStarletteApplication` remains as a **deprecated** shim that emits a `DeprecationWarning`; see the [CHANGELOG](../CHANGELOG.md#unreleased) for the full migration notes.
+> **a2a-sdk 1.x:** the upstream `A2AStarletteApplication` was removed. `A2AServerConfig(agent_card, request_handler)` is its replacement: a plain description of what to serve that the SDK exposes over HTTP JSON-RPC, SLIM patterns, or NATS patterns. `A2AStarletteApplication` remains as a **deprecated** shim that emits a `DeprecationWarning`; see the [0.5.0 migration guide](0.5.0_MIGRATION.md) for the full migration notes.
 
 The following table summarizes current A2A transport support:
 
@@ -474,11 +474,13 @@ if __name__ == "__main__":
   - `.skip(transport_type)` — exclude a specific transport (e.g., `.skip("jsonrpc")`)
   - `.override(transport_type, target)` — supply a pre-built transport or config for a specific interface
   - `.with_public_url(url)` — advertise a reachable URL for the `JSONRPC` interface. The card's `JSONRPC` URL (e.g. `http://0.0.0.0:9000`) is where the server binds, which clients usually cannot reach; the served card carries `url` instead
+  - `.with_slim_tls()` — connect the `slim` and `slimrpc` interfaces over TLS: explicit endpoints are dialled as `https://host:port`, and an `http://` `SLIM_ENDPOINT` is refused instead of connecting in plaintext
   - `.dry_run()` — returns a `ServeCardPlan` describing what _would_ be started, without starting anything
 - **`SLIM_SHARED_SECRET`:** Required environment variable for any SLIM-based transport. Set it before calling `start()`.
 - **URL formats:** Each interface URL supports two styles:
   - **Topic-only:** `slim://my_topic` or `slim://org/ns/agent` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`). A path without a port is part of the SLIM name, not a host.
   - **Explicit endpoint:** `slim://host:46357/my_topic` or `slim://host:46357/org/ns/agent` — endpoint extracted from the URL. A port is what marks the dataplane address.
+- **SLIM TLS:** a SLIM connection uses TLS when its endpoint is `https://`. That is an `https://` interface URL, `SLIM_ENDPOINT=https://...` for a topic-only URL, or `.with_slim_tls()` for a `slim://host:port/...` URL. Otherwise it is plaintext. The dataplane must present a certificate this host trusts. `.override()` configs are used as given.
 
 ### Running
 

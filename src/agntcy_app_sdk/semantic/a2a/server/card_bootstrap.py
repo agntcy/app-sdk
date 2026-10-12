@@ -129,26 +129,34 @@ def _has_explicit_endpoint(parsed_url: object) -> bool:
     return p.port is not None or bool(p.path and p.path != "/")
 
 
+def _url_host(host: str) -> str:
+    """Bracket an IPv6 literal so it can be followed by ``:port``."""
+    return f"[{host}]" if ":" in host else host
+
+
 def _slim_endpoint_and_name(parsed: object) -> tuple[str, str]:
     """Split a SLIM URL into ``(endpoint, name)``.
 
     A port marks the dataplane address (``slim://host:46357/org/ns/agent``).
     Without a port the remainder is the name (``slim://my_topic``,
     ``slim://org/ns/agent``) and the endpoint comes from ``SLIM_ENDPOINT``
-    or ``http://localhost:46357``.
+    or ``http://localhost:46357``.  A trailing ``/`` is not part of the name.
+    An ``https://`` URL keeps that scheme; ``slim://`` has none, so its
+    endpoint is ``http://`` until :meth:`CardBuilder.with_slim_tls` rewrites it.
 
     ``urlparse`` lowercases the host, so the first segment of a port-less
     name is lowercased.
     """
     p = parsed  # type: ignore[assignment]
     if p.port is not None:
-        host = p.hostname or "localhost"
-        endpoint = f"http://{host}:{p.port}"
-        name = p.path.lstrip("/")
+        host = _url_host(p.hostname or "localhost")
+        scheme = "https" if (p.scheme or "").lower() == "https" else "http"
+        endpoint = f"{scheme}://{host}:{p.port}"
+        name = p.path.strip("/")
     else:
         endpoint = _resolve_slim_endpoint()
         hostname = p.hostname or ""
-        path = p.path.lstrip("/")
+        path = p.path.strip("/")
         name = f"{hostname}/{path}" if path else hostname
     return endpoint, name
 
@@ -250,10 +258,10 @@ def _parse_nats_patterns(url: str, parsed: object) -> dict[str, str | int]:
 
     if _has_explicit_endpoint(p):
         # Explicit: nats://host[:port]/topic
-        host = p.hostname or "localhost"
+        host = _url_host(p.hostname or "localhost")
         port = p.port or _NATS_DEFAULT_PORT
         endpoint = f"nats://{host}:{port}"
-        topic = p.path.lstrip("/")
+        topic = p.path.strip("/")
     else:
         # Topic-only: nats://my_topic
         endpoint = _resolve_nats_endpoint()
@@ -323,6 +331,7 @@ class CardBuilder:
         self._skips: set[str] = set()  # canonical transport_types to skip
         self._shared_secret: str | None = None
         self._public_url: str | None = None
+        self._slim_tls = False
 
     # -- Fluent setters -----------------------------------------------------
 
@@ -356,6 +365,26 @@ class CardBuilder:
         self._shared_secret = secret
         return self
 
+    def with_slim_tls(self) -> CardBuilder:
+        """Connect the ``slim`` and ``slimrpc`` interfaces over TLS.
+
+        A ``slim://`` URL cannot say whether the dataplane speaks TLS.  A
+        connection uses TLS when the resolved endpoint is ``https://``: an
+        interface URL that is already ``https://host:port/...``, or a
+        topic-only URL whose ``SLIM_ENDPOINT`` is ``https://``.  With this
+        option every SLIM connection uses TLS (``tls_insecure=False``):
+        explicit ``slim://host:46357/...`` endpoints are dialled as
+        ``https://host:46357``, and an ``http://`` ``SLIM_ENDPOINT`` is
+        refused with a :class:`ValueError` by :meth:`dry_run` and
+        :meth:`start` instead of connecting in plaintext.
+
+        The dataplane must present a certificate this host trusts.
+        ``.override()`` configs are used as given: this option does not
+        rewrite them and does not reject them.
+        """
+        self._slim_tls = True
+        return self
+
     def with_public_url(self, url: str) -> CardBuilder:
         """Advertise *url* for the HTTP JSON-RPC interface instead of its bind URL.
 
@@ -387,6 +416,21 @@ class CardBuilder:
         return self
 
     # -- Helpers ------------------------------------------------------------
+
+    def _slim_connection(
+        self, interface: AgentInterface, endpoint: str
+    ) -> tuple[str, bool]:
+        """Return the ``(endpoint, tls_insecure)`` for a SLIM interface."""
+        if self._slim_tls and urlparse(interface.url).port is not None:
+            endpoint = "https://" + endpoint.split("://", 1)[1]
+        is_https = endpoint.lower().startswith("https://")
+        if self._slim_tls and not is_https:
+            raise ValueError(
+                f"with_slim_tls() requires an https:// SLIM endpoint, but "
+                f"{interface.url!r} resolves to {endpoint!r} (from SLIM_ENDPOINT "
+                "or the default). Set SLIM_ENDPOINT to an https:// URL."
+            )
+        return endpoint, not is_https
 
     def _served_card(
         self, interfaces: list[AgentInterface]
@@ -541,6 +585,20 @@ class CardBuilder:
                 continue
 
             parsed = parse_interface_url(interface)
+            # An override is the caller's transport, so the card URL's TLS
+            # decision does not apply to it and must not reject the start.
+            slim_override = (
+                self._overrides.get(transport_type)
+                if transport_type in ("slimrpc", "slimpatterns")
+                else None
+            )
+            if transport_type in ("slimrpc", "slimpatterns") and slim_override is None:
+                slim_endpoint, tls_insecure = self._slim_connection(
+                    interface, str(parsed["endpoint"])
+                )
+                parsed["endpoint"] = slim_endpoint
+            else:
+                tls_insecure = True
 
             if transport_type == "slimrpc":
                 override = self._overrides.get("slimrpc")
@@ -564,6 +622,8 @@ class CardBuilder:
                     detail = (
                         f"endpoint={parsed['endpoint']}, identity={parsed['identity']}"
                     )
+                    if override is None and not tls_insecure:
+                        detail += ", tls=on"
                     if override is not None:
                         detail += " (source: override)"
                     plan.containers.append(
@@ -585,6 +645,7 @@ class CardBuilder:
                             identity=str(parsed["identity"]),
                             shared_secret=shared_secret,
                             endpoint=str(parsed["endpoint"]),
+                            tls_insecure=tls_insecure,
                         ),
                     )
                     session.add(config).with_session_id(session_id).build()
@@ -617,6 +678,8 @@ class CardBuilder:
                         f"topic={parsed['topic']}, "
                         f"name={routable_name}"
                     )
+                    if override is None and not tls_insecure:
+                        detail += ", tls=on"
                     if override is not None:
                         detail += " (source: override)"
                     plan.containers.append(
@@ -636,6 +699,7 @@ class CardBuilder:
                         endpoint=str(parsed["endpoint"]),
                         name=routable_name,
                         shared_secret_identity=shared_secret,
+                        tls_insecure=tls_insecure,
                     )
                 (
                     session.add(a2a_app)

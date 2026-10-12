@@ -313,6 +313,42 @@ class TestSharedConnectionKeepsItsEndpoint:
 
             assert common.global_slim_endpoint is None
 
+    @pytest.mark.asyncio
+    async def test_concurrent_setups_cannot_bypass_the_guard(self):
+        """Two setups awaited together must not both connect: the second has
+        to see the first one's connection and be refused."""
+        import asyncio
+        from contextlib import ExitStack
+
+        builder = MagicMock(return_value="cfg")
+        service, patches = TestSharedConnectionKeepsItsTlsSetting._patched(builder)
+
+        async def slow_connect(_cfg):
+            await asyncio.sleep(0.05)
+            return 7
+
+        service.connect_async = AsyncMock(side_effect=slow_connect)
+        open_ = TestSharedConnectionKeepsItsTlsSetting._open
+
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            results = await asyncio.gather(
+                open_(insecure=False, builder=builder),
+                open_(
+                    insecure=False,
+                    builder=builder,
+                    endpoint="https://other.example:443",
+                ),
+                return_exceptions=True,
+            )
+            assert common.global_slim_endpoint == "https://slim.example:443"
+
+        assert not isinstance(results[0], BaseException)
+        assert isinstance(results[1], ValueError)
+        assert "same endpoint" in str(results[1])
+        service.connect_async.assert_awaited_once()
+
 
 class TestSchemeDisagreement:
     """slim-bindings decides plaintext vs TLS from the URL scheme, so:

@@ -1,7 +1,9 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import base64
+import weakref
 
 import click
 import datetime
@@ -211,7 +213,48 @@ def _same_endpoint(a: str, b: str) -> bool:
     return a.rstrip("/") == b.rstrip("/")
 
 
+_slim_instance_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+
+
+def _slim_instance_lock() -> asyncio.Lock:
+    """The lock serialising shared-connection setup on the running loop.
+
+    One lock per event loop: an ``asyncio.Lock`` binds to the loop it first
+    waits on, and the shared connection outlives a single loop in tests.
+    """
+    loop = asyncio.get_running_loop()
+    lock = _slim_instance_locks.get(loop)
+    if lock is None:
+        lock = _slim_instance_locks[loop] = asyncio.Lock()
+    return lock
+
+
 async def get_or_create_slim_instance(
+    local: slim_bindings.Name,
+    slim_endpoint: str,
+    slim_insecure_client: bool,
+    enable_opentelemetry: bool = False,
+    shared_secret: str | None = None,
+    jwt: str | None = None,
+    bundle: str | None = None,
+    audience: list[str] | None = None,
+):
+    # Without the lock, two setups awaited together both find no shared
+    # connection, both connect, and the second silently replaces the first.
+    async with _slim_instance_lock():
+        return await _get_or_create_slim_instance(
+            local,
+            slim_endpoint,
+            slim_insecure_client,
+            enable_opentelemetry=enable_opentelemetry,
+            shared_secret=shared_secret,
+            jwt=jwt,
+            bundle=bundle,
+            audience=audience,
+        )
+
+
+async def _get_or_create_slim_instance(
     local: slim_bindings.Name,
     slim_endpoint: str,
     slim_insecure_client: bool,

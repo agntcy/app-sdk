@@ -1,19 +1,20 @@
 # Test Coverage Report
 
-> Last updated: 2026-10-06 (SLIM 2.2.0, slim-bindings 2.2, a2a-sdk 1.1.0)
+> Last updated: 2026-10-12 (SLIM 2.2.0, slim-bindings 2.2, a2a-sdk 1.1.0)
 
 ## Overview
 
-| Category  |   Tests |  Passed | Failed | Skipped |
-| --------- | ------: | ------: | -----: | ------: |
-| **Unit**  |     322 |     322 |      0 |       0 |
-| **E2E**   |      60 |      48 |      0 |      12 |
-| **Total** | **382** | **370** |  **0** |  **12** |
+| Category  | Tests | Passed | Failed | Skipped |
+| --------- | ----: | -----: | -----: | ------: |
+| **Unit**  |   457 |    457 |      0 |       0 |
+| **E2E**   |    68 |      — |      — |       — |
 
-E2E figures cover every E2E file, including `test_directory.py` (9 tests, run
-against `dir-api-server` v1.0.0 and `zot`).
-The 12 skips are all by design ("broadcast not applicable to JSONRPC", "group
-chat not applicable to NATS", "MCP not applicable to JSONRPC", and similar).
+The E2E count is what pytest collects across every E2E file, including
+`test_directory.py` (9 tests, run against `dir-api-server` v1.0.0 and `zot`)
+and `test_slim_tls.py` (7 tests, against a TLS dataplane it starts itself).
+Pass/skip figures are per file in the sections below. Skips are by design
+("broadcast not applicable to JSONRPC", "group chat not applicable to NATS",
+"MCP not applicable to JSONRPC", and similar).
 
 ---
 
@@ -30,9 +31,11 @@ uv run pytest tests/unit/ -v
 
 | File                              | Tests | What It Covers                                                                                                                                                                                                                                                                          |
 | --------------------------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_card_bootstrap.py`          |   103 | URL parsing (`slim://`, `nats://`, `http://`), transport aliasing, dry-run plan generation, `CardBuilder` container building, `InterfaceTransport` constants, `AppSession.add_a2a_card()` delegation, `.override()` / `.skip()` / fluent chaining, warning when `slim` and `slimrpc` share one SLIM name (including `slim://org/ns/agent`), `.with_public_url()` (bind vs advertised URL) |
-| `test_a2a_client_config.py`       |   112 | `ClientConfig` post-init logic (incl. deprecated `supported_transports`), transport config validation, `_parse_topic_from_url`, `PatternsClientTransport` adapter, `A2AExperimentalClient` API and `ClientCallInterceptor` integration, `A2AClientFactory` negotiation over `supported_interfaces` (server/client preference, multi-transport), dispatch to slimrpc/slimpatterns/natspatterns/jsonrpc |
-| `test_a2a_server.py`              |    45 | `A2AServerConfig` and deprecated `A2AStarletteApplication` shim, HTTP JSON-RPC app, interface declaration by server handlers, patterns bridge over an in-memory loopback transport (unary, streaming, errors, relay, identity auth), `with_public_url` / JSONRPC interface declaration |
+| `test_a2a_client_config.py`       |   155 | `ClientConfig` post-init logic (incl. deprecated `supported_transports`, also assigned after construction), transport config validation, `_parse_topic_from_url`, `PatternsClientTransport` adapter, `A2AExperimentalClient` API and `ClientCallInterceptor` integration, broadcast failures (`A2ABroadcastError`), `A2AClientFactory` negotiation over `supported_interfaces` (server/client preference, multi-transport, protocol version), dispatch to slimrpc/slimpatterns/natspatterns/jsonrpc |
+| `test_card_bootstrap.py`          |   120 | URL parsing (`slim://`, `nats://`, `http://`, `https://`, trailing `/`, IPv6), transport aliasing, dry-run plan generation, `CardBuilder` container building, `InterfaceTransport` constants, `AppSession.add_a2a_card()` delegation, `.override()` / `.skip()` / fluent chaining, warning when `slim` and `slimrpc` share one SLIM name (including `slim://org/ns/agent`), `.with_public_url()` (bind vs advertised URL), `.with_slim_tls()` (including that `.override()` is left as given) and `https://` SLIM endpoints |
+| `test_a2a_server.py`              |    59 | `A2AServerConfig` and deprecated `A2AStarletteApplication` shim, HTTP JSON-RPC app, interface declaration by server handlers, patterns bridge over an in-memory loopback transport (unary, streaming, errors, relay, identity auth, sender header), `with_public_url` / JSONRPC interface declaration |
+| `test_slim_tls.py`                |    34 | `tls_insecure` reaches every SLIM connection (transport, SlimRPC server and client), TLS over `http://` refused, shared SLIM connection refuses a different endpoint or `tls_insecure` (also for setups awaited concurrently) |
+| `test_slim_broadcast_timeout.py`  |     5 | SLIM broadcast and group chat raise `TimeoutError` (not `UnboundLocalError` or `CancelledError`) when setup stalls, no reply arrives, or the consumer is slow |
 | `test_card_utils.py`              |    18 | `supported_interfaces` helpers: `add_interface` / `find_interface` / `clone_card`, binding casing and aliases |
 | `test_get_agent_identifier.py`    |    21 | Topic/identifier derivation from the agent card |
 | `test_agent_directory.py`         |    12 | `AgentDirectory` setup, push (AgentCard, raw dict), pull (by CID, extract card), search, teardown, error handling                                                                                                                                                                       |
@@ -196,6 +199,26 @@ uv run pytest tests/e2e/test_directory.py -s -v
 | `test_app_session_start_all_pushes_records`     | AppSession batch publishes on start        |
 | `test_app_container_no_directory_skips_push`    | Graceful skip when no directory configured |
 | `test_factory_create_directory_in_pipeline`     | Factory creates directory in pipeline      |
+
+### test_slim_tls.py
+
+`tls_insecure` against a live TLS dataplane. The test starts its own SLIM
+container with a certificate generated for the run (test-only, never stored in
+the repo), so it needs Docker but not the compose stack.
+
+```
+uv run pytest tests/e2e/test_slim_tls.py -s -v
+```
+
+| Test                                                                     | What It Proves                                                       |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `TestTlsConnectionMatrix::test_untrusted_certificate_is_rejected`        | `tls_insecure=False` refuses a certificate the host doesn't trust    |
+| `TestTlsConnectionMatrix::test_trusted_certificate_connects`             | `tls_insecure=False` connects with a trusted certificate             |
+| `TestTlsConnectionMatrix::test_insecure_flag_is_plaintext_even_for_https_url` | `tls_insecure=True` is plaintext, even for `https://`           |
+| `TestTlsConnectionMatrix::test_tls_over_http_url_is_refused_before_connecting` | TLS over `http://` raises before dialling                      |
+| `TestTlsConnectionMatrix::test_canary_slim_bindings_still_goes_plaintext_over_http` | Fails if slim-bindings stops going plaintext over `http://` |
+| `test_slim_transport_connects_over_tls_and_guards_the_shared_connection` | `SLIMTransport` over TLS; the shared-connection guard holds          |
+| `test_slimrpc_round_trip_over_tls`                                       | SlimRPC request/response over TLS                                    |
 
 ---
 
