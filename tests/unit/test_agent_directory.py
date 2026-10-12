@@ -8,7 +8,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from a2a.types import AgentCapabilities, AgentCard
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 from agntcy.dir_sdk.models import core_v1, search_v1
 from google.protobuf.json_format import ParseDict
 
@@ -26,12 +26,14 @@ pytest_plugins = "pytest_asyncio"
 def _minimal_card(**overrides) -> AgentCard:
     defaults = {
         "name": "test-agent",
-        "url": "http://localhost:9000",
+        "supported_interfaces": [
+            AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000")
+        ],
         "version": "1.0.0",
         "description": "A test agent",
         "capabilities": AgentCapabilities(),
-        "defaultInputModes": ["text"],
-        "defaultOutputModes": ["text"],
+        "default_input_modes": ["text"],
+        "default_output_modes": ["text"],
         "skills": [],
     }
     defaults.update(overrides)
@@ -165,7 +167,9 @@ async def test_pull_extract_card():
                 "data": {
                     "card_data": {
                         "name": "card-agent",
-                        "url": "http://card-agent",
+                        "supportedInterfaces": [
+                            {"protocolBinding": "JSONRPC", "url": "http://card-agent"}
+                        ],
                         "version": "2.0.0",
                         "description": "A card agent",
                         "capabilities": {},

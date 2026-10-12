@@ -14,10 +14,14 @@ from a2a.types import AgentCard
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
-from agntcy_app_sdk.transport.slim.common import get_or_create_slim_instance, split_id
+from agntcy_app_sdk.transport.slim.common import (
+    get_or_init_slim_service,
+    new_client_config,
+    split_id,
+)
 
 from slima2a.handler import SRPCHandler
-from slima2a.types.a2a_pb2_slimrpc import add_A2AServiceServicer_to_server
+from slima2a.types.v1.a2a_pb2_slimrpc import add_A2AServiceServicer_to_server
 
 logger = get_logger(__name__)
 
@@ -38,6 +42,8 @@ class SlimRpcConnectionConfig:
     shared_secret: str
     endpoint: str = "http://localhost:46357"
     tls_insecure: bool = True
+    """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3
+    with certificate verification against the system CA pool."""
 
 
 @dataclass
@@ -45,8 +51,9 @@ class A2ASlimRpcServerConfig:
     """Configuration object for the slimrpc-based A2A handler.
 
     Users pass an instance of this to ``session.add(config)`` instead of
-    an ``A2AStarletteApplication``.  The SDK will internally create the
-    ``SRPCHandler`` and ``slim_bindings.Server``.
+    an :class:`~agntcy_app_sdk.semantic.a2a.server.config.A2AServerConfig`.
+    The SDK will internally create the ``SRPCHandler`` and
+    ``slim_bindings.Server``.
 
     Required fields:
         agent_card: The A2A AgentCard describing this agent.
@@ -113,12 +120,17 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         """Create the slimrpc server and start serving in the background.
 
         Steps:
-        1. Stamp ``preferred_transport`` on the agent card.
+        1. Declare a ``slimrpc`` interface on the agent card (if absent).
         2. Create a SLIM ``App`` + ``Server`` from the user-provided config.
         3. Import ``slima2a`` and register the A2A servicer.
         4. Launch ``server.serve_async()`` as a background task.
         """
-        self._set_preferred_transport("slimrpc")
+        # slima2a clients hand the interface URL straight to the channel
+        # factory, which expects a bare "org/ns/name" identity.  A newly
+        # declared slimrpc interface becomes the preferred transport.
+        self._declare_interface(
+            "slimrpc", self._config.connection.identity, prefer=True
+        )
 
         # --- Apply optional card modifier ---
         if self._config.card_modifier is not None:
@@ -137,34 +149,33 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         #      listeners, so sharing an App causes cross-talk.
         #
         # Strategy:
-        #   - Initialise the global SLIM runtime (idempotent).
-        #   - Open a *second* connection via a trailing-slash endpoint
+        #   - Initialise the global SLIM runtime (idempotent) and take the
+        #     service; no pub/sub App is created or subscribed.
+        #   - Open a dedicated connection via a trailing-slash endpoint
         #     variant so the SLIM service treats it as distinct.
         #   - Create a new App under a unique internal name (the original
-        #     name suffixed with "-rpc") to isolate from slimpatterns.
+        #     name suffixed with "-rpc").
         #   - Pass the *original* name as the RPC Server's base_name so
         #     the subscription patterns match what the client expects.
         identity_str: str = self._config.connection.identity
         shared_secret: str = self._config.connection.shared_secret
         endpoint = self._config.connection.endpoint
-        tls_insecure = self._config.connection.tls_insecure
 
         name = split_id(identity_str)
 
-        # Ensure the global SLIM runtime is initialised (tracing, service,
-        # etc.).  If slimpatterns already did this, it's a no-op that
-        # returns the cached globals.
-        service, _global_app, _global_conn = await get_or_create_slim_instance(
-            local=name,
-            slim_endpoint=endpoint,
-            slim_insecure_client=tls_insecure,
-            shared_secret=shared_secret,
-        )
+        # Ensure the global SLIM runtime is initialised and grab the service.
+        # We deliberately do NOT use ``get_or_create_slim_instance`` here: it
+        # subscribes a pub/sub App under ``name``, and SLIM 2.x would route
+        # the clients' RPC sessions to that App (which has no RPC handler)
+        # instead of the RPC server below.
+        service = get_or_init_slim_service()
 
         # Open a dedicated connection for slimrpc by appending a trailing
         # slash so the SLIM service sees it as a distinct endpoint key.
         rpc_endpoint = endpoint.rstrip("/") + "/"
-        rpc_client_config = slim_bindings.new_insecure_client_config(rpc_endpoint)
+        rpc_client_config = new_client_config(
+            rpc_endpoint, insecure=self._config.connection.tls_insecure
+        )
         connection_id = await service.connect_async(rpc_client_config)
 
         # Create a separate App under a unique name so that the SLIM

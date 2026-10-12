@@ -18,7 +18,7 @@ async def test_app_session():
     app_session = factory.create_app_session(max_sessions=1)
 
     # Create an app container via the fluent builder.
-    # When no transport is provided for an A2AStarletteApplication, the SDK
+    # When no transport is provided for an A2AServerConfig, the SDK
     # falls back to the JSONRPC handler (native HTTP), so topic is not used.
     app_session.add(default_a2a_server).with_host("0.0.0.0").with_port(
         9000

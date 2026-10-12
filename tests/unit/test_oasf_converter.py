@@ -3,7 +3,7 @@
 
 """Unit tests for the OASF ↔ AgentCard converter."""
 
-from a2a.types import AgentCapabilities, AgentCard, AgentProvider
+from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentProvider
 
 from agntcy_app_sdk.directory.oasf_converter import (
     CARD_SCHEMA_VERSION,
@@ -26,12 +26,14 @@ pytest_plugins = "pytest_asyncio"
 def _minimal_card(**overrides) -> AgentCard:
     defaults = {
         "name": "test-agent",
-        "url": "http://localhost:9000",
+        "supported_interfaces": [
+            AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000")
+        ],
         "version": "1.2.3",
         "description": "A test agent",
         "capabilities": AgentCapabilities(),
-        "defaultInputModes": ["text"],
-        "defaultOutputModes": ["text"],
+        "default_input_modes": ["text"],
+        "default_output_modes": ["text"],
         "skills": [],
     }
     defaults.update(overrides)
@@ -87,15 +89,71 @@ def test_agent_card_to_oasf_without_provider():
 
 
 def test_oasf_to_agent_card_roundtrip():
-    """card → OASF → card should preserve name, url, version."""
+    """card → OASF → card should preserve name, interfaces, version."""
     original = _minimal_card()
     oasf = agent_card_to_oasf(original)
     restored = oasf_to_agent_card(oasf)
 
     assert restored is not None
     assert restored.name == original.name
-    assert restored.url == original.url
+    assert [(i.protocol_binding, i.url) for i in restored.supported_interfaces] == [
+        (i.protocol_binding, i.url) for i in original.supported_interfaces
+    ]
     assert restored.version == original.version
+
+
+def test_oasf_to_agent_card_preserves_interface_order():
+    """supported_interfaces order encodes preference and must survive the roundtrip."""
+    original = _minimal_card(
+        supported_interfaces=[
+            AgentInterface(protocol_binding="slimpatterns", url="slim://topic"),
+            AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000"),
+        ]
+    )
+    restored = oasf_to_agent_card(agent_card_to_oasf(original))
+
+    assert restored is not None
+    assert [i.protocol_binding for i in restored.supported_interfaces] == [
+        "slimpatterns",
+        "JSONRPC",
+    ]
+
+
+def test_oasf_to_agent_card_legacy_v03_card():
+    """Records stored by SDK versions on a2a-sdk 0.3 (url / preferredTransport /
+    additionalInterfaces) must still load: the url becomes the first interface."""
+    oasf = {
+        "modules": [
+            {
+                "name": MODULE_NAME_A2A,
+                "data": {
+                    "card_data": {
+                        "name": "legacy-agent",
+                        "description": "stored by an older SDK",
+                        "version": "0.9.0",
+                        "url": "http://legacy:9000/",
+                        "preferredTransport": "JSONRPC",
+                        "additionalInterfaces": [
+                            {"transport": "slimpatterns", "url": "slim://legacy"}
+                        ],
+                        "capabilities": {},
+                        "defaultInputModes": ["text"],
+                        "defaultOutputModes": ["text"],
+                        "skills": [],
+                    }
+                },
+            }
+        ]
+    }
+
+    restored = oasf_to_agent_card(oasf)
+
+    assert restored is not None
+    assert restored.name == "legacy-agent"
+    assert [(i.protocol_binding, i.url) for i in restored.supported_interfaces] == [
+        ("JSONRPC", "http://legacy:9000/"),
+        ("slimpatterns", "slim://legacy"),
+    ]
 
 
 def test_oasf_to_agent_card_no_matching_module():
@@ -104,7 +162,7 @@ def test_oasf_to_agent_card_no_matching_module():
         "modules": [
             {
                 "name": "some/other-module",
-                "data": {"card_data": {"name": "x", "url": "http://x"}},
+                "data": {"card_data": {"name": "x"}},
             }
         ]
     }

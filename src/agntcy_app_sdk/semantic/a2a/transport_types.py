@@ -12,28 +12,41 @@ form before matching or dispatch.
 
 from __future__ import annotations
 
+# Header an experimental (SLIM / NATS patterns) A2A server stamps on every
+# reply with its own identity (the topic it subscribed to, i.e. the name
+# broadcast ``recipients`` refer to), so a broadcast client can tell which
+# recipient a reply came from.
+SENDER_HEADER = "x-a2a-sender"
 
 # ---------------------------------------------------------------------------
-# Interface transport types — valid values for ``AgentInterface.transport``
+# Interface transport types — valid values for ``AgentInterface.protocol_binding``
 # ---------------------------------------------------------------------------
 
 
 class InterfaceTransport:
-    """Valid transport identifiers for ``AgentInterface.transport``.
+    """Valid transport identifiers for ``AgentInterface.protocol_binding``.
 
     Use these constants instead of hard-coded strings when building
-    ``AgentCard.additional_interfaces``::
+    ``AgentCard.supported_interfaces``::
 
         from agntcy_app_sdk import InterfaceTransport
 
         AgentInterface(
-            transport=InterfaceTransport.SLIM_PATTERNS,
+            protocol_binding=InterfaceTransport.SLIM_PATTERNS,
             url="slim://topic",
         )
         AgentInterface(
-            transport=InterfaceTransport.JSONRPC,
+            protocol_binding=InterfaceTransport.JSONRPC,
             url="http://0.0.0.0:9999",
         )
+
+    The ``JSONRPC`` URL is the address the server **binds** to.  When that is
+    not an address clients can reach (``0.0.0.0``, in-container, behind a
+    proxy), use ``CardBuilder.with_public_url()`` to advertise another one.
+
+    The order of ``supported_interfaces`` expresses the agent's transport
+    preference (first entry wins), replacing the removed
+    ``AgentCard.preferred_transport`` / ``additional_interfaces`` fields.
 
     **Aliases** are provided for convenience — they resolve to the same
     canonical transport during parsing:

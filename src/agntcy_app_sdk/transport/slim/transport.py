@@ -27,6 +27,13 @@ SLIM implementation of the BaseTransport interface.
 """
 
 
+def _raise_if_past(deadline: float) -> None:
+    # ``asyncio.timeout_at`` only fires while the block is suspended, so a
+    # reply that is already queued would slip past an expired deadline.
+    if asyncio.get_running_loop().time() >= deadline:
+        raise TimeoutError
+
+
 class SLIMTransport(BaseTransport):
     """
     SLIM Transport implementation using the slim_bindings library.
@@ -287,8 +294,14 @@ class SLIMTransport(BaseTransport):
             f"Broadcasting to topic: {remote_name} and waiting for {message_limit} responses"
         )
 
+        # The deadline wraps each await, never a ``yield``: an
+        # ``asyncio.timeout`` held across ``yield`` cancels the consumer's own
+        # code between events, and the consumer gets ``CancelledError``
+        # instead of ``TimeoutError``.
+        deadline = asyncio.get_running_loop().time() + timeout
+        group_session = None
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout_at(deadline):
                 _, group_session = await self._session_manager.group_broadcast_session(
                     remote_name, invitees
                 )
@@ -318,21 +331,25 @@ class SLIMTransport(BaseTransport):
                     group_session.session_id(),
                 )
 
-                # wait for responses from all invitees or be interrupted by caller
-                messages_received = 0
-                while messages_received < message_limit:
-                    try:
+            # wait for responses from all invitees or be interrupted by caller
+            messages_received = 0
+            while messages_received < message_limit:
+                try:
+                    _raise_if_past(deadline)
+                    async with asyncio.timeout_at(deadline):
                         received_msg = await group_session.get_message_async(
                             timeout=datetime.timedelta(seconds=timeout)
                         )
-                        reply = Message.deserialize(received_msg.payload)
-                        messages_received += 1
-                        yield reply
-                    except Exception as e:
-                        logger.error(
-                            f"Error receiving message on session {group_session.session_id()}: {e}"
-                        )
-                        continue
+                    reply = Message.deserialize(received_msg.payload)
+                except TimeoutError:
+                    raise
+                except Exception as e:
+                    logger.error(
+                        f"Error receiving message on session {group_session.session_id()}: {e}"
+                    )
+                    continue
+                messages_received += 1
+                yield reply
         except asyncio.TimeoutError:
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"
@@ -401,9 +418,11 @@ class SLIMTransport(BaseTransport):
 
         # Signal to the receiver that they should respond to the group
         init_message.headers["x-respond-to-group"] = "true"
+        # See gather_stream: the deadline must not be held across ``yield``.
+        deadline = asyncio.get_running_loop().time() + timeout
         group_session = None
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout_at(deadline):
                 (
                     _,
                     group_session,
@@ -417,23 +436,27 @@ class SLIMTransport(BaseTransport):
                 # Initiate the group broadcast
                 await group_session.publish_async(init_message.serialize(), None, None)
 
-                # Wait for responses from invitees until the end message is received
-                while True:
-                    try:
+            # Wait for responses from invitees until the end message is received
+            while True:
+                try:
+                    _raise_if_past(deadline)
+                    async with asyncio.timeout_at(deadline):
                         received_msg = await group_session.get_message_async(
                             timeout=datetime.timedelta(seconds=timeout)
                         )
-                        deserialized_msg = Message.deserialize(received_msg.payload)
-                        yield deserialized_msg
+                    deserialized_msg = Message.deserialize(received_msg.payload)
+                except TimeoutError:
+                    raise
+                except Exception as e:
+                    logger.warning(
+                        f"Issue encountered while receiving message on session {group_session.session_id()}: {e}"
+                    )
+                    continue
+                yield deserialized_msg
 
-                        # Check for end message to stop collection
-                        if end_message in str(deserialized_msg.payload):
-                            break
-                    except Exception as e:
-                        logger.warning(
-                            f"Issue encountered while receiving message on session {group_session.session_id()}: {e}"
-                        )
-                        continue
+                # Check for end message to stop collection
+                if end_message in str(deserialized_msg.payload):
+                    break
         except asyncio.TimeoutError:
             logger.warning(
                 f"Broadcast to topic {remote_name} timed out after {timeout} seconds"

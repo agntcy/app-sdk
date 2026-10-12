@@ -21,13 +21,23 @@ import signal
 import subprocess
 import time
 
+from tests.server.a2a_card_bootstrap_server import (
+    nats_card_endpoint,
+    nats_endpoint,
+    slim_card_endpoint,
+    slim_endpoint,
+)
+
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-SLIM_ENDPOINT = "http://localhost:46357"
-NATS_ENDPOINT = "localhost:4222"
+# Endpoints come from the shared test settings (override with the
+# SLIM_ENDPOINT / NATS_ENDPOINT environment variables; defaults match
+# docker-compose).
+SLIM_ENDPOINT = slim_endpoint()
+NATS_ENDPOINT = nats_endpoint().removeprefix("nats://")
 
 GUIDE_DIR = os.path.join(os.path.dirname(__file__), "..", "guide_examples")
 
@@ -189,7 +199,7 @@ class TestExample2CardDrivenSLIM:
                 "--transport",
                 "SLIM",
                 "--slim-endpoint",
-                "slim://localhost:46357",
+                slim_card_endpoint(),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -267,7 +277,7 @@ class TestExample2CardDrivenNATS:
                 "--transport",
                 "NATS",
                 "--nats-endpoint",
-                "nats://localhost:4222",
+                nats_card_endpoint(),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

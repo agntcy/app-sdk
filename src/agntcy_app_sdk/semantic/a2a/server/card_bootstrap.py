@@ -4,7 +4,7 @@
 """Card-driven multi-transport server bootstrap for A2A agents.
 
 Provides :class:`CardBuilder` which reads an ``AgentCard``'s
-``additional_interfaces``, parses each URL into transport-specific config,
+``supported_interfaces``, parses each URL into transport-specific config,
 and starts all sessions via a fluent API.
 
 Example::
@@ -23,22 +23,30 @@ Each transport accepts **two** URL styles:
 
 **Topic-only** (compatible with ``create_transport_uri`` / client cards)::
 
-    AgentInterface(transport="slimpatterns", url="slim://my_topic")
-    AgentInterface(transport="natspatterns", url="nats://my_topic")
-    AgentInterface(transport="slimrpc",     url="slim://org/ns/agent")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://my_topic")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://org/ns/agent")
+    AgentInterface(protocol_binding="natspatterns", url="nats://my_topic")
+    AgentInterface(protocol_binding="slimrpc",     url="slim://org/ns/agent")
 
 Endpoint is resolved from ``SLIM_ENDPOINT`` / ``NATS_ENDPOINT`` env vars,
 defaulting to ``localhost`` with the standard port.
 
 **Explicit endpoint** (endpoint + path encoded in one URL)::
 
-    AgentInterface(transport="slimpatterns", url="slim://host:46357/my_topic")
-    AgentInterface(transport="natspatterns", url="nats://host:4222/my_topic")
-    AgentInterface(transport="slimrpc",     url="slim://host:46357/org/ns/agent")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/my_topic")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/org/ns/agent")
+    AgentInterface(protocol_binding="natspatterns", url="nats://host:4222/my_topic")
+    AgentInterface(protocol_binding="slimrpc",     url="slim://host:46357/org/ns/agent")
 
-Detection heuristic: if ``urlparse`` finds a port **or** a non-empty path,
-the URL is treated as ``scheme://host[:port]/path``; otherwise the
-authority segment is the topic/identity itself.
+Detection heuristic:
+
+- **SLIM** (``slim``, ``slimpatterns``, ``slimrpc``): a port marks an
+  explicit endpoint. Without a port the whole remainder is the name, so
+  ``slim://org/ns/agent`` is the identity ``org/ns/agent`` on the default
+  dataplane. A path alone is not a host.
+- **NATS**: a port **or** a non-empty path marks an explicit endpoint
+  (``nats://host:4222/topic``, ``nats://host/topic``). Otherwise the
+  authority segment is the topic.
 """
 
 from __future__ import annotations
@@ -106,21 +114,51 @@ def _resolve_nats_endpoint() -> str:
 
 
 def _has_explicit_endpoint(parsed_url: object) -> bool:
-    """Determine whether a ``urlparse`` result contains a real host:port.
+    """Whether a NATS URL names a host rather than a bare topic.
 
-    Returns ``True`` when the URL has an explicit port **or** a non-empty
-    path — indicating the authority section is a network address, not a
-    topic/identity string.
+    A port or a non-empty path means ``nats://host[:port]/topic``.
+    SLIM does not use this helper: only a port marks a SLIM endpoint,
+    because a path is part of an ``org/ns/name``.
 
     Examples:
-        ``slim://host:46357/topic``  →  port=46357, path="/topic" → True
-        ``slim://my_topic``          →  port=None, path=""        → False
-        ``slim://org/ns/name``       →  port=None, path="/ns/name" → True
-        ``nats://host:4222/topic``   →  port=4222, path="/topic"  → True
-        ``nats://my_topic``          →  port=None, path=""        → False
+        ``nats://host:4222/topic``  →  port=4222, path="/topic" → True
+        ``nats://host/topic``       →  port=None, path="/topic" → True
+        ``nats://my_topic``         →  port=None, path=""       → False
     """
     p = parsed_url  # type: ignore[assignment]
     return p.port is not None or bool(p.path and p.path != "/")
+
+
+def _url_host(host: str) -> str:
+    """Bracket an IPv6 literal so it can be followed by ``:port``."""
+    return f"[{host}]" if ":" in host else host
+
+
+def _slim_endpoint_and_name(parsed: object) -> tuple[str, str]:
+    """Split a SLIM URL into ``(endpoint, name)``.
+
+    A port marks the dataplane address (``slim://host:46357/org/ns/agent``).
+    Without a port the remainder is the name (``slim://my_topic``,
+    ``slim://org/ns/agent``) and the endpoint comes from ``SLIM_ENDPOINT``
+    or ``http://localhost:46357``.  A trailing ``/`` is not part of the name.
+    An ``https://`` URL keeps that scheme; ``slim://`` has none, so its
+    endpoint is ``http://`` until :meth:`CardBuilder.with_slim_tls` rewrites it.
+
+    ``urlparse`` lowercases the host, so the first segment of a port-less
+    name is lowercased.
+    """
+    p = parsed  # type: ignore[assignment]
+    if p.port is not None:
+        host = _url_host(p.hostname or "localhost")
+        scheme = "https" if (p.scheme or "").lower() == "https" else "http"
+        endpoint = f"{scheme}://{host}:{p.port}"
+        name = p.path.strip("/")
+    else:
+        endpoint = _resolve_slim_endpoint()
+        hostname = p.hostname or ""
+        path = p.path.strip("/")
+        name = f"{hostname}/{path}" if path else hostname
+    return endpoint, name
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +186,7 @@ def parse_interface_url(interface: AgentInterface) -> dict[str, str | int]:
     Raises:
         ValueError: If the URL cannot be parsed for the given transport.
     """
-    transport_type = _normalize_transport(interface.transport)
+    transport_type = _normalize_transport(interface.protocol_binding)
     url = interface.url
     parsed = urlparse(url)
 
@@ -182,20 +220,7 @@ def _parse_slimrpc(url: str, parsed: object) -> dict[str, str | int]:
         slim://org/ns/agent_name            → topic-only (identity = org/ns/agent_name)
         slim://host:46357/org/ns/agent_name → explicit endpoint
     """
-    p = parsed  # type: ignore[assignment]
-
-    if _has_explicit_endpoint(p) and p.port is not None:
-        # Explicit: slim://host:port/org/ns/agent_name
-        host = p.hostname or "localhost"
-        endpoint = f"http://{host}:{p.port}"
-        identity = p.path.lstrip("/")
-    else:
-        # Topic-only: slim://org/ns/agent_name
-        # urlparse sees hostname="org", path="/ns/agent_name"
-        endpoint = _resolve_slim_endpoint()
-        hostname = p.hostname or ""
-        path = p.path.lstrip("/")
-        identity = f"{hostname}/{path}" if path else hostname
+    endpoint, identity = _slim_endpoint_and_name(parsed)
 
     if not identity:
         raise ValueError(f"slimrpc URL must include an identity path: {url!r}")
@@ -208,21 +233,12 @@ def _parse_slim_patterns(url: str, parsed: object) -> dict[str, str | int]:
 
     Accepted formats::
 
-        slim://my_topic            → topic-only
-        slim://host:46357/my_topic → explicit endpoint
+        slim://my_topic                → topic-only
+        slim://org/ns/agent            → topic-only (topic = org/ns/agent)
+        slim://host:46357/my_topic     → explicit endpoint
+        slim://host:46357/org/ns/agent → explicit endpoint
     """
-    p = parsed  # type: ignore[assignment]
-
-    if _has_explicit_endpoint(p):
-        # Explicit: slim://host[:port]/topic
-        host = p.hostname or "localhost"
-        port = p.port or _SLIM_DEFAULT_PORT
-        endpoint = f"http://{host}:{port}"
-        topic = p.path.lstrip("/")
-    else:
-        # Topic-only: slim://my_topic
-        endpoint = _resolve_slim_endpoint()
-        topic = p.hostname or ""
+    endpoint, topic = _slim_endpoint_and_name(parsed)
 
     if not topic:
         raise ValueError(f"slim URL must include a topic: {url!r}")
@@ -242,10 +258,10 @@ def _parse_nats_patterns(url: str, parsed: object) -> dict[str, str | int]:
 
     if _has_explicit_endpoint(p):
         # Explicit: nats://host[:port]/topic
-        host = p.hostname or "localhost"
+        host = _url_host(p.hostname or "localhost")
         port = p.port or _NATS_DEFAULT_PORT
         endpoint = f"nats://{host}:{port}"
-        topic = p.path.lstrip("/")
+        topic = p.path.strip("/")
     else:
         # Topic-only: nats://my_topic
         endpoint = _resolve_nats_endpoint()
@@ -292,11 +308,13 @@ class CardBuilder:
     """Fluent builder that expands an AgentCard's interfaces into containers.
 
     Constructed via :meth:`AppSession.add_a2a_card`.  The builder reads
-    ``agent_card.additional_interfaces``, creates transport/config objects
+    ``agent_card.supported_interfaces``, creates transport/config objects
     for each, and registers ``AppContainer`` instances on the session.
 
     Use :meth:`override` to supply a pre-built config or transport for a
-    specific interface type, or :meth:`skip` to exclude one entirely.
+    specific interface type, or :meth:`skip` to exclude one entirely.  The
+    ``JSONRPC`` interface URL is the address the server binds to; use
+    :meth:`with_public_url` to advertise a different, reachable one.
     """
 
     def __init__(
@@ -312,6 +330,8 @@ class CardBuilder:
         self._overrides: dict[str, object] = {}  # canonical transport_type -> pre-built
         self._skips: set[str] = set()  # canonical transport_types to skip
         self._shared_secret: str | None = None
+        self._public_url: str | None = None
+        self._slim_tls = False
 
     # -- Fluent setters -----------------------------------------------------
 
@@ -325,7 +345,7 @@ class CardBuilder:
 
         For ``slimrpc``: pass a pre-built ``A2ASlimRpcServerConfig``.
         For ``slimpatterns`` / ``natspatterns``: pass a pre-built ``BaseTransport``.
-        For ``jsonrpc`` / ``http``: pass a pre-built ``A2AStarletteApplication``.
+        For ``jsonrpc`` / ``http``: pass a pre-built ``A2AServerConfig``.
         """
         self._overrides[_normalize_transport(transport_type)] = target
         return self
@@ -345,6 +365,152 @@ class CardBuilder:
         self._shared_secret = secret
         return self
 
+    def with_slim_tls(self) -> CardBuilder:
+        """Connect the ``slim`` and ``slimrpc`` interfaces over TLS.
+
+        A ``slim://`` URL cannot say whether the dataplane speaks TLS.  A
+        connection uses TLS when the resolved endpoint is ``https://``: an
+        interface URL that is already ``https://host:port/...``, or a
+        topic-only URL whose ``SLIM_ENDPOINT`` is ``https://``.  With this
+        option every SLIM connection uses TLS (``tls_insecure=False``):
+        explicit ``slim://host:46357/...`` endpoints are dialled as
+        ``https://host:46357``, and an ``http://`` ``SLIM_ENDPOINT`` is
+        refused with a :class:`ValueError` by :meth:`dry_run` and
+        :meth:`start` instead of connecting in plaintext.
+
+        The dataplane must present a certificate this host trusts.
+        ``.override()`` configs are used as given: this option does not
+        rewrite them and does not reject them.
+        """
+        self._slim_tls = True
+        return self
+
+    def with_public_url(self, url: str) -> CardBuilder:
+        """Advertise *url* for the HTTP JSON-RPC interface instead of its bind URL.
+
+        In a card, the ``JSONRPC`` interface URL is the address the server
+        **binds** to (``http://0.0.0.0:9999``).  That is rarely an address
+        clients can reach (``0.0.0.0``, an in-container address, a host behind
+        a proxy), yet it is also what the served card advertises.  Set the
+        reachable address here: the server still binds to the card's URL, but
+        the served card carries *url* for that interface.
+
+        :meth:`ContainerBuilder.with_public_url` on the manual builder appends
+        a ``JSONRPC`` interface when the card has none, and leaves an
+        interface the author already declared untouched.  On this builder the
+        card URL is the bind address, so the served copy's HTTP interface URL
+        is replaced with *url*.
+
+        The caller's card object is not modified; a copy with the replaced URL
+        is served.  The option replaces the URL of the one HTTP interface that
+        is served; it is ignored with a warning when there is none (no such
+        interface, ``.skip("jsonrpc")``, or an ``.override("jsonrpc", ...)``
+        config, which is served as given), and rejected when several HTTP
+        interfaces would be served, since one URL cannot describe all of them.
+        """
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"public URL must start with http:// or https://, got {url!r}"
+            )
+        self._public_url = url
+        return self
+
+    # -- Helpers ------------------------------------------------------------
+
+    def _slim_connection(
+        self, interface: AgentInterface, endpoint: str
+    ) -> tuple[str, bool]:
+        """Return the ``(endpoint, tls_insecure)`` for a SLIM interface."""
+        if self._slim_tls and urlparse(interface.url).port is not None:
+            endpoint = "https://" + endpoint.split("://", 1)[1]
+        is_https = endpoint.lower().startswith("https://")
+        if self._slim_tls and not is_https:
+            raise ValueError(
+                f"with_slim_tls() requires an https:// SLIM endpoint, but "
+                f"{interface.url!r} resolves to {endpoint!r} (from SLIM_ENDPOINT "
+                "or the default). Set SLIM_ENDPOINT to an https:// URL."
+            )
+        return endpoint, not is_https
+
+    def _served_card(
+        self, interfaces: list[AgentInterface]
+    ) -> tuple[AgentCard, int | None]:
+        """Return the card to serve and the index of the interface whose URL
+        was replaced by :meth:`with_public_url` (``None`` if untouched).
+
+        Without a public URL this is the caller's card, unchanged.
+        """
+        if self._public_url is None:
+            return self._agent_card, None
+
+        http_indexes: list[int] = []
+        for i, interface in enumerate(interfaces):
+            transport_type = _normalize_transport(interface.protocol_binding)
+            if transport_type in ("jsonrpc", "http") and (
+                transport_type not in self._skips
+            ):
+                http_indexes.append(i)
+
+        if not http_indexes:
+            logger.warning(
+                "with_public_url(%r) is ignored: no HTTP JSON-RPC interface "
+                "is served (none declared on the card, or it was skipped).",
+                self._public_url,
+            )
+            return self._agent_card, None
+
+        if len(http_indexes) > 1:
+            raise ValueError(
+                "with_public_url() needs exactly one served HTTP JSON-RPC "
+                f"interface, but the card has {len(http_indexes)}. One URL "
+                "cannot describe all of them; .skip() the extra ones."
+            )
+
+        index = http_indexes[0]
+        transport_type = _normalize_transport(interfaces[index].protocol_binding)
+        if self._overrides.get(transport_type) is not None:
+            logger.warning(
+                "with_public_url(%r) is ignored: the %r interface is served "
+                "from an .override() config, which is used as given.",
+                self._public_url,
+                transport_type,
+            )
+            return self._agent_card, None
+
+        from agntcy_app_sdk.semantic.a2a.card_utils import clone_card
+
+        served = clone_card(self._agent_card)
+        served.supported_interfaces[index].url = self._public_url
+        return served, index
+
+    def _warn_on_slim_name_collision(self, interfaces: list[AgentInterface]) -> None:
+        """Warn when ``slim`` (pub/sub) and ``slimrpc`` share one SLIM name.
+
+        SLIM 2.x hands an incoming session to a single subscriber of a name.
+        If a pub/sub app and an RPC server subscribe under the same name, RPC
+        calls can be delivered to the pub/sub app (which has no RPC handler)
+        and hang until they time out.
+        """
+        rpc_names: set[str] = set()
+        pubsub_names: set[str] = set()
+        for interface in interfaces:
+            transport_type = _normalize_transport(interface.protocol_binding)
+            if transport_type in self._skips:
+                continue
+            if transport_type == "slimrpc":
+                rpc_names.add(str(parse_interface_url(interface)["identity"]))
+            elif transport_type == "slimpatterns":
+                pubsub_names.add(str(parse_interface_url(interface)["topic"]))
+
+        for name in sorted(rpc_names & pubsub_names):
+            logger.warning(
+                "The card declares both a 'slim' and a 'slimrpc' interface "
+                "for '%s'. SLIM 2.x delivers a session to only one subscriber "
+                "of a name, so slimrpc calls may never be answered. Give the "
+                "two interfaces different identities, or .skip() one of them.",
+                name,
+            )
+
     # -- Terminal operations ------------------------------------------------
 
     async def dry_run(self) -> ServeCardPlan:
@@ -363,9 +529,8 @@ class CardBuilder:
         self, *, dry_run: bool, keep_alive: bool
     ) -> ServeCardPlan | None:
         """Internal execution engine (shared by :meth:`start` and :meth:`dry_run`)."""
-        from a2a.server.apps import A2AStarletteApplication
-
         from agntcy_app_sdk.factory import AgntcyFactory
+        from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
         from agntcy_app_sdk.semantic.a2a.server.srpc import (
             A2ASlimRpcServerConfig,
             SlimRpcConnectionConfig,
@@ -379,27 +544,33 @@ class CardBuilder:
             self._factory = AgntcyFactory()
         factory = self._factory
 
-        interfaces = agent_card.additional_interfaces or []
+        interfaces = list(agent_card.supported_interfaces)
         if not interfaces:
             raise ValueError(
-                "agent_card.additional_interfaces is empty; nothing to serve"
+                "agent_card.supported_interfaces is empty; nothing to serve"
             )
 
         plan = ServeCardPlan()
 
-        # Build the A2AStarletteApplication once for transports that need it
-        # (slim/nats patterns and jsonrpc all share the same app instance).
-        a2a_app = A2AStarletteApplication(
-            agent_card=agent_card, http_handler=request_handler
+        # The interface URLs above say where to *bind*; the card that is
+        # served may advertise a different, reachable URL (with_public_url).
+        served_card, public_index = self._served_card(interfaces)
+
+        # Build the A2AServerConfig once for transports that need it
+        # (slim/nats patterns and jsonrpc all share the same config instance).
+        a2a_app = A2AServerConfig(
+            agent_card=served_card, request_handler=request_handler
         )
 
+        self._warn_on_slim_name_collision(interfaces)
+
         for i, interface in enumerate(interfaces):
-            transport_type = _normalize_transport(interface.transport)
+            transport_type = _normalize_transport(interface.protocol_binding)
 
             if transport_type not in _CANONICAL_TRANSPORTS:
                 logger.warning(
                     "Unknown transport type '%s' on interface %d, skipping",
-                    interface.transport,
+                    interface.protocol_binding,
                     i,
                 )
                 continue
@@ -414,6 +585,20 @@ class CardBuilder:
                 continue
 
             parsed = parse_interface_url(interface)
+            # An override is the caller's transport, so the card URL's TLS
+            # decision does not apply to it and must not reject the start.
+            slim_override = (
+                self._overrides.get(transport_type)
+                if transport_type in ("slimrpc", "slimpatterns")
+                else None
+            )
+            if transport_type in ("slimrpc", "slimpatterns") and slim_override is None:
+                slim_endpoint, tls_insecure = self._slim_connection(
+                    interface, str(parsed["endpoint"])
+                )
+                parsed["endpoint"] = slim_endpoint
+            else:
+                tls_insecure = True
 
             if transport_type == "slimrpc":
                 override = self._overrides.get("slimrpc")
@@ -437,6 +622,8 @@ class CardBuilder:
                     detail = (
                         f"endpoint={parsed['endpoint']}, identity={parsed['identity']}"
                     )
+                    if override is None and not tls_insecure:
+                        detail += ", tls=on"
                     if override is not None:
                         detail += " (source: override)"
                     plan.containers.append(
@@ -452,12 +639,13 @@ class CardBuilder:
                     session.add(override).with_session_id(session_id).build()
                 else:
                     config = A2ASlimRpcServerConfig(
-                        agent_card=agent_card,
+                        agent_card=served_card,
                         request_handler=request_handler,
                         connection=SlimRpcConnectionConfig(
                             identity=str(parsed["identity"]),
                             shared_secret=shared_secret,
                             endpoint=str(parsed["endpoint"]),
+                            tls_insecure=tls_insecure,
                         ),
                     )
                     session.add(config).with_session_id(session_id).build()
@@ -490,6 +678,8 @@ class CardBuilder:
                         f"topic={parsed['topic']}, "
                         f"name={routable_name}"
                     )
+                    if override is None and not tls_insecure:
+                        detail += ", tls=on"
                     if override is not None:
                         detail += " (source: override)"
                     plan.containers.append(
@@ -509,6 +699,7 @@ class CardBuilder:
                         endpoint=str(parsed["endpoint"]),
                         name=routable_name,
                         shared_secret_identity=shared_secret,
+                        tls_insecure=tls_insecure,
                     )
                 (
                     session.add(a2a_app)
@@ -562,6 +753,8 @@ class CardBuilder:
 
                 if dry_run:
                     detail = f"host={parsed['host']}, port={parsed['port']}"
+                    if public_index == i:
+                        detail += f", advertised={self._public_url}"
                     if override is not None:
                         detail += " (source: override)"
                     plan.containers.append(

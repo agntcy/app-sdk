@@ -12,18 +12,14 @@ Usage:
 
 import argparse
 import asyncio
-import uuid
 
+from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
     AgentSkill,
-    Message,
-    MessageSendParams,
-    Part,
     Role,
     SendMessageRequest,
-    TextPart,
 )
 
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -44,13 +40,11 @@ skill = AgentSkill(
 base_agent_card = AgentCard(
     name="Weather Agent",
     description="An agent that provides weather reports",
-    url="",
     version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
+    default_input_modes=["text"],
+    default_output_modes=["text"],
     capabilities=AgentCapabilities(streaming=True),
     skills=[skill],
-    supportsAuthenticatedExtendedCard=False,
 )
 
 
@@ -77,37 +71,18 @@ async def main(transport_type: str, endpoint: str):
     client = await factory.a2a(config).create(agent_card)
 
     request = SendMessageRequest(
-        id="request-001",
-        params=MessageSendParams(
-            message=Message(
-                messageId=str(uuid.uuid4()),
-                role=Role.user,
-                parts=[
-                    Part(
-                        root=TextPart(text="Hello, Weather Agent, how is the weather?")
-                    )
-                ],
-            ),
-        ),
+        message=new_text_message(
+            "Hello, Weather Agent, how is the weather?", role=Role.ROLE_USER
+        )
     )
 
-    # Use send_message with the Message from the request
+    # send_message yields StreamResponse events (message / task / status updates)
     output = ""
-    async for event in client.send_message(request=request.params.message):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    output += part.root.text
-                    print(part.root.text)
-        else:
-            task, _update = event
-            if task.history:
-                for msg in task.history:
-                    if msg.role == Role.agent:
-                        for part in msg.parts:
-                            if isinstance(part.root, TextPart):
-                                output += part.root.text
-                                print(part.root.text)
+    async for event in client.send_message(request):
+        text = get_stream_response_text(event)
+        if text:
+            output += text
+            print(text)
 
     if not output:
         print("ERROR: No response received")

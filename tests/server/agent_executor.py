@@ -4,13 +4,8 @@
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.utils import (
-    new_agent_text_message,
-    new_task,
-)
-from a2a.types import (
-    TaskState,
-)
+from a2a.helpers import new_task_from_user_message, new_text_message
+from a2a.types import TaskState
 from typing import AsyncIterator
 import asyncio
 import random
@@ -62,7 +57,7 @@ class HelloWorldAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         result = await self.agent.invoke(context)
-        await event_queue.enqueue_event(new_agent_text_message(result))
+        await event_queue.enqueue_event(new_text_message(result))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("cancel not supported")
@@ -79,17 +74,17 @@ class HelloWorldStreamingAgentExecutor(AgentExecutor):
     ) -> None:
         print("request--", context.message)
 
-        task = new_task(context.message)
+        task = new_task_from_user_message(context.message)
         await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, task.context_id)
         async for token in self.agent.stream(context):
             await updater.update_status(
-                TaskState.working,
-                new_agent_text_message(
+                TaskState.TASK_STATE_WORKING,
+                new_text_message(
                     token,
-                    task.context_id,
-                    task.id,
+                    context_id=task.context_id,
+                    task_id=task.id,
                 ),
             )
 

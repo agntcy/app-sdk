@@ -13,12 +13,12 @@ Usage:
 import argparse
 import asyncio
 
+from a2a.helpers import new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from a2a.utils import new_agent_text_message
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.server.srpc import (
@@ -41,13 +41,11 @@ skill = AgentSkill(
 agent_card = AgentCard(
     name="Weather Agent",
     description="An agent that provides weather reports",
-    url="",
     version="1.0.0",
-    defaultInputModes=["text"],
-    defaultOutputModes=["text"],
+    default_input_modes=["text"],
+    default_output_modes=["text"],
     capabilities=AgentCapabilities(streaming=True),
     skills=[skill],
-    supportsAuthenticatedExtendedCard=False,
 )
 
 # ---------------------------------------------------------------------------
@@ -72,7 +70,7 @@ class WeatherAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         result = await self.agent.invoke()
-        await event_queue.enqueue_event(new_agent_text_message(result))
+        await event_queue.enqueue_event(new_text_message(result))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("cancel not supported")
@@ -89,6 +87,7 @@ async def main(endpoint: str, name: str):
     request_handler = DefaultRequestHandler(
         agent_executor=WeatherAgentExecutor(),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
     srpc_config = A2ASlimRpcServerConfig(

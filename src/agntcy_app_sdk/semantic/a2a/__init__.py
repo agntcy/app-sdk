@@ -3,6 +3,7 @@
 
 from agntcy_app_sdk.semantic.a2a.server import (
     BaseA2AServerHandler,
+    A2AServerConfig,
     A2AJsonRpcServerHandler,
     A2AExperimentalServerHandler,
     A2AExperimentalServer,
@@ -19,13 +20,17 @@ from agntcy_app_sdk.semantic.a2a.client.config import (
 )
 
 from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+    A2ABroadcastError,
+    A2ABroadcastTimeoutError,
     A2AExperimentalClient,
+    BroadcastFailure,
 )
 from agntcy_app_sdk.semantic.a2a.client.transports import PatternsClientTransport
 from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
 
 __all__ = [
     "BaseA2AServerHandler",
+    "A2AServerConfig",
     "A2AJsonRpcServerHandler",
     "A2AExperimentalServerHandler",
     "A2AExperimentalServer",
@@ -38,6 +43,9 @@ __all__ = [
     "SlimTransportConfig",
     "NatsTransportConfig",
     "A2AExperimentalClient",
+    "A2ABroadcastError",
+    "A2ABroadcastTimeoutError",
+    "BroadcastFailure",
     "PatternsClientTransport",
     "get_agent_identifier",
 ]

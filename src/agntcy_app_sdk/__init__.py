@@ -19,6 +19,7 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
     CardBuilder,
     ServeCardPlan,
 )
+from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
 from agntcy_app_sdk.semantic.a2a.transport_types import InterfaceTransport
 from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
 
@@ -36,6 +37,7 @@ __all__ = [
     "AgentDirectory",
     "BaseAgentDirectory",
     "RecordVisibility",
+    "A2AServerConfig",
     "CardBuilder",
     "InterfaceTransport",
     "ServeCardPlan",

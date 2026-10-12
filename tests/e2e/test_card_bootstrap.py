@@ -10,15 +10,11 @@ transports.
 """
 
 import asyncio
-import os
 from unittest.mock import patch
 
 import pytest
-from a2a.types import (
-    Message,
-    Role,
-    TextPart,
-)
+from a2a.helpers import get_stream_response_text
+from a2a.types import GetExtendedAgentCardRequest
 from ioa_observe.sdk.tracing import session_start
 
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -28,8 +24,11 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import ServeCardPlan
 from tests.e2e.conftest import (
     TRANSPORT_CONFIGS,
     make_agent_card,
-    make_message,
     make_send_request,
+)
+from tests.server.a2a_card_bootstrap_server import (
+    get_slim_shared_secret,
+    slim_endpoint,
 )
 
 pytest_plugins = "pytest_asyncio"
@@ -39,7 +38,7 @@ pytest_plugins = "pytest_asyncio"
 # MCP, etc.), so we extend it here.
 CARD_BOOTSTRAP_TRANSPORT_CONFIGS = {
     **TRANSPORT_CONFIGS,
-    "SLIMRPC": "http://localhost:46357",
+    "SLIMRPC": slim_endpoint(),
 }
 
 
@@ -57,13 +56,11 @@ async def test_client(run_card_bootstrap_server, transport):
     endpoint = CARD_BOOTSTRAP_TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_client (card_bootstrap) | {transport} | {endpoint} ---")
 
-    if transport == "SLIMRPC":
-        # add_a2a_card() now starts slimrpc on a dedicated SLIM connection,
-        # so it coexists with slimpatterns on the same server process.
-        run_card_bootstrap_server(transport, endpoint)
-        await asyncio.sleep(2)
-    else:
-        run_card_bootstrap_server(transport, endpoint)
+    # add_a2a_card() starts slimrpc on a dedicated SLIM connection, so it
+    # coexists with slimpatterns on the same server process.  The SlimRPC
+    # fixture returns only after a send_message probe succeeds.
+    run_card_bootstrap_server(transport, endpoint)
+    if transport != "SLIMRPC":
         await asyncio.sleep(1)
 
     factory = AgntcyFactory(enable_tracing=True)
@@ -77,19 +74,15 @@ async def test_client(run_card_bootstrap_server, transport):
     elif transport == "SLIMRPC":
         session_start()
 
-        # The add_a2a_card() server reads SLIM_SHARED_SECRET from the
-        # environment — match that here so client and server agree.
-        slim_secret = os.environ.get(
-            "SLIM_SHARED_SECRET",
-            "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS",
-        )
+        # The add_a2a_card() server resolves its secret and endpoint the same
+        # way, so client and server agree.
         config = ClientConfig(
             slimrpc_config=SlimRpcConfig(
                 namespace="default",
                 group="default",
                 name="test_client",
-                slim_url="http://localhost:46357",
-                secret=slim_secret,
+                slim_url=slim_endpoint(),
+                secret=get_slim_shared_secret(),
             ),
         )
         card = make_agent_card("default/default/Hello_World_Agent_1.0.0", "SLIMRPC")
@@ -116,23 +109,13 @@ async def test_client(run_card_bootstrap_server, transport):
         client = await a2a.create(card)
 
     assert client is not None, "Client was not created"
-    print(f"Agent: {(await client.get_card()).name}")
+    agent_card = await client.get_extended_agent_card(GetExtendedAgentCardRequest())
+    print(f"Agent: {agent_card.name}")
 
-    request = make_message()
+    request = make_send_request()
     output = ""
     async for event in client.send_message(request):
-        if isinstance(event, Message):
-            for part in event.parts:
-                if isinstance(part.root, TextPart):
-                    output += part.root.text
-        else:
-            task, _update = event
-            if task.history:
-                for msg in task.history:
-                    if msg.role == Role.agent:
-                        for part in msg.parts:
-                            if isinstance(part.root, TextPart):
-                                output += part.root.text
+        output += get_stream_response_text(event)
 
     assert output, "Response was empty"
     assert "Hello from" in output, f"Expected 'Hello from' in response, got: {output}"
@@ -291,3 +274,77 @@ async def test_dry_run_with_skip():
     assert len(session.app_containers) == 0
 
     print("=== ✅ test_dry_run_with_skip passed ===")
+
+
+# ---------------------------------------------------------------------------
+# test_public_url — bind locally, advertise a different URL (no Docker required)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_public_url_is_advertised_while_the_server_binds_locally():
+    """The card's JSONRPC URL is where the server binds; ``with_public_url()``
+    decides what the served card tells clients."""
+    import socket
+
+    import httpx
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.tasks import InMemoryTaskStore
+    from a2a.types import AgentCapabilities, AgentCard, AgentInterface
+
+    from tests.server.a2a_card_bootstrap_server import (
+        DEFAULT_SKILL,
+        HelloWorldAgentExecutor,
+    )
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    public_url = "https://agent.example.com"
+    card = AgentCard(
+        name="Public URL Agent",
+        description="binds locally, advertises elsewhere",
+        version="1.0.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=AgentCapabilities(streaming=False),
+        skills=[DEFAULT_SKILL],
+        supported_interfaces=[
+            AgentInterface(protocol_binding="JSONRPC", url=f"http://0.0.0.0:{port}")
+        ],
+    )
+    handler = DefaultRequestHandler(
+        agent_executor=HelloWorldAgentExecutor("public_url"),
+        task_store=InMemoryTaskStore(),
+        agent_card=card,
+    )
+
+    factory = AgntcyFactory()
+    session = factory.create_app_session(max_sessions=2)
+    await (
+        session.add_a2a_card(card, handler)
+        .with_factory(factory)
+        .with_public_url(public_url)
+        .start(keep_alive=False)
+    )
+    try:
+        await asyncio.sleep(1)
+
+        # Reached on the bind address ...
+        async with httpx.AsyncClient() as http:
+            response = await http.get(
+                f"http://127.0.0.1:{port}/.well-known/agent-card.json"
+            )
+        assert response.status_code == 200
+
+        # ... but the card names the public URL, never the bind address.
+        advertised = [i["url"] for i in response.json()["supportedInterfaces"]]
+        assert advertised == [public_url]
+    finally:
+        await session.stop_all_sessions()
+
+    # The caller's own card object keeps what the author wrote.
+    assert card.supported_interfaces[0].url == f"http://0.0.0.0:{port}"
+
+    print("=== ✅ test_public_url passed ===")
