@@ -1581,6 +1581,237 @@ class TestCardBuilderFluent:
 
 
 # =========================================================================
+# CardBuilder — public URL (bind locally, advertise elsewhere)
+# =========================================================================
+
+_BIND_URL = "http://0.0.0.0:9999"
+_PUBLIC_URL = "https://agent.example.com"
+
+
+def _public_url_builder(
+    interfaces: list[AgentInterface],
+) -> tuple[CardBuilder, MagicMock, MagicMock, AgentCard]:
+    """A CardBuilder over mocks.  Returns (builder, session, container, card)."""
+    container = MagicMock()
+    container.with_host.return_value = container
+    container.with_port.return_value = container
+    container.with_session_id.return_value = container
+    container.with_transport.return_value = container
+    container.with_topic.return_value = container
+    container.build.return_value = MagicMock()
+
+    session = MagicMock()
+    session.add.return_value = container
+    session.start_all_sessions = AsyncMock()
+
+    card = _make_card(interfaces=interfaces)
+    builder = CardBuilder(session, card, MagicMock())
+    builder.with_factory(MagicMock())
+    return builder, session, container, card
+
+
+def _urls(card: AgentCard) -> list[tuple[str, str]]:
+    return [(i.protocol_binding, i.url) for i in card.supported_interfaces]
+
+
+class TestCardBuilderPublicUrl:
+    """``.with_public_url()``: the card URL is where to bind, the public URL
+    is what clients are told."""
+
+    def test_returns_self(self):
+        builder = _make_builder(
+            [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
+        )
+        assert builder.with_public_url(_PUBLIC_URL) is builder
+
+    @pytest.mark.parametrize("url", ["agent.example.com", "ftp://x", "slim://x", ""])
+    def test_rejects_non_http_urls(self, url):
+        builder = _make_builder(
+            [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
+        )
+        with pytest.raises(ValueError, match="http://"):
+            builder.with_public_url(url)
+
+    @pytest.mark.asyncio
+    async def test_binds_card_url_and_advertises_public_url(self):
+        builder, session, container, card = _public_url_builder(
+            [AgentInterface(protocol_binding="JSONRPC", url=_BIND_URL)]
+        )
+
+        await builder.with_public_url(_PUBLIC_URL).start()
+
+        # Bind address still comes from the card URL ...
+        container.with_host.assert_called_once_with("0.0.0.0")
+        container.with_port.assert_called_once_with(9999)
+        # ... while the card handed to the server carries the public URL.
+        served = session.add.call_args.args[0].agent_card
+        assert _urls(served) == [("JSONRPC", _PUBLIC_URL)]
+
+    @pytest.mark.asyncio
+    async def test_callers_card_is_not_modified(self):
+        builder, _, _, card = _public_url_builder(
+            [AgentInterface(protocol_binding="JSONRPC", url=_BIND_URL)]
+        )
+
+        await builder.with_public_url(_PUBLIC_URL).start()
+
+        assert _urls(card) == [("JSONRPC", _BIND_URL)]
+
+    @pytest.mark.asyncio
+    async def test_without_public_url_the_card_is_served_as_is(self):
+        """Default behavior is unchanged: same object, no copy."""
+        builder, session, _, card = _public_url_builder(
+            [AgentInterface(protocol_binding="JSONRPC", url=_BIND_URL)]
+        )
+
+        await builder.start()
+
+        served = session.add.call_args.args[0].agent_card
+        assert served is card
+
+    @pytest.mark.asyncio
+    async def test_only_the_http_interface_changes_and_order_is_kept(self):
+        builder, session, _, _ = _public_url_builder(
+            [
+                AgentInterface(protocol_binding="nats", url="nats://my_topic"),
+                AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL),
+            ]
+        )
+        factory = MagicMock()
+        builder.with_factory(factory)
+
+        await builder.with_public_url(_PUBLIC_URL).start()
+
+        served = session.add.call_args_list[0].args[0].agent_card
+        assert _urls(served) == [
+            ("nats", "nats://my_topic"),
+            ("jsonrpc", _PUBLIC_URL),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_http_alias_binding_is_covered_too(self):
+        builder, session, container, _ = _public_url_builder(
+            [AgentInterface(protocol_binding="http", url="http://127.0.0.1:8080")]
+        )
+
+        await builder.with_public_url(_PUBLIC_URL).start()
+
+        container.with_port.assert_called_once_with(8080)
+        served = session.add.call_args.args[0].agent_card
+        assert _urls(served) == [("http", _PUBLIC_URL)]
+
+    @pytest.mark.asyncio
+    async def test_dry_run_shows_bind_and_advertised_address(self):
+        builder = _make_builder(
+            [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
+        )
+
+        plan = await builder.with_public_url(_PUBLIC_URL).dry_run()
+
+        detail = plan.containers[0]["detail"]
+        assert "host=0.0.0.0" in detail
+        assert "port=9999" in detail
+        assert f"advertised={_PUBLIC_URL}" in detail
+
+    @pytest.mark.asyncio
+    async def test_dry_run_without_public_url_is_unchanged(self):
+        builder = _make_builder(
+            [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
+        )
+
+        plan = await builder.dry_run()
+
+        assert plan.containers[0]["detail"] == "host=0.0.0.0, port=9999"
+
+    @pytest.mark.asyncio
+    async def test_slimrpc_config_gets_the_corrected_card(self):
+        """SlimRPC serves the card too; it must not show the bind URL."""
+        builder, session, _, _ = _public_url_builder(
+            [
+                AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/agent"),
+                AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL),
+            ]
+        )
+
+        with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
+            await builder.with_public_url(_PUBLIC_URL).start()
+
+        configs = [call.args[0] for call in session.add.call_args_list]
+        for config in configs:
+            assert all(url != _BIND_URL for _, url in _urls(config.agent_card))
+
+    @pytest.mark.asyncio
+    async def test_ignored_with_a_warning_when_no_http_interface(self):
+        builder, session, _, card = _public_url_builder(
+            [AgentInterface(protocol_binding="nats", url="nats://my_topic")]
+        )
+
+        with patch("agntcy_app_sdk.semantic.a2a.server.card_bootstrap.logger") as log:
+            await builder.with_public_url(_PUBLIC_URL).start()
+
+        log.warning.assert_called_once()
+        assert "ignored" in log.warning.call_args.args[0]
+        assert session.add.call_args.args[0].agent_card is card
+
+    @pytest.mark.asyncio
+    async def test_ignored_with_a_warning_when_http_is_skipped(self):
+        builder, session, _, card = _public_url_builder(
+            [
+                AgentInterface(protocol_binding="nats", url="nats://my_topic"),
+                AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL),
+            ]
+        )
+
+        with patch("agntcy_app_sdk.semantic.a2a.server.card_bootstrap.logger") as log:
+            await builder.skip("jsonrpc").with_public_url(_PUBLIC_URL).start()
+
+        log.warning.assert_called_once()
+        assert session.add.call_args.args[0].agent_card is card
+
+    @pytest.mark.asyncio
+    async def test_ignored_with_a_warning_when_http_is_overridden(self):
+        """An .override() config is served exactly as given."""
+        builder, session, _, card = _public_url_builder(
+            [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
+        )
+        override = MagicMock()
+
+        with patch("agntcy_app_sdk.semantic.a2a.server.card_bootstrap.logger") as log:
+            await (
+                builder.override("jsonrpc", override)
+                .with_public_url(_PUBLIC_URL)
+                .start()
+            )
+
+        log.warning.assert_called_once()
+        assert "override" in log.warning.call_args.args[0]
+        session.add.assert_called_once_with(override)
+
+    @pytest.mark.asyncio
+    async def test_several_http_interfaces_are_rejected(self):
+        builder = _make_builder(
+            [
+                AgentInterface(protocol_binding="jsonrpc", url="http://0.0.0.0:9001"),
+                AgentInterface(protocol_binding="http", url="http://0.0.0.0:9002"),
+            ]
+        )
+
+        with pytest.raises(ValueError, match="exactly one"):
+            await builder.with_public_url(_PUBLIC_URL).dry_run()
+
+    @pytest.mark.asyncio
+    async def test_bind_url_still_needs_an_explicit_port(self):
+        """The card URL is still the bind address, so a public-looking URL
+        without a port can't stand in for it."""
+        builder = _make_builder(
+            [AgentInterface(protocol_binding="jsonrpc", url=_PUBLIC_URL)]
+        )
+
+        with pytest.raises(ValueError, match="explicit host and port"):
+            await builder.with_public_url(_PUBLIC_URL).dry_run()
+
+
+# =========================================================================
 # InterfaceTransport
 # =========================================================================
 

@@ -274,3 +274,77 @@ async def test_dry_run_with_skip():
     assert len(session.app_containers) == 0
 
     print("=== ✅ test_dry_run_with_skip passed ===")
+
+
+# ---------------------------------------------------------------------------
+# test_public_url — bind locally, advertise a different URL (no Docker required)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_public_url_is_advertised_while_the_server_binds_locally():
+    """The card's JSONRPC URL is where the server binds; ``with_public_url()``
+    decides what the served card tells clients."""
+    import socket
+
+    import httpx
+    from a2a.server.request_handlers import DefaultRequestHandler
+    from a2a.server.tasks import InMemoryTaskStore
+    from a2a.types import AgentCapabilities, AgentCard, AgentInterface
+
+    from tests.server.a2a_card_bootstrap_server import (
+        DEFAULT_SKILL,
+        HelloWorldAgentExecutor,
+    )
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+
+    public_url = "https://agent.example.com"
+    card = AgentCard(
+        name="Public URL Agent",
+        description="binds locally, advertises elsewhere",
+        version="1.0.0",
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        capabilities=AgentCapabilities(streaming=False),
+        skills=[DEFAULT_SKILL],
+        supported_interfaces=[
+            AgentInterface(protocol_binding="JSONRPC", url=f"http://0.0.0.0:{port}")
+        ],
+    )
+    handler = DefaultRequestHandler(
+        agent_executor=HelloWorldAgentExecutor("public_url"),
+        task_store=InMemoryTaskStore(),
+        agent_card=card,
+    )
+
+    factory = AgntcyFactory()
+    session = factory.create_app_session(max_sessions=2)
+    await (
+        session.add_a2a_card(card, handler)
+        .with_factory(factory)
+        .with_public_url(public_url)
+        .start(keep_alive=False)
+    )
+    try:
+        await asyncio.sleep(1)
+
+        # Reached on the bind address ...
+        async with httpx.AsyncClient() as http:
+            response = await http.get(
+                f"http://127.0.0.1:{port}/.well-known/agent-card.json"
+            )
+        assert response.status_code == 200
+
+        # ... but the card names the public URL, never the bind address.
+        advertised = [i["url"] for i in response.json()["supportedInterfaces"]]
+        assert advertised == [public_url]
+    finally:
+        await session.stop_all_sessions()
+
+    # The caller's own card object keeps what the author wrote.
+    assert card.supported_interfaces[0].url == f"http://0.0.0.0:{port}"
+
+    print("=== ✅ test_public_url passed ===")

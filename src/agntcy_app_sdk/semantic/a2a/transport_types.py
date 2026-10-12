@@ -40,6 +40,10 @@ class InterfaceTransport:
             url="http://0.0.0.0:9999",
         )
 
+    The ``JSONRPC`` URL is the address the server **binds** to.  When that is
+    not an address clients can reach (``0.0.0.0``, in-container, behind a
+    proxy), use ``CardBuilder.with_public_url()`` to advertise another one.
+
     The order of ``supported_interfaces`` expresses the agent's transport
     preference (first entry wins), replacing the removed
     ``AgentCard.preferred_transport`` / ``additional_interfaces`` fields.

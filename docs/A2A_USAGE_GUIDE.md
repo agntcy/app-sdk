@@ -473,6 +473,7 @@ if __name__ == "__main__":
   - `.with_factory(factory)` — reuse an existing `AgntcyFactory` (auto-created if omitted)
   - `.skip(transport_type)` — exclude a specific transport (e.g., `.skip("jsonrpc")`)
   - `.override(transport_type, target)` — supply a pre-built transport or config for a specific interface
+  - `.with_public_url(url)` — advertise a reachable URL for the `JSONRPC` interface. The card's `JSONRPC` URL (e.g. `http://0.0.0.0:9000`) is where the server binds, which clients usually cannot reach; the served card carries `url` instead
   - `.dry_run()` — returns a `ServeCardPlan` describing what _would_ be started, without starting anything
 - **`SLIM_SHARED_SECRET`:** Required environment variable for any SLIM-based transport. Set it before calling `start()`.
 - **URL formats:** Each interface URL supports two styles:

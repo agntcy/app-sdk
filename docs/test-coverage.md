@@ -30,7 +30,7 @@ uv run pytest tests/unit/ -v
 
 | File                              | Tests | What It Covers                                                                                                                                                                                                                                                                          |
 | --------------------------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_card_bootstrap.py`          |    81 | URL parsing (`slim://`, `nats://`, `http://`), transport aliasing, dry-run plan generation, `CardBuilder` container building, `InterfaceTransport` constants, `AppSession.add_a2a_card()` delegation, `.override()` / `.skip()` / fluent chaining, warning when `slim` and `slimrpc` share one SLIM name |
+| `test_card_bootstrap.py`          |    99 | URL parsing (`slim://`, `nats://`, `http://`), transport aliasing, dry-run plan generation, `CardBuilder` container building, `InterfaceTransport` constants, `AppSession.add_a2a_card()` delegation, `.override()` / `.skip()` / fluent chaining, warning when `slim` and `slimrpc` share one SLIM name, `.with_public_url()` (bind vs advertised URL) |
 | `test_a2a_client_config.py`       |   112 | `ClientConfig` post-init logic (incl. deprecated `supported_transports`), transport config validation, `_parse_topic_from_url`, `PatternsClientTransport` adapter, `A2AExperimentalClient` API and `ClientCallInterceptor` integration, `A2AClientFactory` negotiation over `supported_interfaces` (server/client preference, multi-transport), dispatch to slimrpc/slimpatterns/natspatterns/jsonrpc |
 | `test_a2a_server.py`              |    45 | `A2AServerConfig` and deprecated `A2AStarletteApplication` shim, HTTP JSON-RPC app, interface declaration by server handlers, patterns bridge over an in-memory loopback transport (unary, streaming, errors, relay, identity auth), `with_public_url` / JSONRPC interface declaration |
 | `test_card_utils.py`              |    18 | `supported_interfaces` helpers: `add_interface` / `find_interface` / `clone_card`, binding casing and aliases |
@@ -93,6 +93,7 @@ uv run pytest tests/e2e/test_card_bootstrap.py -s -v
 | `test_broadcast[SLIMRPC]` | SLIM RPC      |  SKIP  | SlimRPC is point-to-point only                                                                                           |
 | `test_dry_run`            | All           |  PASS  | `add_a2a_card().dry_run()` returns correct plan without starting anything                                                |
 | `test_dry_run_with_skip`  | All           |  PASS  | `add_a2a_card().skip("jsonrpc").dry_run()` omits skipped transport from plan                                             |
+| `test_public_url_is_advertised_while_the_server_binds_locally` | HTTP JSON-RPC |  PASS  | `.with_public_url()`: server binds to the card URL, served card advertises the public URL (no Docker) |
 
 ### test_a2a_slimrpc.py
 

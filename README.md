@@ -584,8 +584,11 @@ await (
 | `.with_shared_secret(secret)`    | Provide SLIM shared secret directly (falls back to `SLIM_SHARED_SECRET`) |
 | `.skip(transport_type)`          | Exclude a specific transport from being started                          |
 | `.override(transport_type, obj)` | Supply a pre-built transport or config for an interface                  |
+| `.with_public_url(url)`          | Advertise a reachable URL for the `JSONRPC` interface (see below)        |
 | `.dry_run()`                     | Return a `ServeCardPlan` describing what _would_ start                   |
 | `.start(keep_alive=False)`       | Build all containers and start sessions                                  |
+
+The `JSONRPC` URL in the card (`http://0.0.0.0:9000` above) is the address the server **binds** to, and it is also what the served card advertises. Clients usually cannot reach `0.0.0.0` or an in-container address, so call `.with_public_url("https://agent.example.com")` to bind to the card's URL while advertising the public one. Your own card object is not modified.
 
 ### Manual Session Builder
 

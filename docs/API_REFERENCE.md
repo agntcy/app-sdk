@@ -744,6 +744,36 @@ def override(transport_type: str, target: object) -> CardBuilder
 
 ---
 
+##### with_public_url()
+
+Advertise a reachable URL for the HTTP JSON-RPC interface, instead of the address it binds to.
+
+In a card, the `JSONRPC` interface URL (e.g. `http://0.0.0.0:9000`) is where the server **binds**. That is rarely an address clients can reach (`0.0.0.0`, an in-container address, a host behind a proxy), yet it is also what the served card advertises. With `with_public_url()` the server still binds to the card's URL, but the served card carries the public URL for that interface. It is the card-driven counterpart of `ContainerBuilder.with_public_url()`.
+
+```python
+def with_public_url(url: str) -> CardBuilder
+```
+
+**Parameters:**
+
+| Parameter | Type  | Required | Description                                                      |
+| --------- | ----- | -------- | ---------------------------------------------------------------- |
+| `url`     | `str` | Yes      | Externally reachable URL; must start with `http://` or `https://` |
+
+**Behavior:**
+
+- The caller's `AgentCard` is not modified; a copy with the replaced URL is served (also to the other transports, so the card is consistent everywhere).
+- Only the HTTP interface's URL changes; the order of `supported_interfaces` is kept.
+- `.dry_run()` shows both addresses (`host=0.0.0.0, port=9000, advertised=https://agent.example.com`).
+- Ignored with a warning when no HTTP interface is served: none on the card, `.skip("jsonrpc")`, or an `.override("jsonrpc", config)`, which is served as given.
+- Raises `ValueError` if the card has several HTTP interfaces that would be served, since one URL cannot describe all of them.
+
+**Raises:** `ValueError` if `url` does not start with `http://` or `https://`.
+
+**Returns:** `CardBuilder` (for chaining)
+
+---
+
 ##### dry_run()
 
 Return a plan describing what would be started, without actually starting anything.

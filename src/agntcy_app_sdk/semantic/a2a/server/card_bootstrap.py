@@ -296,7 +296,9 @@ class CardBuilder:
     for each, and registers ``AppContainer`` instances on the session.
 
     Use :meth:`override` to supply a pre-built config or transport for a
-    specific interface type, or :meth:`skip` to exclude one entirely.
+    specific interface type, or :meth:`skip` to exclude one entirely.  The
+    ``JSONRPC`` interface URL is the address the server binds to; use
+    :meth:`with_public_url` to advertise a different, reachable one.
     """
 
     def __init__(
@@ -312,6 +314,7 @@ class CardBuilder:
         self._overrides: dict[str, object] = {}  # canonical transport_type -> pre-built
         self._skips: set[str] = set()  # canonical transport_types to skip
         self._shared_secret: str | None = None
+        self._public_url: str | None = None
 
     # -- Fluent setters -----------------------------------------------------
 
@@ -345,7 +348,88 @@ class CardBuilder:
         self._shared_secret = secret
         return self
 
+    def with_public_url(self, url: str) -> CardBuilder:
+        """Advertise *url* for the HTTP JSON-RPC interface instead of its bind URL.
+
+        In a card, the ``JSONRPC`` interface URL is the address the server
+        **binds** to (``http://0.0.0.0:9999``).  That is rarely an address
+        clients can reach (``0.0.0.0``, an in-container address, a host behind
+        a proxy), yet it is also what the served card advertises.  Set the
+        reachable address here: the server still binds to the card's URL, but
+        the served card carries *url* for that interface.
+
+        :meth:`ContainerBuilder.with_public_url` on the manual builder appends
+        a ``JSONRPC`` interface when the card has none, and leaves an
+        interface the author already declared untouched.  On this builder the
+        card URL is the bind address, so the served copy's HTTP interface URL
+        is replaced with *url*.
+
+        The caller's card object is not modified; a copy with the replaced URL
+        is served.  The option replaces the URL of the one HTTP interface that
+        is served; it is ignored with a warning when there is none (no such
+        interface, ``.skip("jsonrpc")``, or an ``.override("jsonrpc", ...)``
+        config, which is served as given), and rejected when several HTTP
+        interfaces would be served, since one URL cannot describe all of them.
+        """
+        if not url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"public URL must start with http:// or https://, got {url!r}"
+            )
+        self._public_url = url
+        return self
+
     # -- Helpers ------------------------------------------------------------
+
+    def _served_card(
+        self, interfaces: list[AgentInterface]
+    ) -> tuple[AgentCard, int | None]:
+        """Return the card to serve and the index of the interface whose URL
+        was replaced by :meth:`with_public_url` (``None`` if untouched).
+
+        Without a public URL this is the caller's card, unchanged.
+        """
+        if self._public_url is None:
+            return self._agent_card, None
+
+        http_indexes: list[int] = []
+        for i, interface in enumerate(interfaces):
+            transport_type = _normalize_transport(interface.protocol_binding)
+            if transport_type in ("jsonrpc", "http") and (
+                transport_type not in self._skips
+            ):
+                http_indexes.append(i)
+
+        if not http_indexes:
+            logger.warning(
+                "with_public_url(%r) is ignored: no HTTP JSON-RPC interface "
+                "is served (none declared on the card, or it was skipped).",
+                self._public_url,
+            )
+            return self._agent_card, None
+
+        if len(http_indexes) > 1:
+            raise ValueError(
+                "with_public_url() needs exactly one served HTTP JSON-RPC "
+                f"interface, but the card has {len(http_indexes)}. One URL "
+                "cannot describe all of them; .skip() the extra ones."
+            )
+
+        index = http_indexes[0]
+        transport_type = _normalize_transport(interfaces[index].protocol_binding)
+        if self._overrides.get(transport_type) is not None:
+            logger.warning(
+                "with_public_url(%r) is ignored: the %r interface is served "
+                "from an .override() config, which is used as given.",
+                self._public_url,
+                transport_type,
+            )
+            return self._agent_card, None
+
+        from agntcy_app_sdk.semantic.a2a.card_utils import clone_card
+
+        served = clone_card(self._agent_card)
+        served.supported_interfaces[index].url = self._public_url
+        return served, index
 
     def _warn_on_slim_name_collision(self, interfaces: list[AgentInterface]) -> None:
         """Warn when ``slim`` (pub/sub) and ``slimrpc`` share one SLIM name.
@@ -416,10 +500,14 @@ class CardBuilder:
 
         plan = ServeCardPlan()
 
+        # The interface URLs above say where to *bind*; the card that is
+        # served may advertise a different, reachable URL (with_public_url).
+        served_card, public_index = self._served_card(interfaces)
+
         # Build the A2AServerConfig once for transports that need it
         # (slim/nats patterns and jsonrpc all share the same config instance).
         a2a_app = A2AServerConfig(
-            agent_card=agent_card, request_handler=request_handler
+            agent_card=served_card, request_handler=request_handler
         )
 
         self._warn_on_slim_name_collision(interfaces)
@@ -483,7 +571,7 @@ class CardBuilder:
                     session.add(override).with_session_id(session_id).build()
                 else:
                     config = A2ASlimRpcServerConfig(
-                        agent_card=agent_card,
+                        agent_card=served_card,
                         request_handler=request_handler,
                         connection=SlimRpcConnectionConfig(
                             identity=str(parsed["identity"]),
@@ -593,6 +681,8 @@ class CardBuilder:
 
                 if dry_run:
                     detail = f"host={parsed['host']}, port={parsed['port']}"
+                    if public_index == i:
+                        detail += f", advertised={self._public_url}"
                     if override is not None:
                         detail += " (source: override)"
                     plan.containers.append(
