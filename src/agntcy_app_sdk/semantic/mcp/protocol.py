@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Any, Callable
-import os
 import json
 
 from agntcy_app_sdk.common.logging_config import get_logger
@@ -75,10 +74,6 @@ class MCPProtocol:
         # Store timeout and retry configuration for this session
         self.message_timeout = message_timeout
         self.message_retries = message_retries
-
-        # Check if distributed tracing is enabled (placeholder for future implementation)
-        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            pass
 
         # Define the send method that will be used by the write stream
         # This method bridges the session messages to the transport layer

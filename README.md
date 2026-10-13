@@ -642,6 +642,8 @@ factory = AgntcyFactory(enable_tracing=True)
 
 This initialises the [Agntcy Observe SDK](https://github.com/agntcy/observe) (OpenTelemetry-based) and auto-instruments SLIM transports and A2A client calls. Traces are exported to the configured `OTLP_HTTP_ENDPOINT` (default: `http://localhost:4318`).
 
+`enable_tracing=True` records the request in this process only. It does not set `TRACING_ENABLED`, so child processes do not inherit it. Create the factory before transports and A2A servers when you can. Components created earlier are remembered and installed when `Observe.init()` returns, including when you call `Observe.init()` yourself.
+
 ---
 
 ## 📁 Project Structure

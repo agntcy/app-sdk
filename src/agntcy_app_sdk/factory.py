@@ -85,7 +85,9 @@ class AgntcyFactory:
 
     Args:
         name: Factory instance name (used for tracing service name).
-        enable_tracing: Enable OpenTelemetry tracing via ioa_observe.sdk.
+        enable_tracing: Enable OpenTelemetry tracing via ioa_observe.sdk
+            in this process. Does not set ``TRACING_ENABLED``, so child
+            processes do not inherit the request.
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR).
     """
 
@@ -131,13 +133,18 @@ class AgntcyFactory:
 
     def _setup_tracing(self) -> None:
         """Initialize distributed tracing via ioa_observe.sdk / OpenTelemetry."""
-        os.environ["TRACING_ENABLED"] = "true"
+        from agntcy_app_sdk.common.tracing import instrument_pending, request_tracing
         from ioa_observe.sdk import Observe
 
         Observe.init(
             self.name,
             api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
         )
+        # In memory only. os.environ would be copied into every child process.
+        # Reached only if Observe.init() did not raise, so a failed factory
+        # leaves the flag clear.
+        request_tracing()
+        instrument_pending()
 
         logger.debug(f"Tracing enabled for {self.name} via ioa_observe.sdk")
 

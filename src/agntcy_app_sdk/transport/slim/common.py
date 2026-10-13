@@ -3,6 +3,7 @@
 
 import asyncio
 import base64
+import warnings
 import weakref
 
 import click
@@ -233,12 +234,20 @@ async def get_or_create_slim_instance(
     local: slim_bindings.Name,
     slim_endpoint: str,
     slim_insecure_client: bool,
-    enable_opentelemetry: bool = False,
+    enable_opentelemetry: bool | None = None,
     shared_secret: str | None = None,
     jwt: str | None = None,
     bundle: str | None = None,
     audience: list[str] | None = None,
 ):
+    if enable_opentelemetry is not None:
+        warnings.warn(
+            "enable_opentelemetry is deprecated and ignored. SLIM is traced "
+            "after Observe.init() when TRACING_ENABLED=true or "
+            "AgntcyFactory(enable_tracing=True) is used.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     # Without the lock, two setups awaited together both find no shared
     # connection, both connect, and the second silently replaces the first.
     async with _slim_instance_lock():
@@ -246,7 +255,6 @@ async def get_or_create_slim_instance(
             local,
             slim_endpoint,
             slim_insecure_client,
-            enable_opentelemetry=enable_opentelemetry,
             shared_secret=shared_secret,
             jwt=jwt,
             bundle=bundle,
@@ -258,7 +266,6 @@ async def _get_or_create_slim_instance(
     local: slim_bindings.Name,
     slim_endpoint: str,
     slim_insecure_client: bool,
-    enable_opentelemetry: bool = False,
     shared_secret: str | None = None,
     jwt: str | None = None,
     bundle: str | None = None,

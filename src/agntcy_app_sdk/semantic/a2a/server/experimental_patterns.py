@@ -25,7 +25,6 @@ dispatcher does for HTTP.
 """
 
 import json
-import os
 from collections.abc import AsyncIterable
 from typing import Any, Optional
 from uuid import uuid4
@@ -66,6 +65,7 @@ from google.protobuf.json_format import MessageToDict, ParseDict
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.common.tracing import A2A_INSTRUMENTOR, instrument_if_ready
 from agntcy_app_sdk.semantic.a2a.card_utils import add_interface, clone_card
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
@@ -307,10 +307,7 @@ class A2AExperimentalServer:
             except Exception as e:
                 logger.warning(f"Failed to configure identity auth: {e}")
 
-        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
-
-            A2AInstrumentor().instrument()
+        instrument_if_ready("A2A server", A2A_INSTRUMENTOR)
 
     def _configure_identity_auth(self) -> None:
         """Configure identity authentication for the server."""

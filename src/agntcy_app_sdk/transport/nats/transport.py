@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-import os
+import warnings
 
 import nats
 from identityservice.sdk import IdentityServiceSdk
@@ -11,6 +11,11 @@ from nats.aio.client import Client as NATS
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.common.tracing import (
+    NATS_INSTRUMENTOR,
+    instrument_if_ready,
+    tracing_requested,
+)
 from agntcy_app_sdk.semantic.message import Message
 from typing import Callable, List, Optional, Any, Awaitable, AsyncIterator
 from uuid import uuid4
@@ -52,12 +57,18 @@ class NatsTransport(BaseTransport):
         self.max_reconnect_attempts = kwargs.get("max_reconnect_attempts", 30)
         self.drain_timeout = kwargs.get("drain_timeout", 2)
 
-        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            logger.debug("NatsTransport initialized with tracing enabled")
-            from ioa_observe.sdk.instrumentations.nats import NATSInstrumentor
+        instrument_if_ready("NatsTransport", NATS_INSTRUMENTOR)
 
-            NATSInstrumentor().instrument()
-            self.tracing_enabled = True
+    @property
+    def tracing_enabled(self) -> bool:
+        """Deprecated. Use ``tracing_requested()`` instead."""
+        warnings.warn(
+            "NatsTransport.tracing_enabled is deprecated. "
+            "Use agntcy_app_sdk.common.tracing.tracing_requested() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return tracing_requested()
 
     # -----------------------------------------------------------------------------
     # BaseTransport method implementations
@@ -390,6 +401,7 @@ class NatsTransport(BaseTransport):
         return sanitized_topic
 
     async def setup(self):
+        instrument_if_ready("NatsTransport", NATS_INSTRUMENTOR)
         if self._nc is None or not self._nc.is_connected:
             await self._connect()
 

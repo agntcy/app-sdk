@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional, Callable, List, AsyncIterator
-import os
 import asyncio
 import datetime
+import warnings
 import slim_bindings
 from identityservice.sdk import IdentityServiceSdk
 from slim_bindings import Name, Session, MessageContext
@@ -14,6 +14,7 @@ from .common import (
     split_id,
 )
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.common.tracing import SLIM_INSTRUMENTOR, instrument_if_ready
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
@@ -97,15 +98,20 @@ class SLIMTransport(BaseTransport):
         self._listener_task: asyncio.Task | None = None
         self._shutdown_event = asyncio.Event()
 
-        self.enable_opentelemetry = False
-        if os.environ.get("TRACING_ENABLED", "false").lower() == "true":
-            # Initialize tracing if enabled
-            from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
-
-            SLIMInstrumentor().instrument()
-            logger.debug("SLIMTransport initialized with tracing enabled")
+        instrument_if_ready("SLIMTransport", SLIM_INSTRUMENTOR)
 
         logger.debug(f"SLIMTransport initialized with endpoint: {endpoint}")
+
+    @property
+    def enable_opentelemetry(self) -> bool:
+        """Deprecated. Always False; use ``tracing_requested()`` instead."""
+        warnings.warn(
+            "SLIMTransport.enable_opentelemetry is deprecated and always False. "
+            "Use agntcy_app_sdk.common.tracing.tracing_requested() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return False
 
     # -----------------------------------------------------------------------------
     # BaseTransport method implementations
@@ -541,6 +547,7 @@ class SLIMTransport(BaseTransport):
         """
         Start the async receive loop for incoming messages.
         """
+        instrument_if_ready("SLIMTransport", SLIM_INSTRUMENTOR)
         if self._slim_app:
             return
 
@@ -773,7 +780,6 @@ class SLIMTransport(BaseTransport):
             self.name,
             slim_endpoint=self._endpoint,
             slim_insecure_client=self._tls_insecure,
-            enable_opentelemetry=self.enable_opentelemetry,
             shared_secret=self._shared_secret_identity,
             jwt=self._jwt,
             bundle=self._bundle,
