@@ -120,6 +120,17 @@ def _flush_pending() -> str | None:
     return state
 
 
+def _give_up(instrumentors: list[str], components: str) -> None:
+    """Log an unexpected tracing error once and stop trying these instrumentors."""
+    with _lock:
+        fresh = [i for i in instrumentors if i not in _failed]
+        for instrumentor in instrumentors:
+            _pending.pop(instrumentor, None)
+            _failed.add(instrumentor)
+    if fresh:
+        logger.exception("Tracing setup failed; %s is not traced", components)
+
+
 def instrument_if_ready(component: str, instrumentor: str) -> bool:
     """Remember *instrumentor* (``module:Class``) and install it when tracing is ready.
 
@@ -127,44 +138,57 @@ def instrument_if_ready(component: str, instrumentor: str) -> bool:
     ``Observe.init()`` installs what was remembered when it returns and a tracer
     exists. This function also installs it once tracing is requested and a
     tracer exists, including on a later call (e.g. from ``setup()``). Returns
-    True once *instrumentor* is installed.
+    True once *instrumentor* is installed. Never raises.
     """
-    _hook_observe_init()
-    with _lock:
-        is_new = (
-            instrumentor not in _instrumented
-            and instrumentor not in _failed
-            and instrumentor not in _pending
-        )
-        if is_new:
-            _pending[instrumentor] = component
-        if not tracing_requested():
-            return False
-
-        state = _flush_pending()
-        if is_new and state == "uninitialized":
-            logger.warning(
-                "Tracing was requested but Observe.init() has not run in this "
-                "process; %s is not traced until it does",
-                component,
+    try:
+        _hook_observe_init()
+        with _lock:
+            is_new = (
+                instrumentor not in _instrumented
+                and instrumentor not in _failed
+                and instrumentor not in _pending
             )
-        return instrumentor in _instrumented
+            if is_new:
+                _pending[instrumentor] = component
+            if not tracing_requested():
+                return False
+
+            state = _flush_pending()
+            if is_new and state == "uninitialized":
+                logger.warning(
+                    "Tracing was requested but Observe.init() has not run in this "
+                    "process; %s (first needed by %s) is not active until it does",
+                    instrumentor.split(":")[1],
+                    component,
+                )
+            return instrumentor in _instrumented
+    except Exception:
+        _give_up([instrumentor], component)
+        return False
 
 
 def instrument_pending() -> None:
     """Install instrumentors that were skipped before ``Observe.init()`` ran.
 
     ``Observe.init()`` does this when it returns. Safe to call repeatedly.
+    Never raises.
     """
-    with _lock:
-        _flush_pending()
+    try:
+        with _lock:
+            _flush_pending()
+    except Exception:
+        with _lock:
+            pending = dict(_pending)
+        _give_up(list(pending), ", ".join(sorted(set(pending.values()))))
 
 
 def _hook_observe_init() -> None:
     """After ``Observe.init`` returns, install instrumentors remembered earlier.
 
     This does not patch instrumentor classes and does not construct them
-    before init. A raised ``init`` does not flush.
+    before init. A raised ``init`` does not flush. Installed by the first
+    ``instrument_if_ready()`` call, before anything is remembered, so importing
+    this package does not import ``ioa_observe``.
     """
     try:
         from ioa_observe.sdk import Observe
@@ -182,6 +206,3 @@ def _hook_observe_init() -> None:
 
     init._agntcy_flushes_pending = True  # type: ignore[attr-defined]
     Observe.init = staticmethod(init)
-
-
-_hook_observe_init()

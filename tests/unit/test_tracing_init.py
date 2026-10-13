@@ -157,7 +157,7 @@ def test_env_without_init_skips_slim_and_warns_once(monkeypatch, traced, log):
     warnings = log.at("warning")
     assert len(warnings) == 1
     assert "Observe.init() has not run" in warnings[0]
-    assert "SLIMTransport" in warnings[0]
+    assert "SLIMInstrumentor (first needed by SLIMTransport)" in warnings[0]
 
 
 def test_env_without_init_warns_once_per_instrumentor(monkeypatch, traced, log):
@@ -448,9 +448,92 @@ def test_observe_init_installs_instrumentors_remembered_before_request(
     assert tracing._pending == {}
 
 
+def _broken_state():
+    raise RuntimeError("unexpected SDK error")
+
+
+def test_unexpected_error_does_not_escape_constructor(monkeypatch, traced, log):
+    monkeypatch.setattr(tracing, "_observe_state", _broken_state)
+
+    _slim("a")
+    _slim("b")
+
+    assert len(log.at("exception")) == 1
+    assert "SLIMTransport is not traced" in log.at("exception")[0]
+    assert tracing.SLIM_INSTRUMENTOR in tracing._failed
+    assert tracing._pending == {}
+
+
+def test_unexpected_error_does_not_escape_instrument_pending(monkeypatch, log):
+    monkeypatch.delenv("TRACING_ENABLED", raising=False)
+    monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
+    _slim()
+    monkeypatch.setattr(tracing, "_observe_state", _broken_state)
+
+    tracing.instrument_pending()
+    tracing.instrument_pending()
+
+    assert len(log.at("exception")) == 1
+    assert tracing.SLIM_INSTRUMENTOR in tracing._failed
+    assert tracing._pending == {}
+
+
+def test_enable_opentelemetry_argument_is_deprecated(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from agntcy_app_sdk.transport.slim import common
+
+    inner = AsyncMock(return_value=("service", "app", 1))
+    monkeypatch.setattr(common, "_get_or_create_slim_instance", inner)
+
+    with pytest.warns(DeprecationWarning, match="enable_opentelemetry"):
+        result = asyncio.run(
+            common.get_or_create_slim_instance(
+                MagicMock(), "http://localhost:46357", True, True
+            )
+        )
+
+    assert result == ("service", "app", 1)
+    assert "enable_opentelemetry" not in inner.call_args.kwargs
+
+
+def test_enable_opentelemetry_attribute_is_deprecated(monkeypatch):
+    monkeypatch.delenv("TRACING_ENABLED", raising=False)
+    monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
+
+    with pytest.warns(DeprecationWarning, match="enable_opentelemetry"):
+        assert _slim().enable_opentelemetry is False
+
+
+def test_nats_tracing_enabled_attribute_is_deprecated(monkeypatch):
+    monkeypatch.delenv("TRACING_ENABLED", raising=False)
+    monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
+    nats = NatsTransport(endpoint="nats://localhost:4222")
+
+    with pytest.warns(DeprecationWarning, match="tracing_enabled"):
+        assert nats.tracing_enabled is False
+
+    tracing.request_tracing()
+    with pytest.warns(DeprecationWarning, match="tracing_enabled"):
+        assert nats.tracing_enabled is True
+
+
 # ---------------------------------------------------------------------------
 # Real ioa-observe SDK, no mocks (separate processes: instrumentation is global)
 # ---------------------------------------------------------------------------
+
+
+def test_import_does_not_load_ioa_observe():
+    result = _run(
+        "import sys\n"
+        "import agntcy_app_sdk\n"
+        "from agntcy_app_sdk.transport.slim.transport import SLIMTransport\n"
+        "assert 'ioa_observe.sdk' not in sys.modules, 'ioa_observe.sdk imported'\n"
+        "print('IMPORT_OK')\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "IMPORT_OK" in result.stdout
 
 
 def _run(script: str) -> subprocess.CompletedProcess:

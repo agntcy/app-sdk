@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import warnings
 
 import nats
 from identityservice.sdk import IdentityServiceSdk
@@ -10,7 +11,11 @@ from nats.aio.client import Client as NATS
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.common.tracing import NATS_INSTRUMENTOR, instrument_if_ready
+from agntcy_app_sdk.common.tracing import (
+    NATS_INSTRUMENTOR,
+    instrument_if_ready,
+    tracing_requested,
+)
 from agntcy_app_sdk.semantic.message import Message
 from typing import Callable, List, Optional, Any, Awaitable, AsyncIterator
 from uuid import uuid4
@@ -53,6 +58,17 @@ class NatsTransport(BaseTransport):
         self.drain_timeout = kwargs.get("drain_timeout", 2)
 
         instrument_if_ready("NatsTransport", NATS_INSTRUMENTOR)
+
+    @property
+    def tracing_enabled(self) -> bool:
+        """Deprecated. Use ``tracing_requested()`` instead."""
+        warnings.warn(
+            "NatsTransport.tracing_enabled is deprecated. "
+            "Use agntcy_app_sdk.common.tracing.tracing_requested() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return tracing_requested()
 
     # -----------------------------------------------------------------------------
     # BaseTransport method implementations

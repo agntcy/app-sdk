@@ -4,6 +4,7 @@
 from typing import Optional, Callable, List, AsyncIterator
 import asyncio
 import datetime
+import warnings
 import slim_bindings
 from identityservice.sdk import IdentityServiceSdk
 from slim_bindings import Name, Session, MessageContext
@@ -100,6 +101,17 @@ class SLIMTransport(BaseTransport):
         instrument_if_ready("SLIMTransport", SLIM_INSTRUMENTOR)
 
         logger.debug(f"SLIMTransport initialized with endpoint: {endpoint}")
+
+    @property
+    def enable_opentelemetry(self) -> bool:
+        """Deprecated. Always False; use ``tracing_requested()`` instead."""
+        warnings.warn(
+            "SLIMTransport.enable_opentelemetry is deprecated and always False. "
+            "Use agntcy_app_sdk.common.tracing.tracing_requested() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return False
 
     # -----------------------------------------------------------------------------
     # BaseTransport method implementations
