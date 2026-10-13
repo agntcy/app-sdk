@@ -13,7 +13,7 @@ from .common import (
     split_id,
 )
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.common.tracing import instrument_if_ready
+from agntcy_app_sdk.common.tracing import SLIM_INSTRUMENTOR, instrument_if_ready
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
@@ -21,13 +21,6 @@ from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
 logger = get_logger(__name__)
-
-
-def _instrument_slim() -> None:
-    from ioa_observe.sdk.instrumentations.slim import SLIMInstrumentor
-
-    SLIMInstrumentor().instrument()
-
 
 """
 SLIM implementation of the BaseTransport interface.
@@ -104,9 +97,7 @@ class SLIMTransport(BaseTransport):
         self._listener_task: asyncio.Task | None = None
         self._shutdown_event = asyncio.Event()
 
-        self.enable_opentelemetry = False
-        if instrument_if_ready("SLIMTransport", _instrument_slim):
-            logger.debug("SLIMTransport initialized with tracing enabled")
+        instrument_if_ready("SLIMTransport", SLIM_INSTRUMENTOR)
 
         logger.debug(f"SLIMTransport initialized with endpoint: {endpoint}")
 
@@ -544,6 +535,7 @@ class SLIMTransport(BaseTransport):
         """
         Start the async receive loop for incoming messages.
         """
+        instrument_if_ready("SLIMTransport", SLIM_INSTRUMENTOR)
         if self._slim_app:
             return
 
@@ -776,7 +768,6 @@ class SLIMTransport(BaseTransport):
             self.name,
             slim_endpoint=self._endpoint,
             slim_insecure_client=self._tls_insecure,
-            enable_opentelemetry=self.enable_opentelemetry,
             shared_secret=self._shared_secret_identity,
             jwt=self._jwt,
             bundle=self._bundle,

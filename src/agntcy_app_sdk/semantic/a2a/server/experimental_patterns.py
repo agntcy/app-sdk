@@ -65,7 +65,7 @@ from google.protobuf.json_format import MessageToDict, ParseDict
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.common.tracing import instrument_if_ready
+from agntcy_app_sdk.common.tracing import A2A_INSTRUMENTOR, instrument_if_ready
 from agntcy_app_sdk.semantic.a2a.card_utils import add_interface, clone_card
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
@@ -76,13 +76,6 @@ from agntcy_app_sdk.transport.base import BaseTransport
 from identityservice.sdk import IdentityServiceSdk
 
 logger = get_logger(__name__)
-
-
-def _instrument_a2a() -> None:
-    from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
-
-    A2AInstrumentor().instrument()
-
 
 # Maps BaseTransport.type() -> (interface protocol_binding, URI scheme)
 _TRANSPORT_NAME_MAP: dict[str, tuple[str, str]] = {
@@ -314,8 +307,7 @@ class A2AExperimentalServer:
             except Exception as e:
                 logger.warning(f"Failed to configure identity auth: {e}")
 
-        if instrument_if_ready("A2A server", _instrument_a2a):
-            logger.debug("A2A Instrumentor enabled for tracing")
+        instrument_if_ready("A2A server", A2A_INSTRUMENTOR)
 
     def _configure_identity_auth(self) -> None:
         """Configure identity authentication for the server."""

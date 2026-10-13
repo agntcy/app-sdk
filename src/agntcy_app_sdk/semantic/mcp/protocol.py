@@ -5,7 +5,6 @@ from typing import Any, Callable
 import json
 
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.common.tracing import tracing_requested
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 
@@ -75,11 +74,6 @@ class MCPProtocol:
         # Store timeout and retry configuration for this session
         self.message_timeout = message_timeout
         self.message_retries = message_retries
-
-        # Placeholder until MCP instrumentation exists. tracing_requested()
-        # does not construct an instrumentor, so an inherited env var is safe.
-        if tracing_requested():
-            pass
 
         # Define the send method that will be used by the write stream
         # This method bridges the session messages to the transport layer

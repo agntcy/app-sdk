@@ -133,17 +133,18 @@ class AgntcyFactory:
 
     def _setup_tracing(self) -> None:
         """Initialize distributed tracing via ioa_observe.sdk / OpenTelemetry."""
-        from agntcy_app_sdk.common.tracing import request_tracing
-
-        # Process-local. os.environ would be copied into every child, and a
-        # child that never calls Observe.init() cannot build a transport.
-        request_tracing()
+        from agntcy_app_sdk.common.tracing import instrument_pending, request_tracing
         from ioa_observe.sdk import Observe
 
         Observe.init(
             self.name,
             api_endpoint=os.getenv("OTLP_HTTP_ENDPOINT", "http://localhost:4318"),
         )
+        # In memory only. os.environ would be copied into every child process.
+        # Reached only if Observe.init() did not raise, so a failed factory
+        # leaves the flag clear.
+        request_tracing()
+        instrument_pending()
 
         logger.debug(f"Tracing enabled for {self.name} via ioa_observe.sdk")
 

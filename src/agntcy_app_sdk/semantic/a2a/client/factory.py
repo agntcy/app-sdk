@@ -20,7 +20,7 @@ from a2a.types import AgentCard, AgentInterface
 from slima2a.client_transport import SRPCTransport
 
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.common.tracing import instrument_if_ready
+from agntcy_app_sdk.common.tracing import A2A_INSTRUMENTOR, instrument_if_ready
 from agntcy_app_sdk.semantic.a2a.card_utils import wire_binding
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
@@ -34,12 +34,6 @@ from agntcy_app_sdk.semantic.a2a.transport_types import normalize_transport
 from agntcy_app_sdk.transport.base import BaseTransport
 
 logger = get_logger(__name__)
-
-
-def _instrument_a2a() -> None:
-    from ioa_observe.sdk.instrumentations.a2a import A2AInstrumentor
-
-    A2AInstrumentor().instrument()
 
 
 class A2AClientFactory:
@@ -520,8 +514,4 @@ class A2AClientFactory:
 
     def _initialize_tracing_if_enabled(self) -> None:
         """Initialize OpenTelemetry tracing if enabled."""
-        try:
-            if instrument_if_ready("A2A client", _instrument_a2a):
-                logger.debug("A2A Instrumentor enabled for tracing")
-        except ImportError:
-            logger.warning("Tracing enabled but ioa_observe not installed")
+        instrument_if_ready("A2A client", A2A_INSTRUMENTOR)

@@ -3,7 +3,6 @@
 
 from agntcy_app_sdk.app_sessions import AppContainer, AppSession
 from agntcy_app_sdk.common.logging_config import configure_logging
-from agntcy_app_sdk.common.tracing import harden_observe_instrumentors
 from agntcy_app_sdk.directory.base import BaseAgentDirectory, RecordVisibility
 from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -45,7 +44,3 @@ __all__ = [
     "get_agent_identifier",
     "configure_logging",
 ]
-
-# NATSInstrumentor() and A2AInstrumentor() call get_tracer() in their own
-# __init__. Replace those constructors before any caller builds one.
-harden_observe_instrumentors()
