@@ -21,6 +21,7 @@ jobs:
     with:
       package: agntcy-app-sdk
       py-lint: true
+      py-typecheck: true
       py-test: true
       py-test-e2e: true
       py-package: true

@@ -37,6 +37,8 @@ dev = [
     "mypy==1.19.1",
     "types-protobuf==6.32.1.20260221",
     "ruff==0.15.2",
+    "types-psutil==7.2.2.20260906",
+    "types-docker==7.2.0.20261006",
 ]
 
 [tool.pytest.ini_options]
@@ -48,5 +50,11 @@ build-backend = "hatchling.build"
 
 [tool.mypy]
 python_version = "3.12"
-warn_return_any = true
+files = ["src", "tests", "examples"]
+mypy_path = "src:stubs"
+explicit_package_bases = true
+# One bar for library, tests and examples. In tests, Any is limited to
+# deliberately wrong calls, catch-all fakes (*args/**kwargs) and JSON payloads;
+# values from MagicMock are Any by nature and need no annotation.
+strict = true
 warn_unused_configs = true

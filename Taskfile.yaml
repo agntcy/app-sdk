@@ -25,6 +25,11 @@ tasks:
       - uv run {{.UV_ARGS}} ruff check --fix
       - uv run {{.UV_ARGS}} ruff format
 
+  typecheck:
+    desc: "Type-check src/, tests/ and examples/ with mypy (config in pyproject.toml)"
+    cmds:
+      - uv run {{.UV_ARGS}} mypy --no-incremental {{.CLI_ARGS}}
+
   test:
     desc: "Run unit tests"
     cmds:

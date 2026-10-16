@@ -303,6 +303,7 @@ from a2a.types import (
 )
 
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a import A2AExperimentalClient
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig, SlimTransportConfig
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
@@ -333,6 +334,8 @@ card = AgentCard(
 )
 
 client = await factory.a2a(config).create(card)
+# create() is typed as Client; patterns negotiation yields the experimental client
+assert isinstance(client, A2AExperimentalClient)
 
 request = SendMessageRequest(
     message=new_text_message("Status check", role=Role.ROLE_USER)
@@ -403,6 +406,7 @@ from a2a.types import (
 )
 
 from agntcy_app_sdk.factory import AgntcyFactory
+from agntcy_app_sdk.semantic.a2a import A2AExperimentalClient
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig, SlimTransportConfig
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
@@ -432,6 +436,7 @@ card = AgentCard(
 )
 
 client = await factory.a2a(config).create(card)
+assert isinstance(client, A2AExperimentalClient)
 
 request = SendMessageRequest(
     message=new_text_message("Plan a team lunch", role=Role.ROLE_USER)

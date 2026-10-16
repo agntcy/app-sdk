@@ -36,6 +36,14 @@ repos:
           - "--output-format=full"
           - "."
         pass_filenames: false
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (typecheck)
+        entry: uv run mypy --no-incremental
+        language: system
+        files: ^(src|tests|examples|stubs)/.*\.pyi?$|^pyproject\.toml$
+        pass_filenames: false
   - repo: https://github.com/codespell-project/codespell
     rev: v2.2.6
     hooks:
