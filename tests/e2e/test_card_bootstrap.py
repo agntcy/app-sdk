@@ -19,10 +19,15 @@ from ioa_observe.sdk.tracing import session_start
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig, SlimRpcConfig
+from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+    A2AExperimentalClient,
+)
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import ServeCardPlan
 from tests.e2e.conftest import (
     TRANSPORT_CONFIGS,
+    ClientConfigKwargs,
+    RunCardBootstrapServer,
     make_agent_card,
     make_send_request,
 )
@@ -51,7 +56,9 @@ CARD_BOOTSTRAP_TRANSPORT_CONFIGS = {
     "transport", list(CARD_BOOTSTRAP_TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_client(run_card_bootstrap_server, transport):
+async def test_client(
+    run_card_bootstrap_server: RunCardBootstrapServer, transport: str
+) -> None:
     """Point-to-point A2A request to an add_a2a_card()-bootstrapped server."""
     endpoint = CARD_BOOTSTRAP_TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_client (card_bootstrap) | {transport} | {endpoint} ---")
@@ -95,7 +102,7 @@ async def test_client(run_card_bootstrap_server, transport):
 
         session_start()
 
-        config_kwargs = {}
+        config_kwargs: ClientConfigKwargs = {}
         if transport == "SLIM":
             config_kwargs["slim_transport"] = transport_instance
         elif transport == "NATS":
@@ -136,7 +143,9 @@ async def test_client(run_card_bootstrap_server, transport):
     "transport", list(CARD_BOOTSTRAP_TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_broadcast(run_card_bootstrap_server, transport):
+async def test_broadcast(
+    run_card_bootstrap_server: RunCardBootstrapServer, transport: str
+) -> None:
     """Fan-out A2A broadcast to multiple add_a2a_card()-bootstrapped agents."""
     if transport == "A2A":
         pytest.skip("Broadcast not applicable for raw A2A transport.")
@@ -166,7 +175,7 @@ async def test_broadcast(run_card_bootstrap_server, transport):
     # Allow extra time for all agents to subscribe (CI runners can be slow)
     await asyncio.sleep(5)
 
-    config_kwargs = {}
+    config_kwargs: ClientConfigKwargs = {}
     if transport == "SLIM":
         config_kwargs["slim_transport"] = transport_instance
     elif transport == "NATS":
@@ -177,6 +186,7 @@ async def test_broadcast(run_card_bootstrap_server, transport):
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
+    assert isinstance(client, A2AExperimentalClient)
 
     request = make_send_request()
     responses = await client.broadcast_message(
@@ -199,7 +209,7 @@ async def test_broadcast(run_card_bootstrap_server, transport):
 
 
 @pytest.mark.asyncio
-async def test_dry_run():
+async def test_dry_run() -> None:
     """``add_a2a_card().dry_run()`` returns a correct plan without starting anything."""
     factory = AgntcyFactory(enable_tracing=True)
     agent_card = make_agent_card("dry_run_topic")
@@ -242,7 +252,7 @@ async def test_dry_run():
 
 
 @pytest.mark.asyncio
-async def test_dry_run_with_skip():
+async def test_dry_run_with_skip() -> None:
     """``add_a2a_card().skip("jsonrpc").dry_run()`` omits jsonrpc from the plan."""
     factory = AgntcyFactory(enable_tracing=True)
     agent_card = make_agent_card("dry_run_skip_topic")
@@ -282,7 +292,7 @@ async def test_dry_run_with_skip():
 
 
 @pytest.mark.asyncio
-async def test_public_url_is_advertised_while_the_server_binds_locally():
+async def test_public_url_is_advertised_while_the_server_binds_locally() -> None:
     """The card's JSONRPC URL is where the server binds; ``with_public_url()``
     decides what the served card tells clients."""
     import socket
@@ -292,10 +302,8 @@ async def test_public_url_is_advertised_while_the_server_binds_locally():
     from a2a.server.tasks import InMemoryTaskStore
     from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 
-    from tests.server.a2a_card_bootstrap_server import (
-        DEFAULT_SKILL,
-        HelloWorldAgentExecutor,
-    )
+    from tests.server.a2a_card_bootstrap_server import DEFAULT_SKILL
+    from tests.server.agent_executor import HelloWorldAgentExecutor
 
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))

@@ -4,9 +4,10 @@
 import asyncio
 
 import pytest
+from mcp import types
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from tests.e2e.conftest import TRANSPORT_CONFIGS
+from tests.e2e.conftest import TRANSPORT_CONFIGS, RunMCPServer
 
 pytest_plugins = "pytest_asyncio"
 
@@ -20,7 +21,7 @@ pytest_plugins = "pytest_asyncio"
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_client(run_mcp_server, transport):
+async def test_client(run_mcp_server: RunMCPServer, transport: str) -> None:
     """Point-to-point MCP tool call over each transport."""
     if transport == "JSONRPC":
         pytest.skip("MCP not applicable for JSONRPC transport.")
@@ -53,6 +54,7 @@ async def test_client(run_mcp_server, transport):
 
         content_list = result.content
         assert isinstance(content_list, list) and len(content_list) > 0
+        assert isinstance(content_list[0], types.TextContent)
         response = content_list[0].text
         assert response is not None, "Response was None"
         print(f"Tool result: {response}")

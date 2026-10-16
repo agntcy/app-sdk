@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Callable, Optional, cast
 
 import slim_bindings
 
@@ -20,7 +20,7 @@ from agntcy_app_sdk.transport.slim.common import (
     split_id,
 )
 
-from slima2a.handler import SRPCHandler
+from slima2a.handler import CallContextBuilder, SRPCHandler
 from slima2a.types.v1.a2a_pb2_slimrpc import add_A2AServiceServicer_to_server
 
 logger = get_logger(__name__)
@@ -63,7 +63,8 @@ class A2ASlimRpcServerConfig:
             connectivity parameters (identity, shared_secret, etc.).
 
     Optional fields:
-        context_builder: Optional callable to build per-request context.
+        context_builder: Optional ``slima2a.handler.CallContextBuilder`` used
+            to build the per-request context.
         card_modifier: Optional callable to modify the agent card before
             it is published (e.g. add security schemes).
     """
@@ -71,7 +72,7 @@ class A2ASlimRpcServerConfig:
     agent_card: AgentCard
     request_handler: DefaultRequestHandler
     connection: SlimRpcConnectionConfig
-    context_builder: Optional[Callable[..., Any]] = None
+    context_builder: CallContextBuilder | None = None
     card_modifier: Optional[Callable[[AgentCard], AgentCard]] = None
 
 
@@ -103,7 +104,7 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         # We pass the config — each handler knows what its managed object is.
         super().__init__(config, transport=None, topic=None)
         self._config = config
-        self._server_task: Optional[asyncio.Task] = None
+        self._server_task: Optional[asyncio.Task[None]] = None
         self._slim_rpc_server: Optional[slim_bindings.Server] = None
         self._slim_service: Optional[slim_bindings.Service] = None
         self._connection_id: Optional[int] = None
@@ -139,7 +140,9 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
             )
 
         # --- Register the event loop so Rust→Python callbacks work ---
-        slim_bindings.uniffi_set_event_loop(asyncio.get_running_loop())
+        slim_bindings.uniffi_set_event_loop(
+            cast(asyncio.BaseEventLoop, asyncio.get_running_loop())
+        )
 
         # --- Build a dedicated SLIM app + connection for slimrpc ---
         # slimrpc needs its own App and connection, separate from
@@ -196,14 +199,11 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         )
 
         # --- Register the A2A servicer (from slima2a) ---
-        srpc_handler_kwargs = {
-            "agent_card": self._config.agent_card,
-            "request_handler": self._config.request_handler,
-        }
-        if self._config.context_builder is not None:
-            srpc_handler_kwargs["context_builder"] = self._config.context_builder
-
-        servicer = SRPCHandler(**srpc_handler_kwargs)
+        servicer = SRPCHandler(
+            agent_card=self._config.agent_card,
+            request_handler=self._config.request_handler,
+            context_builder=self._config.context_builder,
+        )
         add_A2AServiceServicer_to_server(servicer, self._slim_rpc_server)
 
         # --- Serve in background ---

@@ -66,7 +66,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
     { name = "tiktoken" },
+    { name = "types-docker" },
     { name = "types-protobuf" },
+    { name = "types-psutil" },
     { name = "typing-extensions" },
 ]
 
@@ -96,7 +98,9 @@ dev = [
     { name = "pytest-cov", specifier = "==4.1.0" },
     { name = "ruff", specifier = "==0.15.2" },
     { name = "tiktoken", specifier = "==0.8.0" },
+    { name = "types-docker", specifier = "==7.2.0.20261006" },
     { name = "types-protobuf", specifier = "==6.32.1.20260221" },
+    { name = "types-psutil", specifier = "==7.2.2.20260906" },
     { name = "typing-extensions", specifier = "==4.15.0" },
 ]
 
@@ -3149,8 +3153,8 @@ version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
-    { name = "vcrpy", version = "5.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'" },
-    { name = "vcrpy", version = "7.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13' or platform_python_implementation != 'PyPy'" },
+    { name = "vcrpy", version = "5.1.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_python_implementation == 'PyPy'" },
+    { name = "vcrpy", version = "7.0.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_python_implementation != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1a/60/104c619483c1a42775d3f8b27293f1ecfc0728014874d065e68cb9702d49/pytest-vcr-1.0.2.tar.gz", hash = "sha256:23ee51b75abbcc43d926272773aae4f39f93aceb75ed56852d0bf618f92e1896", size = 3810, upload-time = "2019-04-26T19:04:00.806Z" }
 wheels = [
@@ -3358,8 +3362,7 @@ dependencies = [
     { name = "certifi" },
     { name = "charset-normalizer" },
     { name = "idna" },
-    { name = "urllib3", version = "1.26.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13' and platform_python_implementation == 'PyPy'" },
-    { name = "urllib3", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13' or platform_python_implementation != 'PyPy'" },
+    { name = "urllib3" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c9/74/b3ff8e6c8446842c3f5c837e9c3dfcfe2018ea6ecef224c710c85ef728f4/requests-2.32.5.tar.gz", hash = "sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf", size = 134517, upload-time = "2025-08-18T20:46:02.573Z" }
 wheels = [
@@ -3794,12 +3797,46 @@ wheels = [
 ]
 
 [[package]]
+name = "types-docker"
+version = "7.2.0.20261006"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "types-requests" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/81/bd/7c46cbb3190622accb6c6aed717083712b0531c6e8ec5f753b7b95cdebe6/types_docker-7.2.0.20261006.tar.gz", hash = "sha256:bd2fc6c302bce7c0caeb06b6e60f7738085fc15f7f5be540b917f6dd33b36619", size = 37408, upload-time = "2026-10-06T08:16:13.843Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/67/2f16e88c38b6d873d0d417f81a12af119998ede025f99b1422fb157ad288/types_docker-7.2.0.20261006-py3-none-any.whl", hash = "sha256:866041971a378a226edd095a4a55d3924e51d9d15faea5beeeef256f86f2320d", size = 51408, upload-time = "2026-10-06T08:16:12.831Z" },
+]
+
+[[package]]
 name = "types-protobuf"
 version = "6.32.1.20260221"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5f/e2/9aa4a3b2469508bd7b4e2ae11cbedaf419222a09a1b94daffcd5efca4023/types_protobuf-6.32.1.20260221.tar.gz", hash = "sha256:6d5fb060a616bfb076cbb61b4b3c3969f5fc8bec5810f9a2f7e648ee5cbcbf6e", size = 64408, upload-time = "2026-02-21T03:55:13.916Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/e8/1fd38926f9cf031188fbc5a96694203ea6f24b0e34bd64a225ec6f6291ba/types_protobuf-6.32.1.20260221-py3-none-any.whl", hash = "sha256:da7cdd947975964a93c30bfbcc2c6841ee646b318d3816b033adc2c4eb6448e4", size = 77956, upload-time = "2026-02-21T03:55:12.894Z" },
+]
+
+[[package]]
+name = "types-psutil"
+version = "7.2.2.20260906"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/97/0a/f48b9b0ab5ba8599fd117309e345152bf82c756c72be2ff0f635780c2792/types_psutil-7.2.2.20260906.tar.gz", hash = "sha256:93abf22cf9a62b915f724e433bde702995ac274865425fd4a76d1d9b5828da1a", size = 27396, upload-time = "2026-09-06T06:35:24.499Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/8d/81a86107486e1c23f5ca21bea1e9e5b18a50754242e7a0b82f41f9ae8384/types_psutil-7.2.2.20260906-py3-none-any.whl", hash = "sha256:db00baf7f96c3f63421c4d3d68d373923094a0dfddf13e922c5c5fbc42488159", size = 33383, upload-time = "2026-09-06T06:35:23.575Z" },
+]
+
+[[package]]
+name = "types-requests"
+version = "2.33.0.20261006"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/15/9b7e2e2e7c87d01366185b198b3febc6bc0c973f2bf21a62da4ab7d3495e/types_requests-2.33.0.20261006.tar.gz", hash = "sha256:0652999e9306aea345f40732d58fa49a7f6cade6a0d74d92119c5c8d82eddaf0", size = 25316, upload-time = "2026-10-06T08:15:57.782Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/72/b82789207b3d360ce9f5a4372c790c52cc3dd928aeb7d4faeec652b651b2/types_requests-2.33.0.20261006-py3-none-any.whl", hash = "sha256:26cc8146505cab33cda9737991929e4144c559bebe05078ccc6998f27c4ca2c1", size = 21445, upload-time = "2026-10-06T08:15:56.658Z" },
 ]
 
 [[package]]
@@ -3847,25 +3884,8 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "1.26.20"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.13' and platform_python_implementation == 'PyPy'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/e8/6ff5e6bc22095cfc59b6ea711b687e2b7ed4bdb373f7eeec370a97d7392f/urllib3-1.26.20.tar.gz", hash = "sha256:40c2dc0c681e47eb8f90e7e27bf6ff7df2e677421fd46756da1161c39ca70d32", size = 307380, upload-time = "2024-08-29T15:43:11.37Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/cf/8435d5a7159e2a9c83a95896ed596f68cf798005fe107cc655b5c5c14704/urllib3-1.26.20-py2.py3-none-any.whl", hash = "sha256:0ed14ccfbf1c30a9072c7ca157e4319b70d65f623e91e7b32fadb2853431016e", size = 144225, upload-time = "2024-08-29T15:43:08.921Z" },
-]
-
-[[package]]
-name = "urllib3"
 version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
-    "python_full_version >= '3.13' and platform_python_implementation != 'PyPy'",
-    "python_full_version < '3.13' and platform_python_implementation != 'PyPy'",
-]
 sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
@@ -3890,11 +3910,12 @@ version = "5.1.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
+    "python_full_version < '3.13' and platform_python_implementation == 'PyPy'",
 ]
 dependencies = [
-    { name = "pyyaml", marker = "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'" },
-    { name = "wrapt", marker = "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'" },
-    { name = "yarl", marker = "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'" },
+    { name = "pyyaml", marker = "platform_python_implementation == 'PyPy'" },
+    { name = "wrapt", marker = "platform_python_implementation == 'PyPy'" },
+    { name = "yarl", marker = "platform_python_implementation == 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a5/ea/a166a3cce4ac5958ba9bbd9768acdb1ba38ae17ff7986da09fa5b9dbc633/vcrpy-5.1.0.tar.gz", hash = "sha256:bbf1532f2618a04f11bce2a99af3a9647a32c880957293ff91e0a5f187b6b3d2", size = 84576, upload-time = "2023-07-31T03:19:32.231Z" }
 wheels = [
@@ -3908,14 +3929,12 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation != 'PyPy'",
     "python_full_version < '3.13' and platform_python_implementation != 'PyPy'",
-    "python_full_version < '3.13' and platform_python_implementation == 'PyPy'",
 ]
 dependencies = [
-    { name = "pyyaml", marker = "python_full_version < '3.13' or platform_python_implementation != 'PyPy'" },
-    { name = "urllib3", version = "1.26.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13' and platform_python_implementation == 'PyPy'" },
-    { name = "urllib3", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_python_implementation != 'PyPy'" },
-    { name = "wrapt", marker = "python_full_version < '3.13' or platform_python_implementation != 'PyPy'" },
-    { name = "yarl", marker = "python_full_version < '3.13' or platform_python_implementation != 'PyPy'" },
+    { name = "pyyaml", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "urllib3", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "wrapt", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "yarl", marker = "platform_python_implementation != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/25/d3/856e06184d4572aada1dd559ddec3bedc46df1f2edc5ab2c91121a2cccdb/vcrpy-7.0.0.tar.gz", hash = "sha256:176391ad0425edde1680c5b20738ea3dc7fb942520a48d2993448050986b3a50", size = 85502, upload-time = "2024-12-31T00:07:57.894Z" }
 wheels = [

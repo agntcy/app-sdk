@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from a2a.client import ClientFactory, minimal_agent_card
+from a2a.client import Client, ClientFactory, minimal_agent_card
+from a2a.client import ClientConfig as UpstreamClientConfig
 from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
+from a2a.client.transports.base import ClientTransport
 from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import (
+    AgentCard,
     Role,
     SendMessageRequest,
     StreamResponse,
@@ -22,7 +25,7 @@ from slima2a.client_transport import (
 from agntcy_app_sdk.semantic.a2a import ClientConfig as A2AClientConfig
 from agntcy_app_sdk.semantic.a2a import A2AClientFactory
 from agntcy_app_sdk.semantic.a2a.client.config import SlimRpcConfig
-from tests.e2e.conftest import TRANSPORT_CONFIGS
+from tests.e2e.conftest import TRANSPORT_CONFIGS, RunA2ASlimRpcServer
 
 pytest_plugins = "pytest_asyncio"
 
@@ -35,7 +38,7 @@ pytest_plugins = "pytest_asyncio"
 class _RecordingInterceptor(ClientCallInterceptor):
     """Interceptor that records every call for assertion in tests."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls: list[str] = []
 
     async def before(self, args: BeforeArgs) -> None:
@@ -50,12 +53,22 @@ def _make_send_message(text: str = "how much is 10 USD in INR?") -> SendMessageR
     return SendMessageRequest(message=new_text_message(text, role=Role.ROLE_USER))
 
 
-async def _collect_text(client, request: SendMessageRequest) -> str:
+async def _collect_text(client: Client, request: SendMessageRequest) -> str:
     """Send *request* and return all text carried by the response events."""
     output = ""
     async for event in client.send_message(request):
         output += get_stream_response_text(event)
     return output
+
+
+def _srpc_transport(
+    card: AgentCard, url: str, config: UpstreamClientConfig
+) -> ClientTransport:
+    """``TransportProducer`` adapter for ``SRPCTransport.create``."""
+    assert isinstance(config, SRPCClientConfig)
+    transport = SRPCTransport.create(card, url, config)
+    assert isinstance(transport, SRPCTransport)
+    return transport
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +77,7 @@ async def _collect_text(client, request: SendMessageRequest) -> str:
 
 
 @pytest.mark.asyncio
-async def test_client(run_a2a_slimrpc_server):
+async def test_client(run_a2a_slimrpc_server: RunA2ASlimRpcServer) -> None:
     """Point-to-point A2A request over native SlimRPC (no BaseTransport)."""
     endpoint = TRANSPORT_CONFIGS["SLIM"]
     agent_name = "default/default/Hello_World_Agent_1.0.0"
@@ -88,7 +101,7 @@ async def test_client(run_a2a_slimrpc_server):
         slimrpc_channel_factory=slimrpc_channel_factory(slim_local_app, conn_id),
     )
     client_factory = ClientFactory(client_config)
-    client_factory.register("slimrpc", SRPCTransport.create)  # type: ignore[arg-type]
+    client_factory.register("slimrpc", _srpc_transport)
 
     agent_card = minimal_agent_card(agent_name, ["slimrpc"])
     client = client_factory.create(card=agent_card)
@@ -110,7 +123,7 @@ async def test_client(run_a2a_slimrpc_server):
 
 
 @pytest.mark.asyncio
-async def test_client_factory(run_a2a_slimrpc_server):
+async def test_client_factory(run_a2a_slimrpc_server: RunA2ASlimRpcServer) -> None:
     """Point-to-point A2A request using A2AClientFactory + A2AClientConfig.
 
     Unlike test_client (which wires up slima2a primitives manually), this test
@@ -166,7 +179,9 @@ async def test_client_factory(run_a2a_slimrpc_server):
 
 
 @pytest.mark.asyncio
-async def test_client_factory_deferred(run_a2a_slimrpc_server):
+async def test_client_factory_deferred(
+    run_a2a_slimrpc_server: RunA2ASlimRpcServer,
+) -> None:
     """Point-to-point A2A request using deferred SlimRpcConfig.
 
     Unlike test_client_factory (which pre-builds the channel factory eagerly),
@@ -220,7 +235,7 @@ async def test_client_factory_deferred(run_a2a_slimrpc_server):
 
 
 @pytest.mark.asyncio
-async def test_task_status_events(run_a2a_slimrpc_server):
+async def test_task_status_events(run_a2a_slimrpc_server: RunA2ASlimRpcServer) -> None:
     """Verify the client receives streaming TaskStatusUpdateEvent objects over SlimRPC.
 
     Uses deferred SlimRpcConfig (matching test_client_factory_deferred pattern).
@@ -323,7 +338,7 @@ async def test_task_status_events(run_a2a_slimrpc_server):
 
 
 @pytest.mark.asyncio
-async def test_interceptor(run_a2a_slimrpc_server):
+async def test_interceptor(run_a2a_slimrpc_server: RunA2ASlimRpcServer) -> None:
     """Interceptor middleware should be invoked on send_message over SlimRPC.
 
     With a2a-sdk 1.x the interceptors are run by the upstream ``BaseClient``

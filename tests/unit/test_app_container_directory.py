@@ -30,7 +30,7 @@ def _minimal_card() -> AgentCard:
     )
 
 
-def _make_handler(agent_record=None):
+def _make_handler(agent_record: AgentCard | None = None) -> AsyncMock:
     """Create a mock ServerHandler."""
     handler = AsyncMock()
     handler.get_agent_record = MagicMock(return_value=agent_record)
@@ -45,7 +45,7 @@ def _make_handler(agent_record=None):
 
 
 @pytest.mark.asyncio
-async def test_run_with_directory_pushes_record():
+async def test_run_with_directory_pushes_record() -> None:
     """When a directory is configured and the handler provides a record, push it."""
     card = _minimal_card()
     handler = _make_handler(agent_record=card)
@@ -64,7 +64,7 @@ async def test_run_with_directory_pushes_record():
 
 
 @pytest.mark.asyncio
-async def test_run_with_directory_no_record():
+async def test_run_with_directory_no_record() -> None:
     """When the handler returns None, push should NOT be called."""
     handler = _make_handler(agent_record=None)
     directory = AsyncMock()
@@ -80,7 +80,7 @@ async def test_run_with_directory_no_record():
 
 
 @pytest.mark.asyncio
-async def test_run_without_directory():
+async def test_run_without_directory() -> None:
     """When no directory is configured, no directory calls should be made."""
     handler = _make_handler(agent_record=_minimal_card())
 
@@ -99,7 +99,7 @@ async def test_run_without_directory():
 
 
 @pytest.mark.asyncio
-async def test_stop_calls_directory_teardown():
+async def test_stop_calls_directory_teardown() -> None:
     """stop() calls directory.teardown() when a directory is configured."""
     handler = _make_handler()
     directory = AsyncMock()
@@ -115,7 +115,7 @@ async def test_stop_calls_directory_teardown():
 
 
 @pytest.mark.asyncio
-async def test_stop_without_directory():
+async def test_stop_without_directory() -> None:
     """stop() succeeds without error when no directory is configured."""
     handler = _make_handler()
 

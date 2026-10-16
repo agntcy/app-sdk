@@ -101,7 +101,7 @@ class WeatherAgent:
 
 
 class WeatherAgentExecutor(AgentExecutor):
-    def __init__(self):
+    def __init__(self) -> None:
         self.agent = WeatherAgent()
 
     async def execute(
@@ -121,7 +121,7 @@ class WeatherAgentExecutor(AgentExecutor):
 # ---------------------------------------------------------------------------
 
 
-async def main(transport_type: str, slim_endpoint: str, nats_endpoint: str):
+async def main(transport_type: str, slim_endpoint: str, nats_endpoint: str) -> None:
     agent_card = build_agent_card(transport_type, slim_endpoint, nats_endpoint)
 
     request_handler = DefaultRequestHandler(

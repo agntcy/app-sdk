@@ -25,7 +25,9 @@ from agntcy_app_sdk.factory import AgntcyFactory
 factory = AgntcyFactory(enable_tracing=False)
 
 
-async def main(transport_type: str, endpoint: str, name: str, block: bool = True):
+async def main(
+    transport_type: str, endpoint: str, name: str, block: bool = True
+) -> None:
     mcp = FastMCP()
 
     @mcp.tool()

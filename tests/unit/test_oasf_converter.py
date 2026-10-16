@@ -3,6 +3,8 @@
 
 """Unit tests for the OASF ↔ AgentCard converter."""
 
+from typing import Any
+
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentProvider
 
 from agntcy_app_sdk.directory.oasf_converter import (
@@ -23,8 +25,8 @@ pytest_plugins = "pytest_asyncio"
 # ---------------------------------------------------------------------------
 
 
-def _minimal_card(**overrides) -> AgentCard:
-    defaults = {
+def _minimal_card(**overrides: Any) -> AgentCard:
+    defaults: dict[str, Any] = {
         "name": "test-agent",
         "supported_interfaces": [
             AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000")
@@ -45,7 +47,7 @@ def _minimal_card(**overrides) -> AgentCard:
 # ---------------------------------------------------------------------------
 
 
-def test_agent_card_to_oasf_structure():
+def test_agent_card_to_oasf_structure() -> None:
     """Verify that the OASF envelope has the expected top-level keys and module."""
     card = _minimal_card()
     oasf = agent_card_to_oasf(card)
@@ -67,7 +69,7 @@ def test_agent_card_to_oasf_structure():
     assert oasf["skills"][0]["id"] == DEFAULT_SKILL_ID
 
 
-def test_agent_card_to_oasf_with_provider():
+def test_agent_card_to_oasf_with_provider() -> None:
     """Provider organization should populate the authors list."""
     card = _minimal_card(
         provider=AgentProvider(organization="Acme Corp", url="https://acme.example.com")
@@ -76,7 +78,7 @@ def test_agent_card_to_oasf_with_provider():
     assert oasf["authors"] == ["Acme Corp"]
 
 
-def test_agent_card_to_oasf_without_provider():
+def test_agent_card_to_oasf_without_provider() -> None:
     """No provider → authors should fall back to the card name."""
     card = _minimal_card()
     oasf = agent_card_to_oasf(card)
@@ -88,7 +90,7 @@ def test_agent_card_to_oasf_without_provider():
 # ---------------------------------------------------------------------------
 
 
-def test_oasf_to_agent_card_roundtrip():
+def test_oasf_to_agent_card_roundtrip() -> None:
     """card → OASF → card should preserve name, interfaces, version."""
     original = _minimal_card()
     oasf = agent_card_to_oasf(original)
@@ -102,7 +104,7 @@ def test_oasf_to_agent_card_roundtrip():
     assert restored.version == original.version
 
 
-def test_oasf_to_agent_card_preserves_interface_order():
+def test_oasf_to_agent_card_preserves_interface_order() -> None:
     """supported_interfaces order encodes preference and must survive the roundtrip."""
     original = _minimal_card(
         supported_interfaces=[
@@ -119,7 +121,7 @@ def test_oasf_to_agent_card_preserves_interface_order():
     ]
 
 
-def test_oasf_to_agent_card_legacy_v03_card():
+def test_oasf_to_agent_card_legacy_v03_card() -> None:
     """Records stored by SDK versions on a2a-sdk 0.3 (url / preferredTransport /
     additionalInterfaces) must still load: the url becomes the first interface."""
     oasf = {
@@ -156,7 +158,7 @@ def test_oasf_to_agent_card_legacy_v03_card():
     ]
 
 
-def test_oasf_to_agent_card_no_matching_module():
+def test_oasf_to_agent_card_no_matching_module() -> None:
     """Wrong module name → should return None."""
     oasf = {
         "modules": [
@@ -169,7 +171,7 @@ def test_oasf_to_agent_card_no_matching_module():
     assert oasf_to_agent_card(oasf) is None
 
 
-def test_oasf_to_agent_card_empty_modules():
+def test_oasf_to_agent_card_empty_modules() -> None:
     """Empty modules list → should return None."""
     assert oasf_to_agent_card({"modules": []}) is None
     assert oasf_to_agent_card({}) is None

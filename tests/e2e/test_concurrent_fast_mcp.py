@@ -6,7 +6,7 @@ import asyncio
 import pytest
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from tests.e2e.conftest import TRANSPORT_CONFIGS
+from tests.e2e.conftest import TRANSPORT_CONFIGS, RunMCPServer
 
 pytest_plugins = "pytest_asyncio"
 
@@ -15,7 +15,7 @@ pytest_plugins = "pytest_asyncio"
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_client(run_fast_mcp_server, transport):
+async def test_client(run_fast_mcp_server: RunMCPServer, transport: str) -> None:
     """Concurrent FastMCP clients over each transport.
 
     Launches a server, then fires 5 clients concurrently — each listing

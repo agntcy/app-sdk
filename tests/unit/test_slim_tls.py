@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -36,17 +38,17 @@ class _Stop(Exception):
     """Raised by the patched config builder to end ``setup()`` early."""
 
 
-def _stop_at_connect():
+def _stop_at_connect() -> MagicMock:
     """A ``new_client_config`` stand-in that records its call, then stops."""
     return MagicMock(side_effect=_Stop)
 
 
 class TestNewClientConfig:
-    def test_insecure_is_plaintext(self):
+    def test_insecure_is_plaintext(self) -> None:
         cfg = new_client_config("http://localhost:46357", insecure=True)
         assert cfg.tls.insecure is True
 
-    def test_secure_is_verified_tls13(self):
+    def test_secure_is_verified_tls13(self) -> None:
         cfg = new_client_config("https://localhost:46357", insecure=False)
         assert cfg.tls.insecure is False
         assert cfg.tls.insecure_skip_verify is False
@@ -56,7 +58,7 @@ class TestNewClientConfig:
 
 class TestSlimRpcServerHonorsTlsInsecure:
     @staticmethod
-    def _handler(**connection) -> A2ASRPCServerHandler:
+    def _handler(**connection: Any) -> A2ASRPCServerHandler:
         return A2ASRPCServerHandler(
             A2ASlimRpcServerConfig(
                 agent_card=AgentCard(name="agent", version="1.0.0"),
@@ -69,7 +71,7 @@ class TestSlimRpcServerHonorsTlsInsecure:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tls_insecure", [True, False])
-    async def test_setup_passes_flag(self, tls_insecure):
+    async def test_setup_passes_flag(self, tls_insecure: bool) -> None:
         handler = self._handler(
             endpoint="https://slim.example:443", tls_insecure=tls_insecure
         )
@@ -89,14 +91,14 @@ class TestSlimRpcServerHonorsTlsInsecure:
             "https://slim.example:443/", insecure=tls_insecure
         )
 
-    def test_default_stays_plaintext(self):
+    def test_default_stays_plaintext(self) -> None:
         assert SlimRpcConnectionConfig("org/ns/a", _TEST_SECRET).tls_insecure is True
 
 
 class TestSlimRpcClientHonorsTlsInsecure:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tls_insecure", [True, False])
-    async def test_factory_passes_flag(self, tls_insecure):
+    async def test_factory_passes_flag(self, tls_insecure: bool) -> None:
         config = ClientConfig(
             slimrpc_config=SlimRpcConfig(
                 namespace="org",
@@ -125,14 +127,14 @@ class TestSlimRpcClientHonorsTlsInsecure:
             "https://slim.example:443/", insecure=tls_insecure
         )
 
-    def test_default_stays_plaintext(self):
+    def test_default_stays_plaintext(self) -> None:
         assert SlimRpcConfig(namespace="o", group="n", name="c").tls_insecure is True
 
 
 class TestSlimTransportHonorsTlsInsecure:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tls_insecure", [True, False])
-    async def test_instance_passes_flag(self, tls_insecure):
+    async def test_instance_passes_flag(self, tls_insecure: bool) -> None:
         builder = _stop_at_connect()
         service = MagicMock()
         service.connect_async = AsyncMock()
@@ -168,7 +170,7 @@ class TestSharedConnectionKeepsItsTlsSetting:
         insecure: bool,
         builder: MagicMock,
         endpoint: str = "https://slim.example:443",
-    ):
+    ) -> tuple[slim_bindings.Service, slim_bindings.App, int | None]:
         return await common.get_or_create_slim_instance(
             MagicMock(),
             endpoint,
@@ -177,7 +179,9 @@ class TestSharedConnectionKeepsItsTlsSetting:
         )
 
     @staticmethod
-    def _patched(builder: MagicMock):
+    def _patched(
+        builder: MagicMock,
+    ) -> tuple[MagicMock, tuple[AbstractContextManager[Any], ...]]:
         service = MagicMock()
         service.connect_async = AsyncMock(return_value=7)
         app = MagicMock()
@@ -196,7 +200,7 @@ class TestSharedConnectionKeepsItsTlsSetting:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("first", [True, False])
-    async def test_conflicting_second_request_is_refused(self, first):
+    async def test_conflicting_second_request_is_refused(self, first: bool) -> None:
         builder = MagicMock(return_value="cfg")
         service, patches = self._patched(builder)
 
@@ -216,7 +220,9 @@ class TestSharedConnectionKeepsItsTlsSetting:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("flag", [True, False])
-    async def test_matching_second_request_reuses_the_connection(self, flag):
+    async def test_matching_second_request_reuses_the_connection(
+        self, flag: bool
+    ) -> None:
         builder = MagicMock(return_value="cfg")
         service, patches = self._patched(builder)
 
@@ -247,7 +253,7 @@ class TestSharedConnectionKeepsItsEndpoint:
             "https://slim.example",  # same host, port not spelled out: as written
         ],
     )
-    async def test_different_endpoint_is_refused(self, other):
+    async def test_different_endpoint_is_refused(self, other: str) -> None:
         from contextlib import ExitStack
 
         builder = MagicMock(return_value="cfg")
@@ -274,7 +280,7 @@ class TestSharedConnectionKeepsItsEndpoint:
         "again",
         ["https://slim.example:443", "https://slim.example:443/"],
     )
-    async def test_same_endpoint_reuses_the_connection(self, again):
+    async def test_same_endpoint_reuses_the_connection(self, again: str) -> None:
         """Identical endpoints, with or without a trailing slash, are one
         dataplane and share the connection."""
         from contextlib import ExitStack
@@ -294,7 +300,7 @@ class TestSharedConnectionKeepsItsEndpoint:
         service.connect_async.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_endpoint_is_recorded_only_after_connecting(self):
+    async def test_endpoint_is_recorded_only_after_connecting(self) -> None:
         """A failed first connect must not pin the endpoint, or a retry against
         the right dataplane would be refused."""
         from contextlib import ExitStack
@@ -314,7 +320,7 @@ class TestSharedConnectionKeepsItsEndpoint:
             assert common.global_slim_endpoint is None
 
     @pytest.mark.asyncio
-    async def test_concurrent_setups_cannot_bypass_the_guard(self):
+    async def test_concurrent_setups_cannot_bypass_the_guard(self) -> None:
         """Two setups awaited together must not both connect: the second has
         to see the first one's connection and be refused."""
         import asyncio
@@ -323,7 +329,7 @@ class TestSharedConnectionKeepsItsEndpoint:
         builder = MagicMock(return_value="cfg")
         service, patches = TestSharedConnectionKeepsItsTlsSetting._patched(builder)
 
-        async def slow_connect(_cfg):
+        async def slow_connect(_cfg: object) -> int:
             await asyncio.sleep(0.05)
             return 7
 
@@ -359,7 +365,7 @@ class TestSchemeDisagreement:
     """
 
     @pytest.mark.parametrize("endpoint", ["http://localhost:46357", "HTTP://h:1/"])
-    def test_tls_over_http_is_refused(self, endpoint):
+    def test_tls_over_http_is_refused(self, endpoint: str) -> None:
         with patch.object(slim_bindings, "new_secure_client_config") as secure:
             with pytest.raises(ValueError, match="tls_insecure=False") as exc:
                 new_client_config(endpoint, insecure=False)
@@ -377,7 +383,9 @@ class TestSchemeDisagreement:
             ("localhost:46357", False, False),  # no scheme: nothing to compare
         ],
     )
-    def test_allowed_combinations(self, endpoint, insecure, warns):
+    def test_allowed_combinations(
+        self, endpoint: str, insecure: bool, warns: bool
+    ) -> None:
         with patch.object(common, "logger") as log:
             cfg = new_client_config(endpoint, insecure=insecure)
 
@@ -389,7 +397,7 @@ class TestSchemeDisagreement:
             log.warning.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_refusal_happens_before_anything_is_created(self):
+    async def test_refusal_happens_before_anything_is_created(self) -> None:
         """A refused combination must not leave a SLIM App behind."""
         service = MagicMock()
 
@@ -411,7 +419,7 @@ class TestSchemeDisagreement:
         service.connect_async.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_slimrpc_server_refuses_tls_over_http(self):
+    async def test_slimrpc_server_refuses_tls_over_http(self) -> None:
         handler = TestSlimRpcServerHonorsTlsInsecure._handler(
             endpoint="http://localhost:46357", tls_insecure=False
         )
@@ -423,7 +431,7 @@ class TestSchemeDisagreement:
                 await handler.setup()
 
     @pytest.mark.asyncio
-    async def test_slimrpc_client_refuses_tls_over_http(self):
+    async def test_slimrpc_client_refuses_tls_over_http(self) -> None:
         factory = A2AClientFactory(
             ClientConfig(
                 slimrpc_config=SlimRpcConfig(
@@ -455,7 +463,9 @@ class TestSLIMTransportPassesTlsInsecure:
     """
 
     @staticmethod
-    async def _connect(endpoint: str, tls_insecure: bool):
+    async def _connect(
+        endpoint: str, tls_insecure: bool
+    ) -> tuple[SLIMTransport, AsyncMock]:
         transport = SLIMTransport(
             routable_name="org/ns/agent",
             endpoint=endpoint,
@@ -475,16 +485,17 @@ class TestSLIMTransportPassesTlsInsecure:
         ("endpoint", "tls_insecure"),
         [("http://localhost:46357", True), ("https://slim.example:443", False)],
     )
-    async def test_setup_passes_flag(self, endpoint, tls_insecure):
+    async def test_setup_passes_flag(self, endpoint: str, tls_insecure: bool) -> None:
         transport, connected = await self._connect(endpoint, tls_insecure)
 
         assert transport._tls_insecure is tls_insecure
         connected.assert_awaited_once()
+        assert connected.await_args is not None
         assert connected.await_args.kwargs["slim_insecure_client"] is tls_insecure
         assert connected.await_args.kwargs["slim_endpoint"] == endpoint
 
     @pytest.mark.asyncio
-    async def test_factory_config_false_is_not_dropped(self):
+    async def test_factory_config_false_is_not_dropped(self) -> None:
         """``False`` must survive the factory's ``v is not None`` filter."""
         config = ClientConfig(
             slim_config=SlimTransportConfig(
@@ -505,4 +516,5 @@ class TestSLIMTransportPassesTlsInsecure:
 
         assert isinstance(transport, SLIMTransport)
         assert transport._tls_insecure is False
+        assert connected.await_args is not None
         assert connected.await_args.kwargs["slim_insecure_client"] is False

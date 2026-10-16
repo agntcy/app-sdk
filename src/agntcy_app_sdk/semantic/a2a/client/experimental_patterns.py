@@ -554,8 +554,8 @@ class A2AExperimentalClient(Client):
         self,
         request: SendMessageRequest,
         *,
+        recipients: List[str],
         context: ClientCallContext | None = None,
-        recipients: List[str] | None = None,
         broadcast_topic: str | None = None,
         timeout: float = 60.0,
     ) -> List[SendMessageResponse]:
@@ -594,8 +594,7 @@ class A2AExperimentalClient(Client):
         if not broadcast_topic:
             broadcast_topic = self._topic
 
-        expected = len(recipients) if recipients else 1
-        tally = _BroadcastTally(expected, recipients)
+        tally = _BroadcastTally(len(recipients), recipients)
 
         stream = self._transport.gather_stream(
             broadcast_topic,
@@ -653,8 +652,8 @@ class A2AExperimentalClient(Client):
         self,
         request: SendMessageRequest,
         *,
+        recipients: List[str],
         context: ClientCallContext | None = None,
-        recipients: List[str] | None = None,
         broadcast_topic: str | None = None,
         message_limit: int | None = None,
         timeout: float = 60.0,
@@ -695,11 +694,9 @@ class A2AExperimentalClient(Client):
 
         # How many *final* responses we expect before stopping the stream.
         expected_finals = (
-            message_limit
-            if message_limit is not None
-            else (len(recipients) if recipients else 1)
+            message_limit if message_limit is not None else len(recipients)
         )
-        wants_all = bool(recipients) and expected_finals >= len(recipients or [])
+        wants_all = bool(recipients) and expected_finals >= len(recipients)
         tally = _BroadcastTally(expected_finals, recipients if wants_all else None)
 
         # Do NOT pass message_limit to the transport — let it stream
@@ -716,7 +713,7 @@ class A2AExperimentalClient(Client):
                 # Only A2AStatusUpdate messages are intermediate; every other
                 # message (including an error reply) is one recipient's final.
                 is_final = raw_resp.type != "A2AStatusUpdate"
-                logger.debug(raw_resp)
+                logger.debug("Broadcast reply: %s", raw_resp)
                 sender = _reply_sender(raw_resp)
                 if is_final and not tally.accept_final(sender):
                     continue

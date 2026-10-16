@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import asyncio
+from typing import TypedDict
 
 from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import (
@@ -27,6 +28,13 @@ from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
     A2AExperimentalServer,
 )
+from agntcy_app_sdk.transport.base import BaseTransport
+
+
+class TransportKwargs(TypedDict, total=False):
+    slim_transport: BaseTransport
+    nats_transport: BaseTransport
+
 
 # Reconstruct the same agent_card as the server (needed for topic derivation)
 skill = AgentSkill(
@@ -48,7 +56,7 @@ base_agent_card = AgentCard(
 )
 
 
-async def main(transport_type: str, endpoint: str):
+async def main(transport_type: str, endpoint: str) -> None:
     factory = AgntcyFactory()
 
     transport = factory.create_transport(
@@ -61,7 +69,7 @@ async def main(transport_type: str, endpoint: str):
         base_agent_card, transport_type
     )
 
-    config_kwargs = {}
+    config_kwargs: TransportKwargs = {}
     if transport_type == "SLIM":
         config_kwargs["slim_transport"] = transport
     elif transport_type == "NATS":

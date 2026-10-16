@@ -23,7 +23,7 @@ from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 
 
-async def main(endpoint: str, agent_name: str):
+async def main(endpoint: str, agent_name: str) -> None:
     factory = AgntcyFactory()
 
     # 1. Set up the low-level SLIM connection (needed for slimrpc channel)

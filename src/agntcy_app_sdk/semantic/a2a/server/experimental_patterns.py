@@ -25,7 +25,7 @@ dispatcher does for HTTP.
 """
 
 import json
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -69,7 +69,10 @@ from agntcy_app_sdk.common.tracing import A2A_INSTRUMENTOR, instrument_if_ready
 from agntcy_app_sdk.semantic.a2a.card_utils import add_interface, clone_card
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
-from agntcy_app_sdk.semantic.a2a.transport_types import SENDER_HEADER
+from agntcy_app_sdk.semantic.a2a.transport_types import (
+    SENDER_HEADER,
+    normalize_transport,
+)
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 
@@ -166,7 +169,7 @@ class A2AExperimentalServer:
         self._identity_sdk: IdentityServiceSdk | None = None
         self._sender_id = sender_id
 
-    def type(self):
+    def type(self) -> str:
         return "A2A"
 
     def _reply_headers(self) -> dict[str, str]:
@@ -350,8 +353,10 @@ class A2AExperimentalServer:
         if not token:
             return False, "Empty bearer token", _unauthenticated
 
+        if self._identity_sdk is None:
+            return False, "Identity service is not configured", _unauthenticated
         try:
-            self._identity_sdk.authorize(access_token=token)  # type: ignore[union-attr]
+            self._identity_sdk.authorize(access_token=token)
             return True, "", IdentityServiceUser()
         except Exception as e:
             return False, f"Authentication failed: {e}", _unauthenticated
@@ -441,7 +446,12 @@ class A2AExperimentalServer:
             proto_utils.to_stream_response(item), preserving_proto_field_name=False
         )
 
-    async def handle_message(self, message: Message, *, publish_fn=None) -> Message:
+    async def handle_message(
+        self,
+        message: Message,
+        *,
+        publish_fn: Callable[[Message], Awaitable[object]] | None = None,
+    ) -> Message:
         """Handle an incoming request by calling the RequestHandler directly.
 
         Args:
@@ -576,7 +586,7 @@ class A2AExperimentalServer:
         context: ServerCallContext,
         request_id: str | int | None,
         message: Message,
-        publish_fn,
+        publish_fn: Callable[[Message], Awaitable[object]] | None,
     ) -> Message:
         """Drain a streaming handler, publishing intermediate items.
 
@@ -642,6 +652,9 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
     card's ``supported_interfaces`` depending on the transport type.
     """
 
+    _managed_object: A2AServerConfig
+    _topic: str
+
     def __init__(
         self,
         server: A2AServerConfig,
@@ -653,20 +666,29 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
         if topic is None or topic == "":
             from agntcy_app_sdk.semantic.a2a.utils import get_agent_identifier
 
-            # Scope the lookup to this handler's pub/sub binding so a card
-            # whose first interface is another transport (e.g. ``slimrpc``,
-            # which also uses ``slim://`` URLs) cannot supply the topic.
-            # Without a transport the binding is unknown; fall back to the
-            # card's preferred interface.
+            # Only a pub/sub interface may supply the topic: a ``slimrpc``
+            # identity names the RPC server, not a topic.  With a known
+            # transport only its own binding counts; otherwise (no transport,
+            # or a type without a binding) the first pub/sub binding in card
+            # order, i.e. the agent's preference.
+            card = server.agent_card
             entry = (
                 _TRANSPORT_NAME_MAP.get(transport.type())
                 if transport is not None
                 else None
             )
-            binding = entry[0] if entry else None
-            topic = get_agent_identifier(server.agent_card, binding) or _default_topic(
-                server.agent_card
+            bindings = (
+                [entry[0]] if entry else [b for b, _ in _TRANSPORT_NAME_MAP.values()]
             )
+            topic = next(
+                (
+                    found
+                    for iface in card.supported_interfaces
+                    if normalize_transport(iface.protocol_binding) in bindings
+                    and (found := get_agent_identifier(card, iface.protocol_binding))
+                ),
+                None,
+            ) or _default_topic(card)
 
         super().__init__(server, transport=transport, topic=topic)
         # The topic is what broadcast clients name in ``recipients``.

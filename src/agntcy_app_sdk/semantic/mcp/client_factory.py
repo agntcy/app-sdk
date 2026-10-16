@@ -1,7 +1,8 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, AsyncIterator, Optional
+from contextlib import AbstractAsyncContextManager
+from typing import Any, Optional
 
 from mcp import ClientSession
 
@@ -25,7 +26,7 @@ class MCPClientFactory:
         topic: Optional[str] = None,
         transport: Optional[BaseTransport] = None,
         **kwargs: Any,
-    ) -> AsyncIterator[ClientSession]:
+    ) -> AbstractAsyncContextManager[ClientSession]:
         """Create an MCP client session (async context manager).
 
         Delegates to ``MCPProtocol.create_client()`` which is an
@@ -39,6 +40,8 @@ class MCPClientFactory:
             async with ctx as session:
                 ...
         """
+        if not topic:
+            raise ValueError("MCP client needs a topic")
         protocol = MCPProtocol()
         return protocol.create_client(
             topic=topic, url=url, transport=transport, **kwargs

@@ -50,7 +50,7 @@ CLIENT_TIMEOUT = 30  # seconds before killing the client
 # ---------------------------------------------------------------------------
 
 
-def _launch_server(cmd: list[str]) -> subprocess.Popen:
+def _launch_server(cmd: list[str]) -> subprocess.Popen[bytes]:
     """Launch a server subprocess with its own process group."""
     proc = subprocess.Popen(
         cmd,
@@ -73,7 +73,7 @@ def _run_client(cmd: list[str], timeout: int = CLIENT_TIMEOUT) -> tuple[int, str
     return result.returncode, result.stdout
 
 
-def _kill_server(proc: subprocess.Popen) -> None:
+def _kill_server(proc: subprocess.Popen[bytes]) -> None:
     """Terminate the server and its process group."""
     if proc.poll() is None:
         try:
@@ -86,7 +86,7 @@ def _kill_server(proc: subprocess.Popen) -> None:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
 
 
-def _server_output(proc: subprocess.Popen) -> str:
+def _server_output(proc: subprocess.Popen[bytes]) -> str:
     """Read whatever the server has written to stdout so far (non-blocking)."""
     import select
 
@@ -108,7 +108,7 @@ def _server_output(proc: subprocess.Popen) -> str:
 class TestExample1SlimRPC:
     """Test the SlimRPC example from A2A_USAGE_GUIDE.md."""
 
-    def test_weather_agent_srpc(self):
+    def test_weather_agent_srpc(self) -> None:
         """Launch SlimRPC weather server, run client, verify response."""
         server_script = os.path.join(GUIDE_DIR, "weather_agent_srpc.py")
         client_script = os.path.join(GUIDE_DIR, "weather_client_srpc.py")
@@ -179,7 +179,7 @@ class TestExample1SlimRPC:
 class TestExample2CardDrivenSLIM:
     """Test the card-driven bootstrap example over SLIM from A2A_USAGE_GUIDE.md."""
 
-    def test_weather_agent_card_slim(self):
+    def test_weather_agent_card_slim(self) -> None:
         """Launch card-driven weather server over SLIM, run client, verify response."""
         server_script = os.path.join(GUIDE_DIR, "weather_agent_card.py")
         client_script = os.path.join(GUIDE_DIR, "weather_client_card.py")
@@ -257,7 +257,7 @@ class TestExample2CardDrivenSLIM:
 class TestExample2CardDrivenNATS:
     """Test the card-driven bootstrap example over NATS from A2A_USAGE_GUIDE.md."""
 
-    def test_weather_agent_card_nats(self):
+    def test_weather_agent_card_nats(self) -> None:
         """Launch card-driven weather server over NATS, run client, verify response."""
         server_script = os.path.join(GUIDE_DIR, "weather_agent_card.py")
         client_script = os.path.join(GUIDE_DIR, "weather_client_card.py")

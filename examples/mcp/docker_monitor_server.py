@@ -16,8 +16,10 @@ Requires: Docker daemon running
 import asyncio
 import argparse
 import json
+from typing import Any
 
 import docker
+from docker.models.containers import Container
 from mcp.server.fastmcp import FastMCP
 
 from agntcy_app_sdk.factory import AgntcyFactory
@@ -25,12 +27,34 @@ from agntcy_app_sdk.factory import AgntcyFactory
 factory = AgntcyFactory(enable_tracing=False)
 
 
-def _get_docker_client():
+def _get_docker_client() -> docker.DockerClient:
     """Create a Docker client from the local environment."""
     return docker.from_env()
 
 
-async def main(transport_type: str, endpoint: str, name: str, block: bool = True):
+def _image_name(container: Container) -> str:
+    """First tag of the container's image, or its truncated id."""
+    image = container.image
+    if image is None:
+        raise ValueError(f"Container {container.name} has no image")
+    if image.tags:
+        return str(image.tags[0])
+    if image.id is None:
+        raise ValueError(f"Image of container {container.name} has no id")
+    return str(image.id[:12])
+
+
+def _stats(container: Container) -> dict[str, Any]:
+    """One stats snapshot for *container*."""
+    stats = container.stats(stream=False)
+    if not isinstance(stats, dict):
+        raise TypeError(f"Expected a stats dict, got {type(stats).__name__}")
+    return stats
+
+
+async def main(
+    transport_type: str, endpoint: str, name: str, block: bool = True
+) -> None:
     mcp = FastMCP()
 
     @mcp.tool()
@@ -44,9 +68,7 @@ async def main(transport_type: str, endpoint: str, name: str, block: bool = True
                 {
                     "id": c.short_id,
                     "name": c.name,
-                    "image": str(c.image.tags[0])
-                    if c.image.tags
-                    else str(c.image.id[:12]),
+                    "image": _image_name(c),
                     "status": c.status,
                 }
             )
@@ -62,7 +84,7 @@ async def main(transport_type: str, endpoint: str, name: str, block: bool = True
         """
         client = _get_docker_client()
         container = client.containers.get(container_name_or_id)
-        stats = container.stats(stream=False)
+        stats = _stats(container)
 
         cpu_delta = (
             stats["cpu_stats"]["cpu_usage"]["total_usage"]
@@ -99,7 +121,7 @@ async def main(transport_type: str, endpoint: str, name: str, block: bool = True
         results = []
 
         for container in containers:
-            stats = container.stats(stream=False)
+            stats = _stats(container)
 
             cpu_delta = (
                 stats["cpu_stats"]["cpu_usage"]["total_usage"]

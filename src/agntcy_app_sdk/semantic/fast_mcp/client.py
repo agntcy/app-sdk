@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-from typing import Any, Dict, Optional
+from types import TracebackType
+from typing import Any, Dict, Optional, Self
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
+from agntcy_app_sdk.transport.base import BaseTransport
 from identityservice.sdk import IdentityServiceSdk
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
@@ -13,16 +15,27 @@ logger = get_logger(__name__)
 
 
 class MCPClient:
-    def __init__(self, transport, session_id: str, topic: str, route_path: str = "/"):
+    def __init__(
+        self,
+        transport: BaseTransport | None,
+        session_id: str,
+        topic: str | None,
+        route_path: str = "/",
+    ) -> None:
         self.transport = transport
         self.session_id = session_id
         self.topic = topic
         self.route_path = route_path
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         # Passive cleanup only. Transport and sessions should not be closed here.
         # Transport will close during server/bridge shutdown, and sessions will close
         # at the transport level after the point-to-point communication (FastMCP's only mode) completes.
@@ -61,11 +74,16 @@ class MCPClient:
     ) -> Dict[str, Any]:
         try:
             message = self._build_message(method, params, headers, request_id)
+            if self.transport is None:
+                raise ValueError("Transport must be provided to send MCP messages")
+            if not self.topic:
+                raise ValueError("Topic must be provided to send MCP messages")
             response = await self.transport.request(self.topic, message)
             data = json.loads(response.payload.decode("utf-8"))
             if "error" in data:
                 raise RuntimeError(f"[MCP Error] {method} failed: {data['error']}")
-            return data["result"]
+            result: Dict[str, Any] = data["result"]
+            return result
         except Exception as e:
             raise RuntimeError(f"[MCP Error] {method} call failed: {e}")
 
@@ -75,7 +93,7 @@ class MCPClient:
         name: str,
         arguments: Dict[str, Any],
         request_id: int = 1,
-    ) -> dict:
+    ) -> dict[str, Any]:
         headers: Dict[str, Any] = {}
 
         if is_identity_auth_enabled():
@@ -93,28 +111,28 @@ class MCPClient:
             headers=headers,
         )
 
-    async def list_tools(self, request_id: int = 1) -> dict:
+    async def list_tools(self, request_id: int = 1) -> dict[str, Any]:
         return await self.call_mcp_method("tools/list", request_id=request_id)
 
-    async def list_resources(self, request_id: int = 1) -> dict:
+    async def list_resources(self, request_id: int = 1) -> dict[str, Any]:
         return await self.call_mcp_method("resources/list", request_id=request_id)
 
-    async def list_resource_templates(self, request_id: int = 1) -> dict:
+    async def list_resource_templates(self, request_id: int = 1) -> dict[str, Any]:
         return await self.call_mcp_method(
             "resources/templates/list", request_id=request_id
         )
 
-    async def read_resource(self, uri: str, request_id: int = 1) -> dict:
+    async def read_resource(self, uri: str, request_id: int = 1) -> dict[str, Any]:
         return await self.call_mcp_method(
             "resources/read", {"uri": uri}, request_id=request_id
         )
 
-    async def list_prompts(self, request_id: int = 1) -> dict:
+    async def list_prompts(self, request_id: int = 1) -> dict[str, Any]:
         return await self.call_mcp_method("prompts/list", request_id=request_id)
 
     async def get_prompt(
         self, name: str, arguments: Optional[Dict[str, Any]] = None, request_id: int = 1
-    ) -> dict:
+    ) -> dict[str, Any]:
         return await self.call_mcp_method(
             "prompts/get",
             {"name": name, "arguments": arguments or {}},
@@ -126,7 +144,7 @@ class MCPClient:
         ref: Dict[str, Any],
         argument: Dict[str, str],
         request_id: int = 1,
-    ) -> dict:
+    ) -> dict[str, Any]:
         raise NotImplementedError(
             "The 'complete' method is not supported in this MCPClient implementation."
         )

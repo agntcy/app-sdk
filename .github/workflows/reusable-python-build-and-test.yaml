@@ -21,6 +21,11 @@ on:
         required: false
         type: boolean
         default: true
+      py-typecheck:
+        description: Whether to run "task typecheck"
+        required: false
+        type: boolean
+        default: true
       py-test:
         description: Whether to run "task test"
         required: false
@@ -52,6 +57,21 @@ jobs:
         run: uv sync
       - name: Lint
         run: task lint
+
+  pytypecheck:
+    runs-on: ${{ inputs.runner }}
+    if: ${{ inputs.py-typecheck }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+      - name: Setup Python and Tools
+        uses: ./.github/actions/setup-python
+        with:
+          uv-install: true
+      - name: Install dependencies
+        run: uv sync
+      - name: Type check
+        run: task typecheck
 
   pytest:
     runs-on: ${{ inputs.runner }}

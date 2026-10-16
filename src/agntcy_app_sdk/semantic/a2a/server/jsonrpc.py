@@ -64,7 +64,7 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         self._host = host
         self._port = port
         self._public_url = public_url
-        self._server_task: Optional[asyncio.Task] = None
+        self._server_task: Optional[asyncio.Task[None]] = None
         self._uvicorn_server: Optional[uvicorn.Server] = None
 
     # -- agent_card property (required by BaseA2AServerHandler) -----------

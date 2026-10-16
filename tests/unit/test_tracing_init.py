@@ -10,6 +10,8 @@ import asyncio
 import os
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
+from typing import Any, NoReturn
 from unittest.mock import MagicMock
 
 import pytest
@@ -32,7 +34,7 @@ _A2A_INSTRUMENTOR = "ioa_observe.sdk.instrumentations.a2a.A2AInstrumentor"
 class _NoTracer:
     """TracerWrapper before Observe.init(): no singleton yet."""
 
-    def __new__(cls):
+    def __new__(cls) -> _NoTracer:
         pytest.fail("TracerWrapper constructed before Observe.init()")
 
 
@@ -41,7 +43,7 @@ class _ReadyTracer:
 
     instance = None
 
-    def get_tracer(self):
+    def get_tracer(self) -> object:
         return object()
 
 
@@ -51,23 +53,25 @@ class _Log:
     def __init__(self) -> None:
         self.records: list[tuple[str, str]] = []
 
-    def _record(self, level: str, msg: str, *args) -> None:
+    def _record(self, level: str, msg: str, *args: object) -> None:
         self.records.append((level, msg % args))
 
-    def debug(self, msg, *args):
+    def debug(self, msg: str, *args: object) -> None:
         self._record("debug", msg, *args)
 
-    def warning(self, msg, *args):
+    def warning(self, msg: str, *args: object) -> None:
         self._record("warning", msg, *args)
 
-    def exception(self, msg, *args):
+    def exception(self, msg: str, *args: object) -> None:
         self._record("exception", msg, *args)
 
     def at(self, level: str) -> list[str]:
         return [msg for lvl, msg in self.records if lvl == level]
 
 
-def _instrumentor(calls: list[str], *, installs: bool = True, raises=None):
+def _instrumentor(
+    calls: list[str], *, installs: bool = True, raises: BaseException | None = None
+) -> type[object]:
     class _Instrumentor:
         is_instrumented_by_opentelemetry = False
 
@@ -80,12 +84,12 @@ def _instrumentor(calls: list[str], *, installs: bool = True, raises=None):
     return _Instrumentor
 
 
-def _refuse(name: str):
+def _refuse(name: str) -> Callable[[], NoReturn]:
     return lambda: pytest.fail(f"{name} constructed")
 
 
 @pytest.fixture(autouse=True)
-def _isolate_tracing_state():
+def _isolate_tracing_state() -> Iterator[None]:
     saved = (
         set(tracing._instrumented),
         set(tracing._failed),
@@ -99,22 +103,24 @@ def _isolate_tracing_state():
         yield
     finally:
         tracing._requested = saved_requested
-        for state, value in zip(
-            (tracing._instrumented, tracing._failed, tracing._pending), saved
-        ):
-            state.clear()
-            state.update(value)
+        saved_instrumented, saved_failed, saved_pending = saved
+        tracing._instrumented.clear()
+        tracing._instrumented.update(saved_instrumented)
+        tracing._failed.clear()
+        tracing._failed.update(saved_failed)
+        tracing._pending.clear()
+        tracing._pending.update(saved_pending)
 
 
 @pytest.fixture
-def log(monkeypatch) -> _Log:
+def log(monkeypatch: pytest.MonkeyPatch) -> _Log:
     recorder = _Log()
     monkeypatch.setattr(tracing, "logger", recorder)
     return recorder
 
 
 @pytest.fixture
-def traced(monkeypatch):
+def traced(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRACING_ENABLED", "true")
 
 
@@ -126,7 +132,7 @@ def _slim(name: str = "c") -> SLIMTransport:
     )
 
 
-def _ready(monkeypatch) -> None:
+def _ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_TRACER_WRAPPER, _ReadyTracer)
 
 
@@ -135,7 +141,7 @@ def _ready(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_not_requested_does_nothing(monkeypatch, log):
+def test_not_requested_does_nothing(monkeypatch: pytest.MonkeyPatch, log: _Log) -> None:
     monkeypatch.delenv("TRACING_ENABLED", raising=False)
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     monkeypatch.setattr(_SLIM_INSTRUMENTOR, _refuse("SLIMInstrumentor"))
@@ -146,7 +152,9 @@ def test_not_requested_does_nothing(monkeypatch, log):
     assert tracing._pending == {tracing.SLIM_INSTRUMENTOR: "SLIMTransport"}
 
 
-def test_env_without_init_skips_slim_and_warns_once(monkeypatch, traced, log):
+def test_env_without_init_skips_slim_and_warns_once(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     monkeypatch.setattr(_SLIM_INSTRUMENTOR, _refuse("SLIMInstrumentor"))
 
@@ -160,7 +168,9 @@ def test_env_without_init_skips_slim_and_warns_once(monkeypatch, traced, log):
     assert "SLIMInstrumentor (first needed by SLIMTransport)" in warnings[0]
 
 
-def test_env_without_init_warns_once_per_instrumentor(monkeypatch, traced, log):
+def test_env_without_init_warns_once_per_instrumentor(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     monkeypatch.setattr(_SLIM_INSTRUMENTOR, _refuse("SLIMInstrumentor"))
     monkeypatch.setattr(_NATS_INSTRUMENTOR, _refuse("NATSInstrumentor"))
@@ -177,7 +187,9 @@ def test_env_without_init_warns_once_per_instrumentor(monkeypatch, traced, log):
         assert any(component in w for w in warnings), component
 
 
-def test_ioa_observe_missing_warns_once(monkeypatch, traced, log):
+def test_ioa_observe_missing_warns_once(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     monkeypatch.setitem(sys.modules, "ioa_observe.sdk.tracing.tracing", None)
 
     _slim("a")
@@ -196,7 +208,9 @@ def test_ioa_observe_missing_warns_once(monkeypatch, traced, log):
 # ---------------------------------------------------------------------------
 
 
-def test_ready_instruments_once_across_transports(monkeypatch, traced, log):
+def test_ready_instruments_once_across_transports(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     _ready(monkeypatch)
     calls: list[str] = []
     monkeypatch.setattr(_SLIM_INSTRUMENTOR, _instrumentor(calls))
@@ -208,7 +222,9 @@ def test_ready_instruments_once_across_transports(monkeypatch, traced, log):
     assert log.at("warning") == []
 
 
-def test_factory_installs_instrumentors_skipped_before_init(monkeypatch, traced, log):
+def test_factory_installs_instrumentors_skipped_before_init(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     slim_calls: list[str] = []
     nats_calls: list[str] = []
@@ -228,7 +244,9 @@ def test_factory_installs_instrumentors_skipped_before_init(monkeypatch, traced,
     assert tracing._pending == {}
 
 
-def test_setup_picks_up_direct_observe_init(monkeypatch, traced, log):
+def test_setup_picks_up_direct_observe_init(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     """Observe.init() called directly, without the factory, after construction."""
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     slim_calls: list[str] = []
@@ -241,7 +259,7 @@ def test_setup_picks_up_direct_observe_init(monkeypatch, traced, log):
     assert tracing.SLIM_INSTRUMENTOR not in tracing._instrumented
 
     _ready(monkeypatch)
-    slim_transport._slim_app = object()  # already connected; setup() skips I/O
+    slim_transport._slim_app = MagicMock()  # already connected; setup() skips I/O
     nats_transport._nc = MagicMock(is_connected=True)
     asyncio.run(slim_transport.setup())
     asyncio.run(nats_transport.setup())
@@ -251,7 +269,9 @@ def test_setup_picks_up_direct_observe_init(monkeypatch, traced, log):
     assert slim_calls == nats_calls == ["instrument"]
 
 
-def test_a2a_client_retries_on_each_create(monkeypatch, traced, log):
+def test_a2a_client_retries_on_each_create(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     calls: list[str] = []
     monkeypatch.setattr(_A2A_INSTRUMENTOR, _instrumentor(calls))
@@ -267,7 +287,9 @@ def test_a2a_client_retries_on_each_create(monkeypatch, traced, log):
     assert calls == ["instrument"]
 
 
-def test_direct_install_clears_pending_entry(monkeypatch, traced, log):
+def test_direct_install_clears_pending_entry(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     """A later instrument_pending() must not install the same instrumentor again."""
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     calls: list[str] = []
@@ -283,7 +305,9 @@ def test_direct_install_clears_pending_entry(monkeypatch, traced, log):
     assert tracing._pending == {}
 
 
-def test_instrument_pending_is_a_noop_when_nothing_is_pending(monkeypatch, log):
+def test_instrument_pending_is_a_noop_when_nothing_is_pending(
+    monkeypatch: pytest.MonkeyPatch, log: _Log
+) -> None:
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
 
     tracing.instrument_pending()
@@ -301,7 +325,9 @@ def test_instrument_pending_is_a_noop_when_nothing_is_pending(monkeypatch, log):
     "error",
     [RuntimeError("boom"), AttributeError("'NoneType' has no 'get_tracer'")],
 )
-def test_raising_instrument_is_logged_and_not_retried(monkeypatch, traced, log, error):
+def test_raising_instrument_is_logged_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log, error: Exception
+) -> None:
     _ready(monkeypatch)
     calls: list[str] = []
     monkeypatch.setattr(_SLIM_INSTRUMENTOR, _instrumentor(calls, raises=error))
@@ -316,10 +342,12 @@ def test_raising_instrument_is_logged_and_not_retried(monkeypatch, traced, log, 
     assert "SLIMTransport is not traced" in errors[0]
 
 
-def test_raising_constructor_is_logged(monkeypatch, traced, log):
+def test_raising_constructor_is_logged(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     _ready(monkeypatch)
 
-    def _broken():
+    def _broken() -> NoReturn:
         raise AttributeError("'NoneType' object has no attribute 'get_tracer'")
 
     monkeypatch.setattr(_SLIM_INSTRUMENTOR, _broken)
@@ -329,7 +357,9 @@ def test_raising_constructor_is_logged(monkeypatch, traced, log):
     assert len(log.at("exception")) == 1
 
 
-def test_unimportable_instrumentor_is_logged_and_not_retried(monkeypatch, traced, log):
+def test_unimportable_instrumentor_is_logged_and_not_retried(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     _ready(monkeypatch)
     monkeypatch.setitem(sys.modules, "ioa_observe.sdk.instrumentations.slim", None)
 
@@ -340,7 +370,9 @@ def test_unimportable_instrumentor_is_logged_and_not_retried(monkeypatch, traced
     assert len(log.at("exception")) == 1
 
 
-def test_dependency_conflict_is_reported_not_claimed(monkeypatch, traced, log):
+def test_dependency_conflict_is_reported_not_claimed(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     """BaseInstrumentor.instrument() returns without installing on a conflict."""
     _ready(monkeypatch)
     calls: list[str] = []
@@ -356,7 +388,9 @@ def test_dependency_conflict_is_reported_not_claimed(monkeypatch, traced, log):
     assert "did not instrument" in warnings[0]
 
 
-def test_failure_in_one_instrumentor_does_not_block_others(monkeypatch, traced, log):
+def test_failure_in_one_instrumentor_does_not_block_others(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     nats_calls: list[str] = []
     monkeypatch.setattr(
@@ -378,7 +412,7 @@ def test_failure_in_one_instrumentor_does_not_block_others(monkeypatch, traced, 
 # ---------------------------------------------------------------------------
 
 
-def test_factory_keeps_request_in_memory(monkeypatch):
+def test_factory_keeps_request_in_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TRACING_ENABLED", raising=False)
     monkeypatch.setattr(tracing, "_requested", False)
     monkeypatch.setattr("ioa_observe.sdk.Observe.init", lambda name, **kwargs: None)
@@ -389,11 +423,13 @@ def test_factory_keeps_request_in_memory(monkeypatch):
     assert tracing.tracing_requested() is True
 
 
-def test_failed_observe_init_does_not_request_tracing(monkeypatch):
+def test_failed_observe_init_does_not_request_tracing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("TRACING_ENABLED", raising=False)
     monkeypatch.setattr(tracing, "_requested", False)
 
-    def _failing_init(name, **kwargs):
+    def _failing_init(name: str, **kwargs: Any) -> NoReturn:
         raise RuntimeError("init failed")
 
     monkeypatch.setattr("ioa_observe.sdk.Observe.init", _failing_init)
@@ -404,7 +440,9 @@ def test_failed_observe_init_does_not_request_tracing(monkeypatch):
     assert "TRACING_ENABLED" not in os.environ
 
 
-def test_child_process_does_not_inherit_factory_request(monkeypatch):
+def test_child_process_does_not_inherit_factory_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("TRACING_ENABLED", raising=False)
     monkeypatch.setattr("ioa_observe.sdk.Observe.init", lambda name, **kwargs: None)
     AgntcyFactory("trace-test", enable_tracing=True)
@@ -419,8 +457,8 @@ def test_child_process_does_not_inherit_factory_request(monkeypatch):
 
 
 def test_observe_init_installs_instrumentors_remembered_before_request(
-    monkeypatch, log
-):
+    monkeypatch: pytest.MonkeyPatch, log: _Log
+) -> None:
     """setup() before tracing is requested, then Observe.init(), with no manual flush."""
     monkeypatch.delenv("TRACING_ENABLED", raising=False)
     monkeypatch.setattr(tracing, "_requested", False)
@@ -435,11 +473,11 @@ def test_observe_init_installs_instrumentors_remembered_before_request(
 
     from ioa_observe.sdk import Observe
 
-    def _init(*args, **kwargs):
+    def _init(*args: Any, **kwargs: Any) -> None:
         _ready(monkeypatch)
         return None
 
-    _init._agntcy_flushes_pending = False
+    setattr(_init, "_agntcy_flushes_pending", False)
     monkeypatch.setattr(Observe, "init", staticmethod(_init))
     tracing._hook_observe_init()
     Observe.init("trace-test")
@@ -448,11 +486,13 @@ def test_observe_init_installs_instrumentors_remembered_before_request(
     assert tracing._pending == {}
 
 
-def _broken_state():
+def _broken_state() -> NoReturn:
     raise RuntimeError("unexpected SDK error")
 
 
-def test_unexpected_error_does_not_escape_constructor(monkeypatch, traced, log):
+def test_unexpected_error_does_not_escape_constructor(
+    monkeypatch: pytest.MonkeyPatch, traced: None, log: _Log
+) -> None:
     monkeypatch.setattr(tracing, "_observe_state", _broken_state)
 
     _slim("a")
@@ -464,7 +504,9 @@ def test_unexpected_error_does_not_escape_constructor(monkeypatch, traced, log):
     assert tracing._pending == {}
 
 
-def test_unexpected_error_does_not_escape_instrument_pending(monkeypatch, log):
+def test_unexpected_error_does_not_escape_instrument_pending(
+    monkeypatch: pytest.MonkeyPatch, log: _Log
+) -> None:
     monkeypatch.delenv("TRACING_ENABLED", raising=False)
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     _slim()
@@ -478,12 +520,15 @@ def test_unexpected_error_does_not_escape_instrument_pending(monkeypatch, log):
     assert tracing._pending == {}
 
 
-def test_enable_opentelemetry_argument_is_deprecated(monkeypatch):
+def test_enable_opentelemetry_argument_is_deprecated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from unittest.mock import AsyncMock
 
     from agntcy_app_sdk.transport.slim import common
 
-    inner = AsyncMock(return_value=("service", "app", 1))
+    expected = (MagicMock(), MagicMock(), 1)
+    inner = AsyncMock(return_value=expected)
     monkeypatch.setattr(common, "_get_or_create_slim_instance", inner)
 
     with pytest.warns(DeprecationWarning, match="enable_opentelemetry"):
@@ -493,11 +538,13 @@ def test_enable_opentelemetry_argument_is_deprecated(monkeypatch):
             )
         )
 
-    assert result == ("service", "app", 1)
+    assert result is expected
     assert "enable_opentelemetry" not in inner.call_args.kwargs
 
 
-def test_enable_opentelemetry_attribute_is_deprecated(monkeypatch):
+def test_enable_opentelemetry_attribute_is_deprecated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("TRACING_ENABLED", raising=False)
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
 
@@ -505,7 +552,9 @@ def test_enable_opentelemetry_attribute_is_deprecated(monkeypatch):
         assert _slim().enable_opentelemetry is False
 
 
-def test_nats_tracing_enabled_attribute_is_deprecated(monkeypatch):
+def test_nats_tracing_enabled_attribute_is_deprecated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("TRACING_ENABLED", raising=False)
     monkeypatch.setattr(_TRACER_WRAPPER, _NoTracer)
     nats = NatsTransport(endpoint="nats://localhost:4222")
@@ -523,7 +572,7 @@ def test_nats_tracing_enabled_attribute_is_deprecated(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_import_does_not_load_ioa_observe():
+def test_import_does_not_load_ioa_observe() -> None:
     result = _run(
         "import sys\n"
         "import agntcy_app_sdk\n"
@@ -536,7 +585,7 @@ def test_import_does_not_load_ioa_observe():
     assert "IMPORT_OK" in result.stdout
 
 
-def _run(script: str) -> subprocess.CompletedProcess:
+def _run(script: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["TRACING_ENABLED"] = "true"
     env["OBSERVE_TELEMETRY"] = "false"
@@ -549,7 +598,7 @@ def _run(script: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_issue_132_constructor_survives_inherited_env():
+def test_issue_132_constructor_survives_inherited_env() -> None:
     """The reported one-liner: the variable is set and Observe.init() never ran."""
     result = _run(
         "from agntcy_app_sdk.transport.slim.transport import SLIMTransport\n"
@@ -563,7 +612,7 @@ def test_issue_132_constructor_survives_inherited_env():
     assert "get_tracer" not in result.stderr
 
 
-def test_real_sdk_direct_init_after_construction():
+def test_real_sdk_direct_init_after_construction() -> None:
     """Readiness detection against the installed SDK, so SDK drift fails here."""
     result = _run(
         f"""

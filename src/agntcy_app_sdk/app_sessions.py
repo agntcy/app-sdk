@@ -68,7 +68,7 @@ def _resolve_handler_class(target: Any) -> type:
 class ContainerBuilder:
     """Fluent builder for creating and registering an AppContainer."""
 
-    def __init__(self, session: AppSession, target: Any):
+    def __init__(self, session: AppSession, target: Any) -> None:
         self._session = session
         self._target = target
         self._transport: Optional[BaseTransport] = None
@@ -192,7 +192,7 @@ class AppContainer:
         handler: ServerHandler,
         *,
         directory: Optional[BaseAgentDirectory] = None,
-    ):
+    ) -> None:
         self.handler = handler
         self._directory = directory
         self._directory_cid: Optional[str] = None
@@ -219,7 +219,7 @@ class AppContainer:
 
     # -- Lifecycle ----------------------------------------------------------
 
-    async def run(self, keep_alive: bool = False):
+    async def run(self, keep_alive: bool = False) -> None:
         """Start all components of the app container."""
         if self.is_running:
             logger.warning("App session is already running.")
@@ -243,7 +243,7 @@ class AppContainer:
         if keep_alive:
             await self.loop_forever()
 
-    async def loop_forever(self):
+    async def loop_forever(self) -> None:
         """Keep the event loop running until shutdown signal received."""
         self._shutdown_event = asyncio.Event()
         self.is_running = True
@@ -252,9 +252,13 @@ class AppContainer:
 
         try:
             for sig in (signal.SIGTERM, signal.SIGINT):
-                loop.add_signal_handler(
-                    sig, lambda s=sig: asyncio.create_task(self._handle_shutdown(s))
-                )
+
+                def _on_signal(
+                    s: signal.Signals = sig,
+                ) -> asyncio.Task[None]:
+                    return asyncio.create_task(self._handle_shutdown(s))
+
+                loop.add_signal_handler(sig, _on_signal)
                 logger.debug(f"Registered handler for {sig.name}")
         except NotImplementedError:
             logger.warning("Signal handlers not supported in this environment.")
@@ -268,15 +272,19 @@ class AppContainer:
         finally:
             await self.stop()
 
-    async def _handle_shutdown(self, sig: signal.Signals):
+    async def _handle_shutdown(self, sig: signal.Signals) -> None:
         """Handle shutdown signals gracefully."""
+        if self._shutdown_event is None:
+            raise RuntimeError(
+                "Shutdown signal received before run() created the shutdown event"
+            )
         if not self._shutdown_event.is_set():
             logger.warning(f"Received signal {sig.name}, initiating shutdown...")
             self._shutdown_event.set()
         else:
             logger.debug(f"Ignoring duplicate signal: {sig.name}")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop all components of the app container."""
         logger.debug("Stopping app session...")
         await self.handler.teardown()
@@ -294,7 +302,7 @@ class AppContainer:
 class AppSession:
     """Manages the agent application session, including transport, protocol handler, and directory."""
 
-    def __init__(self, max_sessions: int = 10):
+    def __init__(self, max_sessions: int = 10) -> None:
         self.max_sessions = max_sessions
         self.app_containers: dict[str, AppContainer] = {}
         self._lock = asyncio.Lock()
@@ -325,14 +333,14 @@ class AppSession:
 
     # -- Internal registration (called by ContainerBuilder.build()) ---------
 
-    def _register_container(self, session_id: str, container: AppContainer):
+    def _register_container(self, session_id: str, container: AppContainer) -> None:
         if len(self.app_containers) >= self.max_sessions:
             raise RuntimeError("Maximum number of app sessions reached.")
         self.app_containers[session_id] = container
 
     # -- Legacy-compatible convenience method (deprecated) -------------------
 
-    def add_app_container(self, session_id: str, container: AppContainer):
+    def add_app_container(self, session_id: str, container: AppContainer) -> None:
         """Deprecated — prefer ``session.add(server).with_...().build()``."""
         self._register_container(session_id, container)
 
@@ -341,7 +349,7 @@ class AppSession:
     def get_app_container(self, session_id: str) -> Optional[AppContainer]:
         return self.app_containers.get(session_id)
 
-    def remove_app_container(self, session_id: str):
+    def remove_app_container(self, session_id: str) -> None:
         if session_id in self.app_containers:
             if self.app_containers[session_id].is_running:
                 raise RuntimeError("Cannot remove a running session. Stop it first.")
@@ -353,8 +361,8 @@ class AppSession:
         self,
         session_id: str,
         keep_alive: bool = False,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         """Start a specific app container."""
         container = self.get_app_container(session_id)
         if not container:
@@ -364,7 +372,7 @@ class AppSession:
                 keep_alive=keep_alive,
             )
 
-    async def stop_session(self, session_id: str):
+    async def stop_session(self, session_id: str) -> None:
         """Stop a specific app container."""
         container = self.get_app_container(session_id)
         if not container:
@@ -372,7 +380,7 @@ class AppSession:
         if container.is_running:
             await container.stop()
 
-    async def start_all_sessions(self, keep_alive: bool = False):
+    async def start_all_sessions(self, keep_alive: bool = False) -> None:
         """Start all app containers.
 
         Each container's ``setup()`` is called sequentially.  When
@@ -390,7 +398,7 @@ class AppSession:
             first = next(iter(self.app_containers.values()))
             await first.loop_forever()
 
-    async def stop_all_sessions(self):
+    async def stop_all_sessions(self) -> None:
         """Stop all running app containers."""
         for container in self.app_containers.values():
             if container.is_running:

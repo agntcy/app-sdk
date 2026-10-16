@@ -9,15 +9,23 @@ from a2a.helpers import get_stream_response_text
 from a2a.types import (
     GetExtendedAgentCardRequest,
     StreamResponse,
+    Task,
     TaskState,
+    TaskStatusUpdateEvent,
 )
 from ioa_observe.sdk.tracing import session_start
 
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
+from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
+    A2AExperimentalClient,
+)
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+from agntcy_app_sdk.transport.base import BaseTransport
 from tests.e2e.conftest import (
     TRANSPORT_CONFIGS,
+    ClientConfigKwargs,
+    RunA2AServer,
     make_agent_card,
     make_send_request,
     make_streaming_send_request,
@@ -27,7 +35,7 @@ from tests.e2e.conftest import (
 class _RecordingInterceptor(ClientCallInterceptor):
     """Interceptor that records every ``before`` call for assertions."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls: list[str] = []
         self.after_calls: list[str] = []
 
@@ -50,7 +58,7 @@ pytest_plugins = "pytest_asyncio"
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_client(run_a2a_server, transport):
+async def test_client(run_a2a_server: RunA2AServer, transport: str) -> None:
     """Point-to-point A2A request over each transport."""
     endpoint = TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_client | {transport} | {endpoint} ---")
@@ -77,7 +85,7 @@ async def test_client(run_a2a_server, transport):
 
         session_start()
 
-        config_kwargs = {}
+        config_kwargs: ClientConfigKwargs = {}
         if transport == "SLIM":
             config_kwargs["slim_transport"] = transport_instance
         elif transport == "NATS":
@@ -118,7 +126,7 @@ async def test_client(run_a2a_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_broadcast(run_a2a_server, transport):
+async def test_broadcast(run_a2a_server: RunA2AServer, transport: str) -> None:
     """Fan-out A2A broadcast to multiple agents."""
     if transport == "A2A":
         pytest.skip("Broadcast not applicable for raw A2A transport.")
@@ -144,7 +152,7 @@ async def test_broadcast(run_a2a_server, transport):
     # Allow extra time for all agents to subscribe (CI runners can be slow)
     await asyncio.sleep(5)
 
-    config_kwargs = {}
+    config_kwargs: ClientConfigKwargs = {}
     if transport == "SLIM":
         config_kwargs["slim_transport"] = transport_instance
     elif transport == "NATS":
@@ -156,6 +164,7 @@ async def test_broadcast(run_a2a_server, transport):
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
+    assert isinstance(client, A2AExperimentalClient)
 
     request = make_send_request()
     responses = await client.broadcast_message(
@@ -181,7 +190,9 @@ async def test_broadcast(run_a2a_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_broadcast_streaming(run_a2a_server, transport):
+async def test_broadcast_streaming(
+    run_a2a_server: RunA2AServer, transport: str
+) -> None:
     """Fan-out A2A broadcast with streaming responses."""
     if transport == "A2A":
         pytest.skip("Broadcast not applicable for raw A2A transport.")
@@ -207,7 +218,7 @@ async def test_broadcast_streaming(run_a2a_server, transport):
     # Allow extra time for all agents to subscribe (CI runners can be slow)
     await asyncio.sleep(5)
 
-    config_kwargs = {}
+    config_kwargs: ClientConfigKwargs = {}
     if transport == "SLIM":
         config_kwargs["slim_transport"] = transport_instance
     elif transport == "NATS":
@@ -218,6 +229,7 @@ async def test_broadcast_streaming(run_a2a_server, transport):
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
+    assert isinstance(client, A2AExperimentalClient)
 
     request = make_send_request()
     responses = []
@@ -247,7 +259,7 @@ async def test_broadcast_streaming(run_a2a_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_groupchat(run_a2a_server, transport):
+async def test_groupchat(run_a2a_server: RunA2AServer, transport: str) -> None:
     """Multi-party group chat over SLIM transport."""
     if transport == "A2A":
         pytest.skip("Group chat not applicable for raw A2A transport.")
@@ -270,7 +282,7 @@ async def test_groupchat(run_a2a_server, transport):
         transport, endpoint=endpoint, name="default/default/default"
     )
 
-    config_kwargs = {}
+    config_kwargs: ClientConfigKwargs = {}
     if transport == "SLIM":
         config_kwargs["slim_transport"] = transport_instance
     elif transport == "NATS":
@@ -280,6 +292,7 @@ async def test_groupchat(run_a2a_server, transport):
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
+    assert isinstance(client, A2AExperimentalClient)
 
     request = make_send_request("This is a groupchat message")
     responses = await client.start_groupchat(
@@ -308,7 +321,9 @@ async def test_groupchat(run_a2a_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_groupchat_streaming(run_a2a_server, transport):
+async def test_groupchat_streaming(
+    run_a2a_server: RunA2AServer, transport: str
+) -> None:
     """Multi-party streaming group chat over SLIM transport."""
     if transport == "A2A":
         pytest.skip("Group chat not applicable for raw A2A transport.")
@@ -331,7 +346,7 @@ async def test_groupchat_streaming(run_a2a_server, transport):
         transport, endpoint=endpoint, name="default/default/default"
     )
 
-    config_kwargs = {}
+    config_kwargs: ClientConfigKwargs = {}
     if transport == "SLIM":
         config_kwargs["slim_transport"] = transport_instance
     elif transport == "NATS":
@@ -341,6 +356,7 @@ async def test_groupchat_streaming(run_a2a_server, transport):
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
+    assert isinstance(client, A2AExperimentalClient)
 
     request = make_send_request("This is a groupchat message")
     messages = []
@@ -373,7 +389,7 @@ async def test_groupchat_streaming(run_a2a_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_task_status_events(run_a2a_server, transport):
+async def test_task_status_events(run_a2a_server: RunA2AServer, transport: str) -> None:
     """Verify the client receives streaming TaskStatusUpdateEvent objects.
 
     The HelloWorldStreamingAgentExecutor produces:
@@ -387,7 +403,7 @@ async def test_task_status_events(run_a2a_server, transport):
     run_a2a_server(transport, endpoint, streaming=True)
     await asyncio.sleep(3)
 
-    transport_instance = None
+    transport_instance: BaseTransport | None = None
 
     if transport == "JSONRPC":
         # Native HTTP JSONRPC — no transport instance needed.
@@ -400,7 +416,7 @@ async def test_task_status_events(run_a2a_server, transport):
             transport, endpoint=endpoint, name="default/default/default"
         )
 
-        config_kwargs: dict = {"streaming": True}
+        config_kwargs: ClientConfigKwargs = {"streaming": True}
         if transport == "SLIM":
             config_kwargs["slim_transport"] = transport_instance
         elif transport == "NATS":
@@ -491,7 +507,9 @@ async def test_task_status_events(run_a2a_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_broadcast_task_status_events(run_a2a_server, transport):
+async def test_broadcast_task_status_events(
+    run_a2a_server: RunA2AServer, transport: str
+) -> None:
     """Verify broadcast_message_streaming yields TaskStatusUpdateEvent objects.
 
     Starts 3 streaming agents, broadcasts a message with
@@ -523,7 +541,7 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
     # Allow extra time for all agents to subscribe (CI runners can be slow)
     await asyncio.sleep(5)
 
-    config_kwargs: dict = {"streaming": True}
+    config_kwargs: ClientConfigKwargs = {"streaming": True}
     if transport == "SLIM":
         config_kwargs["slim_transport"] = transport_instance
     elif transport == "NATS":
@@ -533,6 +551,7 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
     a2a = factory.a2a(ClientConfig(**config_kwargs))
     client = await a2a.create(card)
     assert client is not None, "Client was not created"
+    assert isinstance(client, A2AExperimentalClient)
 
     # broadcast_message_streaming dispatches SendStreamingMessage on the
     # server -> streaming executor which emits status events.
@@ -541,8 +560,8 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
     import time
     from collections import defaultdict
 
-    status_events_received: list = []  # TaskStatusUpdateEvent protos
-    task_events_received: list = []  # Task protos
+    status_events_received: list[TaskStatusUpdateEvent] = []
+    task_events_received: list[Task] = []
     other_events: list[StreamResponse] = []
     start_time = time.monotonic()
 
@@ -591,7 +610,7 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
     # --- Assertion 4: at least one working event per agent ---
     working = TaskState.TASK_STATE_WORKING
     completed = TaskState.TASK_STATE_COMPLETED
-    working_by_ctx: dict[str, list] = defaultdict(list)
+    working_by_ctx: dict[str, list[TaskStatusUpdateEvent]] = defaultdict(list)
     for se in status_events_received:
         if se.status.state == working:
             working_by_ctx[se.context_id].append(se)
@@ -602,7 +621,7 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
     )
 
     # --- Assertion 5: exactly one completed (terminal) event per agent ---
-    completed_by_ctx: dict[str, list] = defaultdict(list)
+    completed_by_ctx: dict[str, list[TaskStatusUpdateEvent]] = defaultdict(list)
     for se in status_events_received:
         if se.status.state == completed:
             completed_by_ctx[se.context_id].append(se)
@@ -625,7 +644,7 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
         )
 
     # --- Assertion 7: per-agent ordering — working before completed ---
-    events_by_ctx: dict[str, list] = defaultdict(list)
+    events_by_ctx: dict[str, list[TaskStatusUpdateEvent]] = defaultdict(list)
     for se in status_events_received:
         events_by_ctx[se.context_id].append(se)
     for ctx_id, agent_events in events_by_ctx.items():
@@ -668,7 +687,7 @@ async def test_broadcast_task_status_events(run_a2a_server, transport):
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_interceptor(run_a2a_server, transport):
+async def test_interceptor(run_a2a_server: RunA2AServer, transport: str) -> None:
     """Interceptor middleware should be invoked on send_message for every transport."""
     endpoint = TRANSPORT_CONFIGS[transport]
     print(f"\n--- test_interceptor | {transport} | {endpoint} ---")
@@ -678,7 +697,7 @@ async def test_interceptor(run_a2a_server, transport):
 
     interceptor = _RecordingInterceptor()
     factory = AgntcyFactory(enable_tracing=True)
-    transport_instance = None
+    transport_instance: BaseTransport | None = None
 
     if transport == "JSONRPC":
         session_start()
@@ -694,7 +713,7 @@ async def test_interceptor(run_a2a_server, transport):
 
         session_start()
 
-        config_kwargs = {}
+        config_kwargs: ClientConfigKwargs = {}
         if transport == "SLIM":
             config_kwargs["slim_transport"] = transport_instance
         elif transport == "NATS":

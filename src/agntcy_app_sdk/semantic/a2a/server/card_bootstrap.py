@@ -54,7 +54,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.transport_types import (
@@ -69,6 +69,9 @@ if TYPE_CHECKING:
 
     from agntcy_app_sdk.app_sessions import AppSession
     from agntcy_app_sdk.factory import AgntcyFactory
+    from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
+    from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig
+    from agntcy_app_sdk.transport.base import BaseTransport
 
 logger = get_logger(__name__)
 
@@ -113,7 +116,7 @@ def _resolve_nats_endpoint() -> str:
     return os.environ.get("NATS_ENDPOINT", _NATS_DEFAULT_ENDPOINT)
 
 
-def _has_explicit_endpoint(parsed_url: object) -> bool:
+def _has_explicit_endpoint(parsed_url: ParseResult) -> bool:
     """Whether a NATS URL names a host rather than a bare topic.
 
     A port or a non-empty path means ``nats://host[:port]/topic``.
@@ -125,7 +128,7 @@ def _has_explicit_endpoint(parsed_url: object) -> bool:
         ``nats://host/topic``       →  port=None, path="/topic" → True
         ``nats://my_topic``         →  port=None, path=""       → False
     """
-    p = parsed_url  # type: ignore[assignment]
+    p = parsed_url
     return p.port is not None or bool(p.path and p.path != "/")
 
 
@@ -134,7 +137,7 @@ def _url_host(host: str) -> str:
     return f"[{host}]" if ":" in host else host
 
 
-def _slim_endpoint_and_name(parsed: object) -> tuple[str, str]:
+def _slim_endpoint_and_name(parsed: ParseResult) -> tuple[str, str]:
     """Split a SLIM URL into ``(endpoint, name)``.
 
     A port marks the dataplane address (``slim://host:46357/org/ns/agent``).
@@ -147,7 +150,7 @@ def _slim_endpoint_and_name(parsed: object) -> tuple[str, str]:
     ``urlparse`` lowercases the host, so the first segment of a port-less
     name is lowercased.
     """
-    p = parsed  # type: ignore[assignment]
+    p = parsed
     if p.port is not None:
         host = _url_host(p.hostname or "localhost")
         scheme = "https" if (p.scheme or "").lower() == "https" else "http"
@@ -212,7 +215,7 @@ def parse_interface_url(interface: AgentInterface) -> dict[str, str | int]:
     raise ValueError(f"Unknown transport type: {transport_type!r}")
 
 
-def _parse_slimrpc(url: str, parsed: object) -> dict[str, str | int]:
+def _parse_slimrpc(url: str, parsed: ParseResult) -> dict[str, str | int]:
     """Parse a slimrpc URL.
 
     Accepted formats::
@@ -228,7 +231,7 @@ def _parse_slimrpc(url: str, parsed: object) -> dict[str, str | int]:
     return {"endpoint": endpoint, "identity": identity}
 
 
-def _parse_slim_patterns(url: str, parsed: object) -> dict[str, str | int]:
+def _parse_slim_patterns(url: str, parsed: ParseResult) -> dict[str, str | int]:
     """Parse a slim/slimpatterns URL.
 
     Accepted formats::
@@ -246,7 +249,7 @@ def _parse_slim_patterns(url: str, parsed: object) -> dict[str, str | int]:
     return {"endpoint": endpoint, "topic": topic}
 
 
-def _parse_nats_patterns(url: str, parsed: object) -> dict[str, str | int]:
+def _parse_nats_patterns(url: str, parsed: ParseResult) -> dict[str, str | int]:
     """Parse a nats/natspatterns URL.
 
     Accepted formats::
@@ -254,7 +257,7 @@ def _parse_nats_patterns(url: str, parsed: object) -> dict[str, str | int]:
         nats://my_topic            → topic-only
         nats://host:4222/my_topic  → explicit endpoint
     """
-    p = parsed  # type: ignore[assignment]
+    p = parsed
 
     if _has_explicit_endpoint(p):
         # Explicit: nats://host[:port]/topic
@@ -327,7 +330,10 @@ class CardBuilder:
         self._agent_card = agent_card
         self._request_handler = request_handler
         self._factory: AgntcyFactory | None = None
-        self._overrides: dict[str, object] = {}  # canonical transport_type -> pre-built
+        # canonical transport_type -> pre-built
+        self._overrides: dict[
+            str, BaseTransport | A2ASlimRpcServerConfig | A2AServerConfig
+        ] = {}
         self._skips: set[str] = set()  # canonical transport_types to skip
         self._shared_secret: str | None = None
         self._public_url: str | None = None
@@ -340,7 +346,11 @@ class CardBuilder:
         self._factory = factory
         return self
 
-    def override(self, transport_type: str, target: object) -> CardBuilder:
+    def override(
+        self,
+        transport_type: str,
+        target: BaseTransport | A2ASlimRpcServerConfig | A2AServerConfig,
+    ) -> CardBuilder:
         """Provide a pre-built config or transport for a specific interface type.
 
         For ``slimrpc``: pass a pre-built ``A2ASlimRpcServerConfig``.
@@ -349,6 +359,17 @@ class CardBuilder:
         """
         self._overrides[_normalize_transport(transport_type)] = target
         return self
+
+    def _transport_override(self, transport_type: str) -> BaseTransport | None:
+        from agntcy_app_sdk.transport.base import BaseTransport
+
+        override = self._overrides.get(transport_type)
+        if override is not None and not isinstance(override, BaseTransport):
+            raise TypeError(
+                f".override({transport_type!r}) needs a BaseTransport, "
+                f"got {type(override).__name__}"
+            )
+        return override
 
     def skip(self, transport_type: str) -> CardBuilder:
         """Exclude an interface type from being started."""
@@ -638,6 +659,7 @@ class CardBuilder:
                 if override is not None:
                     session.add(override).with_session_id(session_id).build()
                 else:
+                    assert shared_secret is not None
                     config = A2ASlimRpcServerConfig(
                         agent_card=served_card,
                         request_handler=request_handler,
@@ -651,7 +673,7 @@ class CardBuilder:
                     session.add(config).with_session_id(session_id).build()
 
             elif transport_type == "slimpatterns":
-                override = self._overrides.get("slimpatterns")
+                override = self._transport_override("slimpatterns")
                 session_id = f"slim-{i}"
                 # Use the topic from the interface URL as the SLIM routable
                 # name — in SLIM, the transport name IS the routing address
@@ -710,7 +732,7 @@ class CardBuilder:
                 )
 
             elif transport_type == "natspatterns":
-                override = self._overrides.get("natspatterns")
+                override = self._transport_override("natspatterns")
                 session_id = f"nats-{i}"
 
                 log = logger.bind(transport=transport_type, session_id=session_id)

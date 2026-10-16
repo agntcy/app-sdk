@@ -10,8 +10,12 @@ import tempfile
 import time
 import uuid
 import warnings
+import weakref
+from collections.abc import Iterator
+from typing import NotRequired, Protocol, TypedDict
 
 import pytest
+from a2a.client import Client
 from a2a.helpers import new_text_message
 from a2a.types import (
     AgentCapabilities,
@@ -23,6 +27,7 @@ from a2a.types import (
 )
 
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
+from agntcy_app_sdk.transport.base import BaseTransport
 from tests.server.a2a_card_bootstrap_server import (
     get_slim_shared_secret,
     nats_card_endpoint,
@@ -47,6 +52,62 @@ PREFERRED_TRANSPORT: dict[str, str] = {
     "JSONRPC": InterfaceTransport.JSONRPC,
     "SLIMRPC": InterfaceTransport.SLIM_RPC,
 }
+
+
+class ClientConfigKwargs(TypedDict, total=False):
+    """Keyword arguments the tests pass to the SDK ``ClientConfig``."""
+
+    streaming: bool
+    slim_transport: BaseTransport
+    nats_transport: BaseTransport
+
+
+class SlimRpcProbe(TypedDict):
+    """Readiness probe settings for :func:`_spawn_server`."""
+
+    agent_name: str
+    secret: str
+    streaming: NotRequired[bool]
+    expected: NotRequired[str | None]
+
+
+class RunA2AServer(Protocol):
+    def __call__(
+        self,
+        transport: str,
+        endpoint: str,
+        version: str = ...,
+        name: str = ...,
+        topic: str = ...,
+        streaming: bool = ...,
+    ) -> subprocess.Popen[bytes]: ...
+
+
+class RunCardBootstrapServer(Protocol):
+    def __call__(
+        self,
+        transport: str,
+        endpoint: str,
+        version: str = ...,
+        name: str = ...,
+        port: int = ...,
+    ) -> subprocess.Popen[bytes]: ...
+
+
+class RunMCPServer(Protocol):
+    def __call__(
+        self, transport: str, endpoint: str, name: str = ...
+    ) -> subprocess.Popen[bytes]: ...
+
+
+class RunA2ASlimRpcServer(Protocol):
+    def __call__(
+        self,
+        endpoint: str,
+        name: str = ...,
+        version: str = ...,
+        streaming: bool = ...,
+    ) -> subprocess.Popen[bytes]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +206,7 @@ def make_agent_card(
 # ---------------------------------------------------------------------------
 
 
-def _server_log_tail(log_path, limit=2000):
+def _server_log_tail(log_path: str, limit: int = 2000) -> str:
     """Return the last *limit* characters of a server log, if it can be read."""
     try:
         with open(log_path, errors="replace") as fh:
@@ -155,15 +216,15 @@ def _server_log_tail(log_path, limit=2000):
 
 
 def _probe_slimrpc(
-    proc,
-    log_path,
-    endpoint,
-    agent_name,
-    secret,
-    streaming,
-    timeout,
-    expected=None,
-):
+    proc: subprocess.Popen[bytes],
+    log_path: str,
+    endpoint: str,
+    agent_name: str,
+    secret: str,
+    streaming: bool,
+    timeout: float,
+    expected: str | None = None,
+) -> None:
     """Block until *agent_name* answers a real SlimRPC ``send_message``.
 
     A reply is accepted when it is non-empty and, if *expected* is given,
@@ -182,7 +243,9 @@ def _probe_slimrpc(
     import asyncio
     import threading
 
+    from a2a.client import ClientConfig as A2AClientConfig
     from a2a.client import ClientFactory, minimal_agent_card
+    from a2a.client.transports.base import ClientTransport
     from a2a.helpers import get_stream_response_text
     from slima2a import setup_slim_client
     from slima2a.client_transport import (
@@ -193,9 +256,17 @@ def _probe_slimrpc(
         slimrpc_channel_factory,
     )
 
-    holder: dict = {}
+    holder: dict[str, Exception] = {}
 
-    async def _roundtrip(client) -> str:
+    def _srpc_transport(
+        card: AgentCard, url: str, config: A2AClientConfig
+    ) -> ClientTransport:
+        assert isinstance(config, SRPCClientConfig)
+        transport = SRPCTransport.create(card, url, config)
+        assert isinstance(transport, SRPCTransport)
+        return transport
+
+    async def _roundtrip(client: Client) -> str:
         request = SendMessageRequest(
             message=new_text_message("ready?", role=Role.ROLE_USER)
         )
@@ -232,7 +303,7 @@ def _probe_slimrpc(
                         slimrpc_channel_factory=slimrpc_channel_factory(_app, conn_id),
                     )
                     client_factory = ClientFactory(client_config)
-                    client_factory.register("slimrpc", SRPCTransport.create)  # type: ignore[arg-type]
+                    client_factory.register("slimrpc", _srpc_transport)
                     client = client_factory.create(card=card)
                     try:
                         output = await asyncio.wait_for(_roundtrip(client), timeout=5)
@@ -290,6 +361,10 @@ def _probe_slimrpc(
 # the id is visible to ``ps`` / ``pgrep``:  pgrep -fl e2e_server_id=
 _SERVER_ID_OPTION = "e2e_server_id"
 
+_SERVER_IDS: weakref.WeakKeyDictionary[subprocess.Popen[bytes], str] = (
+    weakref.WeakKeyDictionary()
+)
+
 
 def _server_id() -> str:
     """Unique, human-readable id: ``e2e-<current test name>-<random>``."""
@@ -300,14 +375,14 @@ def _server_id() -> str:
 
 
 def _spawn_server(
-    procs,
-    script,
-    transport,
-    endpoint,
-    extra_args=None,
-    slimrpc_probe=None,
-    ready_timeout=60,
-):
+    procs: list[subprocess.Popen[bytes]],
+    script: str,
+    transport: str | None,
+    endpoint: str,
+    extra_args: list[str] | None = None,
+    slimrpc_probe: SlimRpcProbe | None = None,
+    ready_timeout: float = 60,
+) -> subprocess.Popen[bytes]:
     """Launch a test server subprocess and track it for cleanup.
 
     If *slimrpc_probe* is given, block until a SlimRPC ``send_message`` to
@@ -336,7 +411,7 @@ def _spawn_server(
 
     if slimrpc_probe is None:
         proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
-        proc.e2e_server_id = server_id  # type: ignore[attr-defined]
+        _SERVER_IDS[proc] = server_id
         procs.append(proc)
         time.sleep(1)
         return proc
@@ -349,7 +424,7 @@ def _spawn_server(
             stdout=log_file,
             stderr=subprocess.STDOUT,
         )
-    proc.e2e_server_id = server_id  # type: ignore[attr-defined]
+    _SERVER_IDS[proc] = server_id
     procs.append(proc)
     try:
         _probe_slimrpc(
@@ -368,7 +443,7 @@ def _spawn_server(
     return proc
 
 
-def _wait_for_port(host, port, timeout=30):
+def _wait_for_port(host: str, port: int, timeout: float = 30) -> bool:
     """Block until a TCP port is accepting connections."""
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -380,7 +455,7 @@ def _wait_for_port(host, port, timeout=30):
     raise TimeoutError(f"Port {host}:{port} not ready after {timeout}s")
 
 
-def _signal_group(proc, sig):
+def _signal_group(proc: subprocess.Popen[bytes], sig: signal.Signals) -> None:
     """Send *sig* to *proc*'s whole process group (ignoring an empty group).
 
     Servers are started with ``os.setsid``, so the group id equals the pid of
@@ -394,7 +469,7 @@ def _signal_group(proc, sig):
         pass
 
 
-def _group_alive(proc) -> bool:
+def _group_alive(proc: subprocess.Popen[bytes]) -> bool:
     """True while any process of *proc*'s group is still running."""
     try:
         os.killpg(proc.pid, 0)
@@ -405,7 +480,7 @@ def _group_alive(proc) -> bool:
     return True
 
 
-def _cleanup_procs(procs, grace=15):
+def _cleanup_procs(procs: list[subprocess.Popen[bytes]], grace: float = 15) -> None:
     """Terminate all tracked subprocesses and wait until they are gone.
 
     Waiting matters: a server that is still shutting down keeps its SLIM
@@ -419,7 +494,7 @@ def _cleanup_procs(procs, grace=15):
     for proc in procs:
         _signal_group(proc, signal.SIGTERM)
     for proc in procs:
-        server_id = getattr(proc, "e2e_server_id", f"pid-{proc.pid}")
+        server_id = _SERVER_IDS.get(proc, f"pid-{proc.pid}")
         try:
             proc.wait(timeout=grace)
         except subprocess.TimeoutExpired:
@@ -444,7 +519,7 @@ def _cleanup_procs(procs, grace=15):
             _signal_group(proc, signal.SIGKILL)
 
 
-def pytest_sessionfinish(session, exitstatus):
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Report any test server still running when the session ends.
 
     Looks for the ``-X e2e_server_id=<id>`` tag every spawned server carries,
@@ -475,7 +550,7 @@ def pytest_sessionfinish(session, exitstatus):
     write(f"  inspect: pgrep -fl {_SERVER_ID_OPTION}=")
 
 
-def _reset_slim_globals():
+def _reset_slim_globals() -> None:
     """Reset global SLIM state so the next test gets a fresh instance.
 
     slim_bindings caches the event loop set via ``uniffi_set_event_loop``.
@@ -535,17 +610,17 @@ def _reset_slim_globals():
 
 
 @pytest.fixture
-def run_a2a_server():
-    procs = []
+def run_a2a_server() -> Iterator[RunA2AServer]:
+    procs: list[subprocess.Popen[bytes]] = []
 
     def _run(
-        transport,
-        endpoint,
-        version="1.0.0",
-        name="default/default/Hello_World_Agent_1.0.0",
-        topic="",
-        streaming=False,
-    ):
+        transport: str,
+        endpoint: str,
+        version: str = "1.0.0",
+        name: str = "default/default/Hello_World_Agent_1.0.0",
+        topic: str = "",
+        streaming: bool = False,
+    ) -> subprocess.Popen[bytes]:
         extra_args = [
             "--name",
             name,
@@ -576,17 +651,17 @@ def run_a2a_server():
 
 
 @pytest.fixture
-def run_card_bootstrap_server():
+def run_card_bootstrap_server() -> Iterator[RunCardBootstrapServer]:
     """Spawn an A2A server that uses add_a2a_card() for bootstrap."""
-    procs = []
+    procs: list[subprocess.Popen[bytes]] = []
 
     def _run(
-        transport,
-        endpoint,
-        version="1.0.0",
-        name="default/default/Hello_World_Agent_1.0.0",
-        port=9999,
-    ):
+        transport: str,
+        endpoint: str,
+        version: str = "1.0.0",
+        name: str = "default/default/Hello_World_Agent_1.0.0",
+        port: int = 9999,
+    ) -> subprocess.Popen[bytes]:
         extra_args = [
             "--name",
             name,
@@ -622,10 +697,12 @@ def run_card_bootstrap_server():
 
 
 @pytest.fixture
-def run_mcp_server():
-    procs = []
+def run_mcp_server() -> Iterator[RunMCPServer]:
+    procs: list[subprocess.Popen[bytes]] = []
 
-    def _run(transport, endpoint, name="default/default/mcp"):
+    def _run(
+        transport: str, endpoint: str, name: str = "default/default/mcp"
+    ) -> subprocess.Popen[bytes]:
         return _spawn_server(
             procs,
             "tests/server/mcp_server.py",
@@ -639,10 +716,12 @@ def run_mcp_server():
 
 
 @pytest.fixture
-def run_fast_mcp_server():
-    procs = []
+def run_fast_mcp_server() -> Iterator[RunMCPServer]:
+    procs: list[subprocess.Popen[bytes]] = []
 
-    def _run(transport, endpoint, name="default/default/fastmcp"):
+    def _run(
+        transport: str, endpoint: str, name: str = "default/default/fastmcp"
+    ) -> subprocess.Popen[bytes]:
         proc = _spawn_server(
             procs,
             "tests/server/fast_mcp_server.py",
@@ -659,22 +738,22 @@ def run_fast_mcp_server():
 
 
 @pytest.fixture(autouse=True)
-def reset_slim_state_before_test():
+def reset_slim_state_before_test() -> Iterator[None]:
     """Reset SLIM globals before each test to ensure clean state."""
     _reset_slim_globals()
     yield
 
 
 @pytest.fixture
-def run_a2a_slimrpc_server():
-    procs = []
+def run_a2a_slimrpc_server() -> Iterator[RunA2ASlimRpcServer]:
+    procs: list[subprocess.Popen[bytes]] = []
 
     def _run(
-        endpoint,
-        name="default/default/Hello_World_Agent_1.0.0",
-        version="1.0.0",
-        streaming=False,
-    ):
+        endpoint: str,
+        name: str = "default/default/Hello_World_Agent_1.0.0",
+        version: str = "1.0.0",
+        streaming: bool = False,
+    ) -> subprocess.Popen[bytes]:
         extra_args = [
             "--name",
             name,

@@ -22,10 +22,19 @@ from __future__ import annotations
 import importlib
 import os
 import threading
+from typing import Any, Protocol, cast
 
 from agntcy_app_sdk.common.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+class _Instrumentor(Protocol):
+    @property
+    def is_instrumented_by_opentelemetry(self) -> bool: ...
+
+    def instrument(self, **kwargs: Any) -> None: ...
+
 
 SLIM_INSTRUMENTOR = "ioa_observe.sdk.instrumentations.slim:SLIMInstrumentor"
 NATS_INSTRUMENTOR = "ioa_observe.sdk.instrumentations.nats:NATSInstrumentor"
@@ -78,7 +87,9 @@ def _observe_state() -> str:
 def _install(component: str, instrumentor: str) -> None:
     module_name, class_name = instrumentor.split(":")
     try:
-        instance = getattr(importlib.import_module(module_name), class_name)()
+        instance = cast(
+            _Instrumentor, getattr(importlib.import_module(module_name), class_name)()
+        )
         instance.instrument()
         installed = instance.is_instrumented_by_opentelemetry
     except Exception:
@@ -199,10 +210,10 @@ def _hook_observe_init() -> None:
     if getattr(current, "_agntcy_flushes_pending", False):
         return
 
-    def init(*args, **kwargs):
+    def init(*args: Any, **kwargs: Any) -> object | None:
         result = current(*args, **kwargs)
         instrument_pending()
         return result
 
-    init._agntcy_flushes_pending = True  # type: ignore[attr-defined]
-    Observe.init = staticmethod(init)
+    setattr(init, "_agntcy_flushes_pending", True)
+    setattr(Observe, "init", staticmethod(init))

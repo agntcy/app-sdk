@@ -32,13 +32,13 @@ def _mls_settings(enabled: bool) -> MlsSettings | None:
 
 
 class SessionManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self._sessions: Dict[str, Session] = {}
-        self._slim = None
-        self._slim_connection_id = None
+        self._slim: slim_bindings.App | None = None
+        self._slim_connection_id: int | None = None
         self._lock = asyncio.Lock()
 
-    def set_slim(self, slim: slim_bindings.App, slim_connection_id: int):
+    def set_slim(self, slim: slim_bindings.App, slim_connection_id: int) -> None:
         """
         Set the SLIM client instance and SLIM connection id for the session manager.
         """
@@ -51,7 +51,7 @@ class SessionManager:
         max_retries: int = 5,
         timeout: datetime.timedelta = datetime.timedelta(seconds=5),
         mls_enabled: bool = True,
-    ):
+    ) -> Session:
         """
         Create a new point-to-point session with predefined configuration.
         """
@@ -81,7 +81,7 @@ class SessionManager:
         max_retries: int = 20,
         timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         mls_enabled: bool = True,
-    ):
+    ) -> tuple[str, Session]:
         """
         Create a new group broadcast session with predefined configuration.
         """
@@ -120,6 +120,8 @@ class SessionManager:
                     logger.debug(
                         f"Inviting {invitee} to session {group_session.session_id()}"
                     )
+                    if self._slim_connection_id is None:
+                        raise ValueError("SLIM connection id is not set")
                     await self._slim.set_route_async(invitee, self._slim_connection_id)
                     invite_handle = await group_session.invite_async(invitee)
                     await (
@@ -135,7 +137,7 @@ class SessionManager:
             self._sessions[session_key] = group_session
             return session_key, group_session
 
-    async def close_session(self, session: Session):
+    async def close_session(self, session: Session) -> None:
         """
         Close and remove a session.
         Args:
@@ -166,7 +168,7 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Error deleting session {session_id}: {e}")
 
-    async def _local_cache_cleanup(self, session_id: int):
+    async def _local_cache_cleanup(self, session_id: int) -> None:
         """
         Perform local cleanup of a session without attempting to close it on the SLIM client.
         """
@@ -186,13 +188,12 @@ class SessionManager:
                     f"local cache since this session was not found."
                 )
 
-    def session_details(self, session_key: str):
+    def session_details(self, session_key: str) -> dict[str, int] | None:
         """
         Retrieve details of a session by its key.
         """
         session = self._sessions.get(session_key)
         if session:
-            print(dir(session))
             return {
                 "id": session.session_id(),
             }

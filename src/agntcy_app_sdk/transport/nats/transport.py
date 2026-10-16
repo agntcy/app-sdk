@@ -7,9 +7,11 @@ import warnings
 import nats
 from identityservice.sdk import IdentityServiceSdk
 from nats.aio.client import Client as NATS
+from nats.aio.msg import Msg
+from nats.aio.subscription import Subscription
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
-from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.transport.base import BaseTransport, accepts_publish_fn
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.common.tracing import (
     NATS_INSTRUMENTOR,
@@ -32,8 +34,11 @@ class NatsTransport(BaseTransport):
     """Registry key used by :class:`AgntcyFactory`."""
 
     def __init__(
-        self, client: Optional[NATS] = None, endpoint: Optional[str] = None, **kwargs
-    ):
+        self,
+        client: Optional[NATS] = None,
+        endpoint: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the NATS transport with the given endpoint and client.
         :param endpoint: The NATS server endpoint.
@@ -47,8 +52,9 @@ class NatsTransport(BaseTransport):
 
         self._nc = client
         self.endpoint = endpoint
-        self._callback = None
-        self.subscriptions = []
+        self._callback: Callable[..., Awaitable[Any]] | None = None
+        self._callback_takes_publish_fn = False
+        self.subscriptions: list[Subscription] = []
         self._ephemeral_subs: dict[str, Any] = {}
 
         # connection options
@@ -77,12 +83,12 @@ class NatsTransport(BaseTransport):
     # -----------------------------------------------------------------------------
     # Point-to-Point
     # -----------------------------------------------------------------------------
-    async def send(self, recipient: str, message: Message, **kwargs) -> None:
+    async def send(self, recipient: str, message: Message, **kwargs: Any) -> None:
         """
         Send a message to a single recipient without expecting a response.
         """
         recipient = self.santize_topic(recipient)
-        logger.debug(f"Publishing {message.payload} to topic: {recipient}")
+        logger.debug(f"Publishing {message.payload!r} to topic: {recipient}")
 
         if self._nc is None:
             raise RuntimeError(
@@ -95,23 +101,28 @@ class NatsTransport(BaseTransport):
         )
 
     async def request(
-        self, recipient: str, message: Message, timeout: int = 60, **kwargs
+        self, recipient: str, message: Message, timeout: int = 60, **kwargs: Any
     ) -> Message:
         """
         Send a message to a recipient and await a single response.
         """
         recipient = self.santize_topic(recipient)
         logger.debug(
-            f"Requesting with payload: {message.payload} to topic: {recipient}"
+            f"Requesting with payload: {message.payload!r} to topic: {recipient}"
         )
+
+        if self._nc is None:
+            raise RuntimeError(
+                "NATS client is not connected, please call setup() before subscribing"
+            )
 
         response = await self._nc.request(
             recipient, message.serialize(), timeout=timeout, **kwargs
         )
-        return Message.deserialize(response.data) if response else None
+        return Message.deserialize(response.data)
 
     async def request_stream(
-        self, recipient: str, message: Message, timeout: int = 90, **kwargs
+        self, recipient: str, message: Message, timeout: int = 90, **kwargs: Any
     ) -> AsyncIterator[Message]:
         """
         Send a request and receive a continuous stream of responses.
@@ -126,7 +137,7 @@ class NatsTransport(BaseTransport):
     # Fan-Out / Publish-Subscribe
     # -----------------------------------------------------------------------------
 
-    async def publish(self, topic: str, message: Message, **kwargs) -> None:
+    async def publish(self, topic: str, message: Message, **kwargs: Any) -> None:
         """
         Publish a message to all subscribers of the topic.
         """
@@ -138,9 +149,9 @@ class NatsTransport(BaseTransport):
         topic: str,
         message: Message,
         recipients: List[str],
-        message_limit: int = None,
+        message_limit: int | None = None,
         timeout: int = 60,
-        **kwargs,
+        **kwargs: Any,
     ) -> List[Message]:
         """
         Publish a message and collect responses from multiple subscribers.
@@ -167,8 +178,8 @@ class NatsTransport(BaseTransport):
         message: Message,
         recipients: List[str],
         timeout: int = 60,
-        message_limit: int = None,
-        **kwargs,
+        message_limit: int | None = None,
+        **kwargs: Any,
     ) -> AsyncIterator[Message]:
         """
         Publish a message and yield responses from multiple subscribers as they arrive.
@@ -209,14 +220,14 @@ class NatsTransport(BaseTransport):
                 f"Publishing to: {publish_topic} and receiving from: {reply_topic}"
             )
 
-            response_queue: asyncio.Queue = asyncio.Queue()
+            reply_queue: asyncio.Queue[Message] = asyncio.Queue()
             effective_limit = (
                 message_limit if message_limit is not None else float("inf")
             )
 
-            async def _single_response_handler(nats_msg) -> None:
+            async def _single_response_handler(nats_msg: Msg) -> None:
                 msg = Message.deserialize(nats_msg.data)
-                await response_queue.put(msg)
+                await reply_queue.put(msg)
 
             sub = None
             try:
@@ -226,9 +237,7 @@ class NatsTransport(BaseTransport):
                 received = 0
                 while received < effective_limit:
                     try:
-                        msg = await asyncio.wait_for(
-                            response_queue.get(), timeout=timeout
-                        )
+                        msg = await asyncio.wait_for(reply_queue.get(), timeout=timeout)
                         received += 1
                         logger.debug(f"Received {received} response")
                         yield msg
@@ -264,20 +273,21 @@ class NatsTransport(BaseTransport):
             f"reply={reply_topic}, ack={ack_topic}"
         )
 
-        response_queue: asyncio.Queue = asyncio.Queue()
-        ack_queue: asyncio.Queue = asyncio.Queue()
+        response_queue: asyncio.Queue[Message] = asyncio.Queue()
+        ack_queue: asyncio.Queue[Message] = asyncio.Queue()
 
-        async def _response_handler(nats_msg) -> None:
+        async def _response_handler(nats_msg: Msg) -> None:
             msg = Message.deserialize(nats_msg.data)
             await response_queue.put(msg)
 
-        async def _ack_handler(nats_msg) -> None:
+        async def _ack_handler(nats_msg: Msg) -> None:
             msg = Message.deserialize(nats_msg.data)
             if msg.headers.get("x-nats-invite-type") == "invite_ack":
                 await ack_queue.put(msg)
 
         reply_sub = None
         ack_sub = None
+        invites_sent = False
         try:
             reply_sub = await self._nc.subscribe(reply_topic, cb=_response_handler)
             ack_sub = await self._nc.subscribe(ack_topic, cb=_ack_handler)
@@ -294,6 +304,7 @@ class NatsTransport(BaseTransport):
                     },
                 )
                 await self.publish(self.santize_topic(recipient), invite)
+                invites_sent = True
 
             # Phase 3: Wait for ACKs
             acks_received = 0
@@ -326,18 +337,21 @@ class NatsTransport(BaseTransport):
                         f"collected {received} response(s)"
                     )
                     break
-
-            # Phase 6: Teardown
-            teardown = Message(
-                type="teardown",
-                payload=b"",
-                headers={
-                    "x-nats-invite-type": "teardown",
-                    "x-nats-broadcast-topic": ephemeral_topic,
-                },
-            )
-            await self.publish(ephemeral_topic, teardown)
         finally:
+            # Phase 6: Teardown, also when the caller stops iterating early
+            if invites_sent:
+                teardown = Message(
+                    type="teardown",
+                    payload=b"",
+                    headers={
+                        "x-nats-invite-type": "teardown",
+                        "x-nats-broadcast-topic": ephemeral_topic,
+                    },
+                )
+                try:
+                    await self.publish(ephemeral_topic, teardown)
+                except Exception as e:
+                    logger.error(f"Error publishing broadcast teardown: {e}")
             if reply_sub:
                 await reply_sub.unsubscribe()
             if ack_sub:
@@ -353,7 +367,7 @@ class NatsTransport(BaseTransport):
         participants: List[str],
         init_message: Message,
         end_message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> List[Message]:
         """
         Create a new conversation including the given participants.
@@ -366,24 +380,25 @@ class NatsTransport(BaseTransport):
         participants: List[str],
         init_message: Message,
         end_message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> AsyncIterator[Message]:
         """
         Create a new streaming conversation including the given participants.
         """
         raise NotImplementedError
+        yield  # makes this an async generator, so the error surfaces during iteration
 
     # -----------------------------------------------------------------------------
     # Utilities and setup methods
     # -----------------------------------------------------------------------------
 
     @classmethod
-    def from_client(cls, client: NATS) -> "NatsTransport":
+    def from_client(cls, client: NATS, name: str | None = None) -> "NatsTransport":
         # Optionally validate client
         return cls(client=client)
 
     @classmethod
-    def from_config(cls, endpoint: str, **kwargs) -> "NatsTransport":
+    def from_config(cls, endpoint: str, **kwargs: Any) -> "NatsTransport":
         """
         Create a NATS transport instance from a configuration.
         :param gateway_endpoint: The NATS server endpoint.
@@ -400,16 +415,21 @@ class NatsTransport(BaseTransport):
         sanitized_topic = topic.replace(" ", "_")
         return sanitized_topic
 
-    async def setup(self):
+    async def setup(self) -> None:
         instrument_if_ready("NatsTransport", NATS_INSTRUMENTOR)
         if self._nc is None or not self._nc.is_connected:
             await self._connect()
 
-    async def _connect(self):
+    async def _connect(self) -> None:
         """Connect to the NATS server."""
         if self._nc is not None and self._nc.is_connected:
             logger.debug("Already connected to NATS server")
             return
+        if not self.endpoint:
+            raise RuntimeError(
+                "NATS client is not connected and no endpoint was given to "
+                "reconnect; pass a connected client or an endpoint."
+            )
 
         self._nc = await nats.connect(
             self.endpoint,
@@ -447,6 +467,7 @@ class NatsTransport(BaseTransport):
     def set_callback(self, callback: Callable[..., Awaitable[Any]]) -> None:
         """Set the message handler function."""
         self._callback = callback
+        self._callback_takes_publish_fn = accepts_publish_fn(callback)
 
     async def subscribe(self, topic: str) -> None:
         """Subscribe to a topic with a callback."""
@@ -474,6 +495,10 @@ class NatsTransport(BaseTransport):
         ack_topic = message.headers["x-nats-ack-topic"]
 
         # Subscribe to the ephemeral broadcast topic using existing _message_handler
+        if self._nc is None:
+            raise RuntimeError(
+                "NATS client is not connected, please call setup() before subscribing"
+            )
         sub = await self._nc.subscribe(broadcast_topic, cb=self._message_handler)
         self._ephemeral_subs[broadcast_topic] = sub
 
@@ -493,7 +518,7 @@ class NatsTransport(BaseTransport):
         if sub:
             await sub.unsubscribe()
 
-    async def _message_handler(self, nats_msg):
+    async def _message_handler(self, nats_msg: Msg) -> None:
         """
         Internal NATS message handler that deserializes the message and invokes the user-defined callback.
         """
@@ -515,41 +540,40 @@ class NatsTransport(BaseTransport):
         # Process the message with the registered handler
         if self._callback:
             # Build publish_fn for intermediate streaming messages
-            async def _publish_intermediate(intermediate_msg):
+            async def _publish_intermediate(intermediate_msg: Message) -> None:
                 if message.reply_to:
                     try:
                         await self.publish(message.reply_to, intermediate_msg)
                     except Exception as e:
                         logger.error(f"Error publishing intermediate message: {e}")
 
-            try:
+            if self._callback_takes_publish_fn:
                 resp = await self._callback(message, publish_fn=_publish_intermediate)
-            except TypeError:
-                # Fallback: callback does not accept publish_fn (e.g. tests
-                # or custom handlers).  Call without the extra kwarg.
+            else:
                 resp = await self._callback(message)
 
-            if not resp and message.reply_to:
+            if not message.reply_to:
+                return
+            if not resp:
                 logger.warning("Handler returned no response for message.")
-                err_msg = Message(
+                resp = Message(
                     type="error",
                     payload="No response from handler",
                     reply_to=message.reply_to,
                 )
-                await self.publish(message.reply_to, err_msg)
-
             # publish final response to the reply topic
             await self.publish(message.reply_to, resp)
 
     # Callbacks and error handling
-    async def error_cb(self, e):
+    async def error_cb(self, e: Exception) -> None:
         logger.error(f"NATS error: {e}")
 
-    async def closed_cb(self):
+    async def closed_cb(self) -> None:
         logger.warning("Connection to NATS is closed.")
 
-    async def disconnected_cb(self):
+    async def disconnected_cb(self) -> None:
         logger.warning("Disconnected from NATS.")
 
-    async def reconnected_cb(self):
-        logger.debug(f"Reconnected to NATS at {self._nc.connected_url.netloc}...")
+    async def reconnected_cb(self) -> None:
+        url = self._nc.connected_url if self._nc is not None else None
+        logger.debug(f"Reconnected to NATS at {url.netloc if url else 'unknown'}...")

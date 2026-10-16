@@ -14,12 +14,15 @@
 import asyncio
 import json
 import warnings
+from collections.abc import AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 from a2a.client.client import ClientCallContext
 from a2a.helpers import get_stream_response_text, new_text_message
+from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
@@ -49,16 +52,21 @@ from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
 )
 from agntcy_app_sdk.semantic.a2a.transport_types import SENDER_HEADER
 from agntcy_app_sdk.semantic.message import Message
+from agntcy_app_sdk.transport.base import BaseTransport
 from tests.server.agent_executor import (
     HelloWorldAgentExecutor,
     HelloWorldStreamingAgentExecutor,
 )
 
+if TYPE_CHECKING:
+    from agntcy_app_sdk.app_sessions import AppSession
+    from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
+
 pytest_plugins = "pytest_asyncio"
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _cancel_background_tasks():
+async def _cancel_background_tasks() -> AsyncIterator[None]:
     """Cancel a2a-sdk per-request background tasks before the loop closes.
 
     ``DefaultRequestHandler`` keeps ``ActiveTask`` producer/consumer tasks
@@ -119,21 +127,21 @@ def _user_request(text: str = "hi") -> SendMessageRequest:
 
 
 class TestA2AServerConfig:
-    def test_holds_card_and_handler(self):
+    def test_holds_card_and_handler(self) -> None:
         config = _config()
         assert config.agent_card.name == "Hello World Agent"
         assert config.request_handler is not None
         assert config.rpc_url == "/"
         assert config.enable_v0_3_compat is False
 
-    def test_is_exported_from_package_roots(self):
+    def test_is_exported_from_package_roots(self) -> None:
         import agntcy_app_sdk
         import agntcy_app_sdk.semantic.a2a as a2a_pkg
 
         assert agntcy_app_sdk.A2AServerConfig is A2AServerConfig
         assert a2a_pkg.A2AServerConfig is A2AServerConfig
 
-    def test_build_app_serves_agent_card(self):
+    def test_build_app_serves_agent_card(self) -> None:
         card = _card([AgentInterface(protocol_binding="JSONRPC", url="http://h:1/")])
         app = _config(card).build_app()
 
@@ -144,7 +152,7 @@ class TestA2AServerConfig:
         assert body["name"] == "Hello World Agent"
         assert body["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
 
-    def test_build_app_serves_jsonrpc_send_message(self):
+    def test_build_app_serves_jsonrpc_send_message(self) -> None:
         app = _config().build_app()
         payload = {
             "jsonrpc": "2.0",
@@ -169,7 +177,7 @@ class TestA2AServerConfig:
         assert body["result"]["message"]["parts"][0]["text"] == "Hello from agent"
 
     @pytest.mark.asyncio
-    async def test_card_modifier_is_applied_to_served_card(self):
+    async def test_card_modifier_is_applied_to_served_card(self) -> None:
         async def modifier(card: AgentCard) -> AgentCard:
             card.description = "modified"
             return card
@@ -183,14 +191,14 @@ class TestA2AServerConfig:
 
 
 class TestDeprecatedA2AStarletteApplication:
-    def test_emits_deprecation_warning(self):
+    def test_emits_deprecation_warning(self) -> None:
         config = _config()
         with pytest.warns(DeprecationWarning, match="A2AServerConfig"):
             A2AStarletteApplication(
                 agent_card=config.agent_card, http_handler=config.request_handler
             )
 
-    def test_behaves_as_server_config(self):
+    def test_behaves_as_server_config(self) -> None:
         config = _config()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
@@ -202,7 +210,7 @@ class TestDeprecatedA2AStarletteApplication:
         assert shim.agent_card is config.agent_card
         assert shim.request_handler is config.request_handler
 
-    def test_legacy_attribute_and_method_aliases(self):
+    def test_legacy_attribute_and_method_aliases(self) -> None:
         config = _config()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
@@ -214,7 +222,7 @@ class TestDeprecatedA2AStarletteApplication:
         response = TestClient(shim.build()).get("/.well-known/agent-card.json")
         assert response.status_code == 200
 
-    def test_session_accepts_the_shim(self):
+    def test_session_accepts_the_shim(self) -> None:
         """``session.add(A2AStarletteApplication(...))`` keeps working."""
         from agntcy_app_sdk.factory import AgntcyFactory
 
@@ -250,7 +258,9 @@ def _mock_transport(kind: str) -> MagicMock:
 
 class TestInterfaceDeclaration:
     @pytest.mark.asyncio
-    async def test_handler_declares_missing_patterns_interface_as_preferred(self):
+    async def test_handler_declares_missing_patterns_interface_as_preferred(
+        self,
+    ) -> None:
         card = _card([AgentInterface(protocol_binding="JSONRPC", url="http://h:1/")])
         handler = A2AExperimentalServerHandler(
             _config(card), transport=_mock_transport("SLIM"), topic="my_topic"
@@ -266,7 +276,7 @@ class TestInterfaceDeclaration:
         assert preferred_transport(card) == "slimpatterns"
 
     @pytest.mark.asyncio
-    async def test_handler_leaves_author_declared_interface_untouched(self):
+    async def test_handler_leaves_author_declared_interface_untouched(self) -> None:
         """URL (explicit endpoint) and position (author's preference) are kept."""
         card = _card(
             [
@@ -290,7 +300,7 @@ class TestInterfaceDeclaration:
         ]
 
     @pytest.mark.asyncio
-    async def test_nats_transport_declares_natspatterns(self):
+    async def test_nats_transport_declares_natspatterns(self) -> None:
         card = _card()
         handler = A2AExperimentalServerHandler(
             _config(card), transport=_mock_transport("NATS"), topic="t"
@@ -302,7 +312,7 @@ class TestInterfaceDeclaration:
             ("natspatterns", "nats://t")
         ]
 
-    def test_create_client_card_makes_patterns_interface_preferred(self):
+    def test_create_client_card_makes_patterns_interface_preferred(self) -> None:
         base = _card([AgentInterface(protocol_binding="JSONRPC", url="http://h:1/")])
 
         client_card = A2AExperimentalServer.create_client_card(
@@ -314,7 +324,7 @@ class TestInterfaceDeclaration:
         # the base card is not mutated
         assert [i.protocol_binding for i in base.supported_interfaces] == ["JSONRPC"]
 
-    def test_create_client_card_replaces_declared_url(self):
+    def test_create_client_card_replaces_declared_url(self) -> None:
         base = _card(
             [AgentInterface(protocol_binding="slimpatterns", url="slim://old")]
         )
@@ -327,7 +337,7 @@ class TestInterfaceDeclaration:
             (i.protocol_binding, i.url) for i in client_card.supported_interfaces
         ] == [("slimpatterns", "slim://new")]
 
-    def test_create_client_card_derives_topic_from_card_name(self):
+    def test_create_client_card_derives_topic_from_card_name(self) -> None:
         client_card = A2AExperimentalServer.create_client_card(_card(), "NATS")
 
         assert preferred_transport(client_card) == "natspatterns"
@@ -349,7 +359,7 @@ class TestDefaultTopicSelection:
     is another transport must never supply the topic for a pub/sub handler
     (it would collide with the RPC server's name)."""
 
-    def test_handler_ignores_leading_slimrpc_interface(self):
+    def test_handler_ignores_leading_slimrpc_interface(self) -> None:
         card = _card(list(_RPC_FIRST_CARD_INTERFACES))
 
         handler = A2AExperimentalServerHandler(
@@ -358,7 +368,9 @@ class TestDefaultTopicSelection:
 
         assert handler._topic == "org/ns/pubsub_agent"
 
-    def test_handler_without_pubsub_interface_does_not_use_slimrpc_identity(self):
+    def test_handler_without_pubsub_interface_does_not_use_slimrpc_identity(
+        self,
+    ) -> None:
         card = _card(
             [AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/rpc_agent")]
         )
@@ -369,7 +381,7 @@ class TestDefaultTopicSelection:
 
         assert handler._topic == "Hello_World_Agent_1.0.0"
 
-    def test_handler_picks_interface_matching_its_own_transport(self):
+    def test_handler_picks_interface_matching_its_own_transport(self) -> None:
         card = _card(
             [
                 AgentInterface(protocol_binding="natspatterns", url="nats://nats_t"),
@@ -387,8 +399,8 @@ class TestDefaultTopicSelection:
         assert slim._topic == "slim_t"
         assert nats._topic == "nats_t"
 
-    def test_handler_without_transport_uses_preferred_interface(self):
-        """Binding unknown without a transport: keep the preferred-interface lookup."""
+    def test_handler_without_transport_uses_preferred_interface(self) -> None:
+        """Binding unknown without a transport: the first pub/sub interface wins."""
         card = _card(
             [AgentInterface(protocol_binding="slimpatterns", url="slim://first")]
         )
@@ -397,7 +409,67 @@ class TestDefaultTopicSelection:
 
         assert handler._topic == "first"
 
-    def test_handler_explicit_topic_is_not_overridden(self):
+    def test_handler_without_transport_skips_bare_slimrpc_identity(self) -> None:
+        card = _card(
+            [
+                AgentInterface(protocol_binding="slimrpc", url="org/ns/rpc_agent"),
+                AgentInterface(protocol_binding="slimpatterns", url="slim://t"),
+            ]
+        )
+
+        handler = A2AExperimentalServerHandler(_config(card))
+
+        assert handler._topic == "t"
+
+    def test_handler_without_transport_skips_slimrpc_url_identity(self) -> None:
+        card = _card(list(_RPC_FIRST_CARD_INTERFACES))
+
+        handler = A2AExperimentalServerHandler(_config(card))
+
+        assert handler._topic == "org/ns/pubsub_agent"
+
+    def test_handler_without_transport_only_slimrpc_falls_back_to_name(
+        self,
+    ) -> None:
+        card = _card(
+            [AgentInterface(protocol_binding="slimrpc", url="org/ns/rpc_agent")]
+        )
+
+        handler = A2AExperimentalServerHandler(_config(card))
+
+        assert handler._topic == "Hello_World_Agent_1.0.0"
+
+    def test_handler_without_transport_uses_first_pubsub_interface_in_card_order(
+        self,
+    ) -> None:
+        card = _card(
+            [
+                AgentInterface(protocol_binding="JSONRPC", url="http://h:1/"),
+                AgentInterface(protocol_binding="natspatterns", url="nats://n"),
+                AgentInterface(protocol_binding="slimpatterns", url="slim://s"),
+            ]
+        )
+
+        handler = A2AExperimentalServerHandler(_config(card))
+
+        assert handler._topic == "n"
+
+    def test_handler_with_unmapped_transport_skips_slimrpc_identity(self) -> None:
+        card = _card(
+            [
+                AgentInterface(protocol_binding="slimrpc", url="org/ns/rpc_agent"),
+                AgentInterface(protocol_binding="slimpatterns", url="slim://t"),
+            ]
+        )
+
+        handler = A2AExperimentalServerHandler(
+            _config(card), transport=_mock_transport("STREAMABLE_HTTP")
+        )
+
+        assert handler._topic == "t"
+        assert handler._protocol._sender_id == "t"
+
+    def test_handler_explicit_topic_is_not_overridden(self) -> None:
         card = _card(list(_RPC_FIRST_CARD_INTERFACES))
 
         handler = A2AExperimentalServerHandler(
@@ -406,14 +478,16 @@ class TestDefaultTopicSelection:
 
         assert handler._topic == "explicit"
 
-    def test_create_transport_uri_ignores_leading_slimrpc_interface(self):
+    def test_create_transport_uri_ignores_leading_slimrpc_interface(self) -> None:
         card = _card(list(_RPC_FIRST_CARD_INTERFACES))
 
         uri = A2AExperimentalServer.create_transport_uri(card, "SLIM")
 
         assert uri == "slim://org/ns/pubsub_agent"
 
-    def test_create_transport_uri_without_pubsub_interface_falls_back_to_name(self):
+    def test_create_transport_uri_without_pubsub_interface_falls_back_to_name(
+        self,
+    ) -> None:
         card = _card(
             [AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/rpc_agent")]
         )
@@ -422,7 +496,7 @@ class TestDefaultTopicSelection:
 
         assert uri == "slim://Hello_World_Agent_1.0.0"
 
-    def test_create_transport_uri_picks_interface_matching_transport(self):
+    def test_create_transport_uri_picks_interface_matching_transport(self) -> None:
         card = _card(
             [
                 AgentInterface(protocol_binding="natspatterns", url="nats://nats_t"),
@@ -437,7 +511,7 @@ class TestDefaultTopicSelection:
             A2AExperimentalServer.create_transport_uri(card, "NATS") == "nats://nats_t"
         )
 
-    def test_create_client_card_ignores_leading_slimrpc_interface(self):
+    def test_create_client_card_ignores_leading_slimrpc_interface(self) -> None:
         card = _card(list(_RPC_FIRST_CARD_INTERFACES))
 
         client_card = A2AExperimentalServer.create_client_card(card, "SLIM")
@@ -455,7 +529,9 @@ class _LoopbackTransport:
     """Minimal ``BaseTransport`` stand-in wiring client calls straight into an
     ``A2AExperimentalServer`` — the same path SLIM / NATS would carry."""
 
-    def __init__(self, server: A2AExperimentalServer):
+    gather_stream: Callable[..., AsyncIterator[Message]]
+
+    def __init__(self, server: A2AExperimentalServer) -> None:
         self._server = server
         self.sent: list[Message] = []
 
@@ -468,11 +544,13 @@ class _LoopbackTransport:
     async def close(self) -> None:  # pragma: no cover - trivial
         pass
 
-    async def request(self, topic: str, message: Message, **_kwargs) -> Message:
+    async def request(self, topic: str, message: Message, **_kwargs: Any) -> Message:
         self.sent.append(message)
         return await self._server.handle_message(message)
 
-    async def request_stream(self, topic: str, message: Message, **_kwargs):
+    async def request_stream(
+        self, topic: str, message: Message, **_kwargs: Any
+    ) -> AsyncIterator[Message]:
         self.sent.append(message)
         published: list[Message] = []
 
@@ -491,14 +569,16 @@ def _loopback(streaming: bool) -> tuple[A2AExperimentalServer, _LoopbackTranspor
     return server, _LoopbackTransport(server)
 
 
-async def _loopback_client(streaming: bool):
+async def _loopback_client(
+    streaming: bool,
+) -> tuple[A2AExperimentalClient, _LoopbackTransport]:
     _, transport = _loopback(streaming)
     card = _card(
         [AgentInterface(protocol_binding="slimpatterns", url="slim://agent")],
         streaming=streaming,
     )
     factory = A2AClientFactory(
-        ClientConfig(slim_transport=transport, streaming=streaming)  # type: ignore[arg-type]
+        ClientConfig(slim_transport=cast(BaseTransport, transport), streaming=streaming)
     )
     client = await factory.create(card)
     assert isinstance(client, A2AExperimentalClient)
@@ -507,7 +587,7 @@ async def _loopback_client(streaming: bool):
 
 class TestPatternsBridgeLoopback:
     @pytest.mark.asyncio
-    async def test_unary_send_message_round_trip(self):
+    async def test_unary_send_message_round_trip(self) -> None:
         client, _ = await _loopback_client(streaming=False)
 
         events = [e async for e in client.send_message(_user_request())]
@@ -517,7 +597,7 @@ class TestPatternsBridgeLoopback:
         assert get_stream_response_text(events[0]) == "Hello from agent"
 
     @pytest.mark.asyncio
-    async def test_streaming_send_message_yields_task_then_status_updates(self):
+    async def test_streaming_send_message_yields_task_then_status_updates(self) -> None:
         client, _ = await _loopback_client(streaming=True)
 
         events = [e async for e in client.send_message(_user_request())]
@@ -537,7 +617,7 @@ class TestPatternsBridgeLoopback:
         assert "Hello" in streamed_text
 
     @pytest.mark.asyncio
-    async def test_get_task_after_streaming_run(self):
+    async def test_get_task_after_streaming_run(self) -> None:
         client, _ = await _loopback_client(streaming=True)
         events = [e async for e in client.send_message(_user_request())]
         task_id = events[0].task.id
@@ -548,26 +628,27 @@ class TestPatternsBridgeLoopback:
         assert task.status.state == TaskState.TASK_STATE_COMPLETED
 
     @pytest.mark.asyncio
-    async def test_unknown_task_raises_task_not_found(self):
+    async def test_unknown_task_raises_task_not_found(self) -> None:
         client, _ = await _loopback_client(streaming=False)
 
         with pytest.raises(TaskNotFoundError):
             await client.get_task(GetTaskRequest(id="does-not-exist"))
 
     @pytest.mark.asyncio
-    async def test_request_headers_reach_the_server_context(self):
+    async def test_request_headers_reach_the_server_context(self) -> None:
         server, transport = _loopback(streaming=False)
-        seen: dict = {}
+        seen: dict[str, Any] = {}
+        assert server._handler is not None
         original = server._handler.on_message_send
 
-        async def _spy(request, context):
+        async def _spy(request: SendMessageRequest, context: ServerCallContext) -> Any:
             seen.update(context.state["headers"])
             seen["method"] = context.state["method"]
             return await original(request, context)
 
         server._handler.on_message_send = _spy
         pct = PatternsClientTransport(
-            transport,  # type: ignore[arg-type]
+            cast(BaseTransport, transport),
             _card([AgentInterface(protocol_binding="slimpatterns", url="slim://a")]),
             "a",
         )
@@ -581,13 +662,15 @@ class TestPatternsBridgeLoopback:
         assert seen["method"] == "SendMessage"
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_round_trip(self):
+    async def test_broadcast_message_round_trip(self) -> None:
         client, transport = await _loopback_client(streaming=False)
 
-        async def _gather_stream(topic, message, **_kwargs):
+        async def _gather_stream(
+            topic: str, message: Message, **_kwargs: Any
+        ) -> AsyncIterator[Message]:
             yield await transport.request(topic, message)
 
-        transport.gather_stream = _gather_stream  # type: ignore[attr-defined]
+        transport.gather_stream = _gather_stream
 
         responses = await client.broadcast_message(_user_request(), recipients=["x"])
 
@@ -599,28 +682,31 @@ class TestPatternsBridgeProtocol:
     """Direct ``handle_message`` checks: JSON-RPC envelope handling."""
 
     @staticmethod
-    async def _call(server: A2AExperimentalServer, body) -> dict:
+    async def _call(
+        server: A2AExperimentalServer, body: bytes | dict[str, Any]
+    ) -> dict[str, Any]:
         payload = body if isinstance(body, bytes) else json.dumps(body).encode()
         reply = await server.handle_message(
             Message(type="A2ARequest", payload=payload, headers={})
         )
         assert reply.type == "A2AResponse"
-        return json.loads(reply.payload)
+        rpc: dict[str, Any] = json.loads(reply.payload)
+        return rpc
 
     @pytest.mark.asyncio
-    async def test_invalid_json_is_a_parse_error(self):
+    async def test_invalid_json_is_a_parse_error(self) -> None:
         server, _ = _loopback(streaming=False)
         reply = await self._call(server, b"{not json")
         assert reply["error"]["code"] == -32700
 
     @pytest.mark.asyncio
-    async def test_missing_method_is_invalid_request(self):
+    async def test_missing_method_is_invalid_request(self) -> None:
         server, _ = _loopback(streaming=False)
         reply = await self._call(server, {"jsonrpc": "2.0", "id": "1"})
         assert reply["error"]["code"] == -32600
 
     @pytest.mark.asyncio
-    async def test_unknown_method_is_method_not_found(self):
+    async def test_unknown_method_is_method_not_found(self) -> None:
         server, _ = _loopback(streaming=False)
         reply = await self._call(
             server, {"jsonrpc": "2.0", "id": "1", "method": "message/send"}
@@ -629,7 +715,7 @@ class TestPatternsBridgeProtocol:
         assert reply["id"] == "1"
 
     @pytest.mark.asyncio
-    async def test_invalid_params_is_invalid_params(self):
+    async def test_invalid_params_is_invalid_params(self) -> None:
         server, _ = _loopback(streaming=False)
         reply = await self._call(
             server,
@@ -643,7 +729,7 @@ class TestPatternsBridgeProtocol:
         assert reply["error"]["code"] == -32602
 
     @pytest.mark.asyncio
-    async def test_relayed_response_is_rewrapped_as_send_message(self):
+    async def test_relayed_response_is_rewrapped_as_send_message(self) -> None:
         """A JSON-RPC *response* carrying a message (relay) is accepted as input."""
         server, _ = _loopback(streaming=False)
         relayed = {
@@ -664,7 +750,7 @@ class TestPatternsBridgeProtocol:
         assert reply["result"]["message"]["parts"][0]["text"] == "Hello from agent"
 
     @pytest.mark.asyncio
-    async def test_streaming_publishes_intermediates_then_final(self):
+    async def test_streaming_publishes_intermediates_then_final(self) -> None:
         server, _ = _loopback(streaming=True)
         published: list[Message] = []
 
@@ -698,7 +784,7 @@ class TestPatternsBridgeProtocol:
         assert {json.loads(m.payload)["id"] for m in published} == {"s1"}
 
     @pytest.mark.asyncio
-    async def test_streaming_without_publish_fn_returns_last_item(self):
+    async def test_streaming_without_publish_fn_returns_last_item(self) -> None:
         server, _ = _loopback(streaming=True)
 
         reply = await self._call(
@@ -731,7 +817,7 @@ class TestPatternsBridgeProtocol:
         )
 
     @pytest.mark.asyncio
-    async def test_reply_carries_sender_header(self):
+    async def test_reply_carries_sender_header(self) -> None:
         server = A2AExperimentalServer(sender_id="org/ns/agent_a")
         server.bind_server(_config())
 
@@ -740,7 +826,7 @@ class TestPatternsBridgeProtocol:
         assert reply.headers[SENDER_HEADER] == "org/ns/agent_a"
 
     @pytest.mark.asyncio
-    async def test_error_reply_carries_sender_header(self):
+    async def test_error_reply_carries_sender_header(self) -> None:
         server = A2AExperimentalServer(sender_id="agent_a")
         server.bind_server(_config())
 
@@ -751,7 +837,7 @@ class TestPatternsBridgeProtocol:
         assert reply.headers[SENDER_HEADER] == "agent_a"
 
     @pytest.mark.asyncio
-    async def test_streaming_replies_carry_sender_header(self):
+    async def test_streaming_replies_carry_sender_header(self) -> None:
         server = A2AExperimentalServer(sender_id="agent_s")
         server.bind_server(_config(streaming=True))
         published: list[Message] = []
@@ -768,14 +854,14 @@ class TestPatternsBridgeProtocol:
         assert reply.headers[SENDER_HEADER] == "agent_s"
 
     @pytest.mark.asyncio
-    async def test_without_sender_id_no_header_is_added(self):
+    async def test_without_sender_id_no_header_is_added(self) -> None:
         server, _ = _loopback(streaming=False)
 
         reply = await server.handle_message(self._send())
 
         assert SENDER_HEADER not in (reply.headers or {})
 
-    def test_handler_stamps_its_topic(self):
+    def test_handler_stamps_its_topic(self) -> None:
         handler = A2AExperimentalServerHandler(
             _config(), transport=_mock_transport("NATS"), topic="agent_t"
         )
@@ -799,7 +885,7 @@ class TestPatternsBridgeIdentityAuth:
         return server
 
     @staticmethod
-    def _request(headers: dict) -> Message:
+    def _request(headers: dict[str, str]) -> Message:
         return Message(
             type="A2ARequest",
             payload=json.dumps(
@@ -813,9 +899,10 @@ class TestPatternsBridgeIdentityAuth:
             headers=headers,
         )
 
-    def test_configure_stamps_bearer_scheme_on_card(self):
+    def test_configure_stamps_bearer_scheme_on_card(self) -> None:
         server = self._server_with_auth(True)
-        card = server._server.agent_card  # type: ignore[union-attr]
+        assert server._server is not None
+        card = server._server.agent_card
 
         scheme = card.security_schemes["IdentityServiceAuthScheme"]
         assert scheme.http_auth_security_scheme.scheme == "bearer"
@@ -823,7 +910,7 @@ class TestPatternsBridgeIdentityAuth:
         assert len(card.security_requirements) == 1
 
     @pytest.mark.asyncio
-    async def test_missing_authorization_header_is_rejected(self):
+    async def test_missing_authorization_header_is_rejected(self) -> None:
         server = self._server_with_auth(True)
 
         reply = await server.handle_message(self._request({}))
@@ -832,7 +919,7 @@ class TestPatternsBridgeIdentityAuth:
         assert "Authorization" in error["data"] or "Authorization" in str(error)
 
     @pytest.mark.asyncio
-    async def test_invalid_token_is_rejected(self):
+    async def test_invalid_token_is_rejected(self) -> None:
         server = self._server_with_auth(False)
 
         reply = await server.handle_message(
@@ -842,7 +929,7 @@ class TestPatternsBridgeIdentityAuth:
         assert "error" in json.loads(reply.payload)
 
     @pytest.mark.asyncio
-    async def test_valid_token_is_accepted(self):
+    async def test_valid_token_is_accepted(self) -> None:
         server = self._server_with_auth(True)
 
         reply = await server.handle_message(
@@ -856,7 +943,9 @@ class TestJsonRpcPublicUrl:
     """HTTP JSON-RPC serving: how the card learns its public JSONRPC URL."""
 
     @staticmethod
-    def _handler(card: AgentCard, public_url: str | None = None):
+    def _handler(
+        card: AgentCard, public_url: str | None = None
+    ) -> "A2AJsonRpcServerHandler":
         from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
 
         return A2AJsonRpcServerHandler(
@@ -867,14 +956,14 @@ class TestJsonRpcPublicUrl:
     def _pairs(card: AgentCard) -> list[tuple[str, str]]:
         return [(i.protocol_binding, i.url) for i in card.supported_interfaces]
 
-    def test_public_url_is_appended_when_card_has_no_jsonrpc(self):
+    def test_public_url_is_appended_when_card_has_no_jsonrpc(self) -> None:
         card = _card()
 
         self._handler(card, "https://agent.example.com")._declare_jsonrpc_interface()
 
         assert self._pairs(card) == [("JSONRPC", "https://agent.example.com")]
 
-    def test_public_url_is_appended_never_prepended(self):
+    def test_public_url_is_appended_never_prepended(self) -> None:
         """Other transports (and the author's order) stay preferred."""
         card = _card([AgentInterface(protocol_binding="slimpatterns", url="slim://a")])
 
@@ -886,7 +975,7 @@ class TestJsonRpcPublicUrl:
         ]
         assert preferred_transport(card) == "slimpatterns"
 
-    def test_declared_jsonrpc_interface_is_left_untouched(self):
+    def test_declared_jsonrpc_interface_is_left_untouched(self) -> None:
         card = _card(
             [
                 AgentInterface(
@@ -903,14 +992,14 @@ class TestJsonRpcPublicUrl:
             ("slimpatterns", "slim://a"),
         ]
 
-    def test_bind_address_is_never_written_to_the_card(self):
+    def test_bind_address_is_never_written_to_the_card(self) -> None:
         card = _card()
 
         self._handler(card)._declare_jsonrpc_interface()
 
         assert self._pairs(card) == []
 
-    def test_warns_when_no_interface_and_no_public_url(self):
+    def test_warns_when_no_interface_and_no_public_url(self) -> None:
         from agntcy_app_sdk.semantic.a2a.server import jsonrpc
 
         with pytest.MonkeyPatch.context() as mp:
@@ -921,7 +1010,7 @@ class TestJsonRpcPublicUrl:
         warning.assert_called_once()
         assert "with_public_url" in warning.call_args.args[0]
 
-    def test_no_warning_when_public_url_given(self):
+    def test_no_warning_when_public_url_given(self) -> None:
         from agntcy_app_sdk.semantic.a2a.server import jsonrpc
 
         with pytest.MonkeyPatch.context() as mp:
@@ -932,7 +1021,7 @@ class TestJsonRpcPublicUrl:
         warning.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_served_agent_card_includes_public_url(self):
+    async def test_served_agent_card_includes_public_url(self) -> None:
         """End to end: the HTTP-served card advertises the appended interface."""
         card = _card()
         handler = self._handler(card, "https://agent.example.com")
@@ -952,12 +1041,14 @@ class TestJsonRpcPublicUrl:
 
 class TestBuilderPublicUrl:
     @staticmethod
-    def _session():
+    def _session() -> "AppSession":
         from agntcy_app_sdk.factory import AgntcyFactory
 
         return AgntcyFactory().create_app_session(max_sessions=1)
 
-    def test_with_public_url_reaches_the_http_handler(self):
+    def test_with_public_url_reaches_the_http_handler(self) -> None:
+        from agntcy_app_sdk.semantic.a2a.server.jsonrpc import A2AJsonRpcServerHandler
+
         session = self._session()
 
         container = (
@@ -968,16 +1059,17 @@ class TestBuilderPublicUrl:
             .build()
         )
 
+        assert isinstance(container.handler, A2AJsonRpcServerHandler)
         assert container.handler._public_url == "https://agent.example.com"
 
     @pytest.mark.parametrize("url", ["agent.example.com", "slim://x", "ftp://x"])
-    def test_with_public_url_rejects_non_http_urls(self, url):
+    def test_with_public_url_rejects_non_http_urls(self, url: str) -> None:
         builder = self._session().add(_config())
 
         with pytest.raises(ValueError, match="http"):
             builder.with_public_url(url)
 
-    def test_public_url_is_ignored_with_a_transport(self):
+    def test_public_url_is_ignored_with_a_transport(self) -> None:
         from agntcy_app_sdk import app_sessions
 
         session = self._session()
@@ -994,7 +1086,7 @@ class TestBuilderPublicUrl:
 
 class TestClientErrorForEmptyCard:
     @pytest.mark.asyncio
-    async def test_create_with_no_interfaces_explains_the_fix(self):
+    async def test_create_with_no_interfaces_explains_the_fix(self) -> None:
         factory = A2AClientFactory(ClientConfig())
 
         with pytest.raises(ValueError, match="No compatible transports") as exc:
@@ -1002,3 +1094,16 @@ class TestClientErrorForEmptyCard:
 
         assert "supported_interfaces" in str(exc.value)
         assert "connect(url)" in str(exc.value)
+
+
+def test_authenticate_without_identity_sdk_denies() -> None:
+    server = A2AExperimentalServer(sender_id="agent")
+    server._auth_enabled = True
+    message = Message(
+        type="request", payload=b"", headers={"Authorization": "Bearer token"}
+    )
+
+    ok, reason, _ = server._authenticate(message)
+
+    assert not ok
+    assert reason == "Identity service is not configured"

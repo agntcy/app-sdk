@@ -217,7 +217,7 @@ class AgentDirectory(BaseAgentDirectory):
     async def delete_agent_record(self, ref: Any, *args: Any, **kwargs: Any) -> None:
         raise NotImplementedError("delete_agent_record is not yet implemented.")
 
-    async def list_agent_records(self, *args: Any, **kwargs: Any) -> list:
+    async def list_agent_records(self, *args: Any, **kwargs: Any) -> list[Any]:
         raise NotImplementedError("list_agent_records is not yet implemented.")
 
     async def sign_agent_record(

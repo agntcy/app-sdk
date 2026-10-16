@@ -48,58 +48,60 @@ class BaseAgentDirectory(ABC):
         self,
         record: Any,
         visibility: RecordVisibility = RecordVisibility.PUBLIC,
-        *args,
-        **kwargs,
-    ):
+        *args: Any,
+        **kwargs: Any,
+    ) -> str | None:
         """Push an agent record in the directory."""
         pass
 
     @abstractmethod
-    async def pull_agent_record(self, ref: Any, *args, **kwargs):
+    async def pull_agent_record(self, ref: Any, *args: Any, **kwargs: Any) -> Any:
         """Pull an agent record from the directory."""
         pass
 
     @abstractmethod
-    async def delete_agent_record(self, ref: Any, *args, **kwargs):
+    async def delete_agent_record(self, ref: Any, *args: Any, **kwargs: Any) -> None:
         """Delete an agent record from the directory."""
         pass
 
     ###########################################################################
     # Search API
     @abstractmethod
-    async def list_agent_records(self, *args, **kwargs) -> list:
+    async def list_agent_records(self, *args: Any, **kwargs: Any) -> list[Any]:
         """List all agent records in the directory."""
         pass
 
     @abstractmethod
     async def search_agent_records(
-        self, query: Any, limit: int = 1, *args, **kwargs
-    ) -> list:
+        self, query: Any, limit: int = 1, *args: Any, **kwargs: Any
+    ) -> list[Any]:
         """Search for agent records matching the query."""
         pass
 
     ###########################################################################
     # Signing and Verification API
     @abstractmethod
-    async def sign_agent_record(self, record_ref: Any, provider: Any, *args, **kwargs):
+    async def sign_agent_record(
+        self, record_ref: Any, provider: Any, *args: Any, **kwargs: Any
+    ) -> None:
         """Sign an agent record with a given key, oidc"""
         pass
 
     @abstractmethod
-    async def verify_agent_record(self, record_ref: Any):
+    async def verify_agent_record(self, record_ref: Any) -> None:
         """Verify signature"""
         pass
 
     ###########################################################################
     # Publishing API
     @abstractmethod
-    async def get_record_visibility(self, ref: Any, *args, **kwargs) -> bool:
+    async def get_record_visibility(self, ref: Any, *args: Any, **kwargs: Any) -> bool:
         """Check if an agent record is publicly visible."""
         pass
 
     @abstractmethod
     async def set_record_visibility(
-        self, ref: Any, visibility: RecordVisibility, *args, **kwargs
+        self, ref: Any, visibility: RecordVisibility, *args: Any, **kwargs: Any
     ) -> bool:
         """Check if an agent record is publicly visible."""
         pass
