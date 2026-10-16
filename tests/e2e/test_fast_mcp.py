@@ -6,7 +6,7 @@ import asyncio
 import pytest
 
 from agntcy_app_sdk.factory import AgntcyFactory
-from tests.e2e.conftest import TRANSPORT_CONFIGS
+from tests.e2e.conftest import TRANSPORT_CONFIGS, RunMCPServer
 
 pytest_plugins = "pytest_asyncio"
 
@@ -20,7 +20,7 @@ pytest_plugins = "pytest_asyncio"
     "transport", list(TRANSPORT_CONFIGS.keys()), ids=lambda val: val
 )
 @pytest.mark.asyncio
-async def test_client(run_fast_mcp_server, transport):
+async def test_client(run_fast_mcp_server: RunMCPServer, transport: str) -> None:
     """FastMCP tool call with resource/template listing over each transport."""
     if transport == "JSONRPC":
         pytest.skip("FastMCP not applicable for JSONRPC transport.")

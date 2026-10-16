@@ -31,12 +31,14 @@ import tempfile
 import textwrap
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import cast
 from pathlib import Path
 
 import pytest
 import slim_bindings
-from a2a.client import minimal_agent_card
+from a2a.client import Client, minimal_agent_card
 from a2a.helpers import get_stream_response_text, new_text_message
 from a2a.types import Role, SendMessageRequest
 
@@ -166,11 +168,12 @@ class TlsDataplane:
 def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+        port: int = sock.getsockname()[1]
+        return port
 
 
 @pytest.fixture(scope="module")
-def tls_dataplane():
+def tls_dataplane() -> Iterator[TlsDataplane]:
     """A SLIM dataplane that serves TLS with a throwaway certificate."""
     if shutil.which("docker") is None:
         pytest.skip("docker is not available")
@@ -282,14 +285,16 @@ def _attempt(
 
 
 class TestTlsConnectionMatrix:
-    def test_untrusted_certificate_is_rejected(self, tls_dataplane):
+    def test_untrusted_certificate_is_rejected(
+        self, tls_dataplane: TlsDataplane
+    ) -> None:
         """``tls_insecure=False`` verifies: an unknown issuer never connects."""
         out = _attempt(tls_dataplane.https, insecure=False)
 
         assert "OUTCOME TIMEOUT" in out
         assert "UnknownIssuer" in out
 
-    def test_trusted_certificate_connects(self, tls_dataplane):
+    def test_trusted_certificate_connects(self, tls_dataplane: TlsDataplane) -> None:
         """Same client, same URL: only the trust differs, and it connects."""
         out = _attempt(
             tls_dataplane.https, insecure=False, trust=tls_dataplane.cert_path
@@ -297,7 +302,9 @@ class TestTlsConnectionMatrix:
 
         assert "OUTCOME CONNECTED" in out
 
-    def test_insecure_flag_is_plaintext_even_for_https_url(self, tls_dataplane):
+    def test_insecure_flag_is_plaintext_even_for_https_url(
+        self, tls_dataplane: TlsDataplane
+    ) -> None:
         """``tls_insecure=True`` wins over an ``https://`` URL, so it cannot
         talk to a TLS-only dataplane, even one whose certificate it trusts."""
         out = _attempt(
@@ -307,7 +314,9 @@ class TestTlsConnectionMatrix:
         assert "OUTCOME ERROR" in out
         assert "FRAME_SIZE_ERROR" in out  # plaintext HTTP/2 hitting a TLS port
 
-    def test_tls_over_http_url_is_refused_before_connecting(self, tls_dataplane):
+    def test_tls_over_http_url_is_refused_before_connecting(
+        self, tls_dataplane: TlsDataplane
+    ) -> None:
         """``tls_insecure=False`` with ``http://`` is refused outright, so it
         can never end up as a silent plaintext connection."""
         out = _attempt(
@@ -318,7 +327,9 @@ class TestTlsConnectionMatrix:
         assert "https://" in out
         assert "FRAME_SIZE_ERROR" not in out  # it never dialed
 
-    def test_canary_slim_bindings_still_goes_plaintext_over_http(self, tls_dataplane):
+    def test_canary_slim_bindings_still_goes_plaintext_over_http(
+        self, tls_dataplane: TlsDataplane
+    ) -> None:
         """Why the refusal above exists.  With slim-bindings' own secure
         config (no SDK guard), an ``http://`` URL on the same trusted
         dataplane fails with the plaintext error although ``https://`` works.
@@ -342,13 +353,15 @@ class TestTlsConnectionMatrix:
 
 @pytest.mark.asyncio
 async def test_slim_transport_connects_over_tls_and_guards_the_shared_connection(
-    tls_dataplane, monkeypatch
-):
+    tls_dataplane: TlsDataplane, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A real ``SLIMTransport`` opens a verified TLS connection, and a second
     transport asking for the other setting is refused instead of silently
     reusing it."""
     monkeypatch.setenv("SSL_CERT_FILE", str(tls_dataplane.cert_path))
-    slim_bindings.uniffi_set_event_loop(asyncio.get_running_loop())
+    slim_bindings.uniffi_set_event_loop(
+        cast(asyncio.BaseEventLoop, asyncio.get_running_loop())
+    )
 
     secure = SLIMTransport(
         routable_name="default/default/tls_secure",
@@ -372,7 +385,7 @@ async def test_slim_transport_connects_over_tls_and_guards_the_shared_connection
         await secure.close()
 
 
-async def _collect_text(client, request: SendMessageRequest) -> str:
+async def _collect_text(client: Client, request: SendMessageRequest) -> str:
     output = ""
     async for event in client.send_message(request):
         output += get_stream_response_text(event)
@@ -380,7 +393,9 @@ async def _collect_text(client, request: SendMessageRequest) -> str:
 
 
 @pytest.mark.asyncio
-async def test_slimrpc_round_trip_over_tls(tls_dataplane, monkeypatch):
+async def test_slimrpc_round_trip_over_tls(
+    tls_dataplane: TlsDataplane, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """SlimRPC server and client both configured ``tls_insecure=False`` talk
     to each other through the TLS dataplane (each opens its own connection).
 
@@ -407,20 +422,21 @@ async def test_slimrpc_round_trip_over_tls(tls_dataplane, monkeypatch):
     )
 
     await handler.setup()
-    client = None
+    client: Client | None = None
     try:
         # One client only: every factory call opens a connection that is
         # never closed, and a second one for the same endpoint is refused.
         factory = A2AClientFactory(client_config)
         client = await factory.create(card=minimal_agent_card(agent, ["slimrpc"]))
 
-        output, last_error = "", None
+        output = ""
+        last_error: Exception | None = None
         for _ in range(8):  # the server needs a moment to become reachable
             try:
                 output = await asyncio.wait_for(_collect_text(client, request), 10)
                 if output:
                     break
-            except Exception as exc:  # noqa: BLE001 - retry until reachable
+            except Exception as exc:  # retry until reachable
                 last_error = exc
             await asyncio.sleep(1)
 

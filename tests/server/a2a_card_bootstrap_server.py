@@ -13,14 +13,15 @@ Compare with ``a2a_starlette_server.py`` which uses the manual
 ``session.add(server).with_transport(…).with_topic(…).build()`` pattern.
 """
 
-try:
-    from tests.server.agent_executor import (
-        HelloWorldAgentExecutor,  # type: ignore[import-untyped]
-    )
-except ImportError:
-    from agent_executor import (
-        HelloWorldAgentExecutor,  # type: ignore[import-untyped]
-    )
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tests.server.agent_executor import HelloWorldAgentExecutor
+else:
+    try:
+        from tests.server.agent_executor import HelloWorldAgentExecutor
+    except ImportError:
+        from agent_executor import HelloWorldAgentExecutor
 
 import argparse
 import asyncio
@@ -107,7 +108,7 @@ async def main(
     version: str = "1.0.0",
     port: int = 9999,
     block: bool = True,
-):
+) -> None:
     """Start an A2A server using ``session.add_a2a_card()``."""
 
     # -- Build the card as a real user would: declare ALL transports --------

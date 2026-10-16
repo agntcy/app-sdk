@@ -39,7 +39,7 @@ class HelloWorldAgent:
 
         return "Hello from " + self.name
 
-    async def stream(self, context: RequestContext) -> AsyncIterator:
+    async def stream(self, context: RequestContext) -> AsyncIterator[str]:
         response = "Hello from " + self.name
         for chunk in response.split():
             yield chunk
@@ -74,6 +74,7 @@ class HelloWorldStreamingAgentExecutor(AgentExecutor):
     ) -> None:
         print("request--", context.message)
 
+        assert context.message is not None
         task = new_task_from_user_message(context.message)
         await event_queue.enqueue_event(task)
 

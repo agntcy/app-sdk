@@ -1,16 +1,24 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-try:
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
     from tests.server.agent_executor import (
-        HelloWorldAgentExecutor,  # type: ignore[import-untyped]
-        HelloWorldStreamingAgentExecutor,  # type: ignore[import-untyped]
+        HelloWorldAgentExecutor,
+        HelloWorldStreamingAgentExecutor,
     )
-except ImportError:
-    from agent_executor import (
-        HelloWorldAgentExecutor,  # type: ignore[import-untyped]
-        HelloWorldStreamingAgentExecutor,  # type: ignore[import-untyped]
-    )
+else:
+    try:
+        from tests.server.agent_executor import (
+            HelloWorldAgentExecutor,
+            HelloWorldStreamingAgentExecutor,
+        )
+    except ImportError:
+        from agent_executor import (
+            HelloWorldAgentExecutor,
+            HelloWorldStreamingAgentExecutor,
+        )
 
 import argparse
 import asyncio
@@ -160,7 +168,7 @@ async def main(
     version: str = "1.0.0",
     block: bool = True,
     streaming: bool = False,
-):
+) -> None:
     """Create a bridge between an A2A server and a transport."""
     server = _build_a2a_server(
         name=name,

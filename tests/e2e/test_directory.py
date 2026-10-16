@@ -11,6 +11,7 @@ Requires ``dir-api-server`` and ``zot`` running via docker-compose:
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
@@ -46,26 +47,33 @@ DIR_SERVER_ADDRESS = "127.0.0.1:8888"
 # ---------------------------------------------------------------------------
 
 
-def _unique_card(**overrides) -> AgentCard:
+def _unique_card(
+    *,
+    name: str | None = None,
+    supported_interfaces: list[AgentInterface] | None = None,
+    description: str = "E2E test agent for directory integration",
+    capabilities: AgentCapabilities | None = None,
+    skills: list[AgentSkill] | None = None,
+) -> AgentCard:
     """Build a valid AgentCard with a unique name for test isolation."""
     unique = uuid.uuid4().hex[:8]
-    defaults = {
-        "name": f"e2e-test-agent-{unique}",
-        "supported_interfaces": [
-            AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000"),
-        ],
-        "version": "1.0.0",
-        "description": "E2E test agent for directory integration",
-        "capabilities": AgentCapabilities(),
-        "default_input_modes": ["text"],
-        "default_output_modes": ["text"],
-        "skills": [],
-        "provider": AgentProvider(
+    return AgentCard(
+        name=f"e2e-test-agent-{unique}" if name is None else name,
+        supported_interfaces=(
+            [AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000")]
+            if supported_interfaces is None
+            else supported_interfaces
+        ),
+        version="1.0.0",
+        description=description,
+        capabilities=AgentCapabilities() if capabilities is None else capabilities,
+        default_input_modes=["text"],
+        default_output_modes=["text"],
+        skills=[] if skills is None else skills,
+        provider=AgentProvider(
             organization="E2E Test Org", url="https://test.example.com"
         ),
-    }
-    defaults.update(overrides)
-    return AgentCard(**defaults)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +82,7 @@ def _unique_card(**overrides) -> AgentCard:
 
 
 @pytest_asyncio.fixture
-async def directory():
+async def directory() -> AsyncIterator[AgentDirectory]:
     """Create an AgentDirectory connected to the local dir-api-server."""
     from agntcy.dir_sdk.client.config import Config
 
@@ -91,7 +99,7 @@ async def directory():
 
 
 @pytest.mark.asyncio
-async def test_push_and_pull_agent_card(directory: AgentDirectory):
+async def test_push_and_pull_agent_card(directory: AgentDirectory) -> None:
     """Push an AgentCard, pull it back by CID, and verify round-trip fidelity."""
     card = _unique_card()
 
@@ -114,7 +122,7 @@ async def test_push_and_pull_agent_card(directory: AgentDirectory):
 
 
 @pytest.mark.asyncio
-async def test_push_and_pull_extract_card(directory: AgentDirectory):
+async def test_push_and_pull_extract_card(directory: AgentDirectory) -> None:
     """Push an AgentCard, pull with extract_card=True, and verify AgentCard fields."""
     card = _unique_card()
 
@@ -137,7 +145,7 @@ async def test_push_and_pull_extract_card(directory: AgentDirectory):
 
 
 @pytest.mark.asyncio
-async def test_push_raw_oasf_dict(directory: AgentDirectory):
+async def test_push_raw_oasf_dict(directory: AgentDirectory) -> None:
     """Push a raw OASF dict (not an AgentCard) and pull it back."""
     card = _unique_card()
     oasf_dict = agent_card_to_oasf(card)
@@ -154,7 +162,7 @@ async def test_push_raw_oasf_dict(directory: AgentDirectory):
 
 
 @pytest.mark.asyncio
-async def test_search_by_name(directory: AgentDirectory):
+async def test_search_by_name(directory: AgentDirectory) -> None:
     """Push a record and search for it by name."""
     card = _unique_card()
 
@@ -173,7 +181,7 @@ async def test_search_by_name(directory: AgentDirectory):
 
 
 @pytest.mark.asyncio
-async def test_push_pull_search_roundtrip(directory: AgentDirectory):
+async def test_push_pull_search_roundtrip(directory: AgentDirectory) -> None:
     """Full lifecycle: push → pull → search → extract card."""
     card = _unique_card(
         description="Full roundtrip E2E test agent",
@@ -186,6 +194,7 @@ async def test_push_pull_search_roundtrip(directory: AgentDirectory):
 
     # 2. Pull as OASF
     oasf_dict = await directory.pull_agent_record(cid)
+    assert isinstance(oasf_dict, dict)
     assert oasf_dict["name"] == card.name
     print(f"  2. Pulled OASF — name: {oasf_dict['name']}")
 
@@ -237,7 +246,7 @@ def _build_a2a_server(name: str = "dir-pipeline-agent") -> A2AServerConfig:
 
 
 @pytest.mark.asyncio
-async def test_app_container_pushes_record_to_directory():
+async def test_app_container_pushes_record_to_directory() -> None:
     """AppContainer.run() pushes the handler's AgentCard to the directory.
 
     Pipeline: build A2A server → create directory → wire via ContainerBuilder
@@ -306,7 +315,7 @@ async def test_app_container_pushes_record_to_directory():
 
 
 @pytest.mark.asyncio
-async def test_app_session_start_all_pushes_records():
+async def test_app_session_start_all_pushes_records() -> None:
     """AppSession.start_all_sessions() pushes records for all containers.
 
     Verifies that wiring multiple containers with directories through an
@@ -345,6 +354,7 @@ async def test_app_session_start_all_pushes_records():
         ("A", container_a, card_a),
         ("B", container_b, card_b),
     ):
+        assert container is not None
         assert container.directory_cid is not None, (
             f"Container {label} should have a directory_cid after run()"
         )
@@ -373,7 +383,7 @@ async def test_app_session_start_all_pushes_records():
 
 
 @pytest.mark.asyncio
-async def test_app_container_no_directory_skips_push():
+async def test_app_container_no_directory_skips_push() -> None:
     """When no directory is configured, run() succeeds without pushing.
 
     Ensures the pipeline doesn't break when the directory is omitted.
@@ -402,7 +412,7 @@ async def test_app_container_no_directory_skips_push():
 
 
 @pytest.mark.asyncio
-async def test_factory_create_directory_in_pipeline():
+async def test_factory_create_directory_in_pipeline() -> None:
     """Verify factory.create_directory() integrates with the full pipeline.
 
     Uses the registry-based create_directory("agntcy", endpoint=...) API

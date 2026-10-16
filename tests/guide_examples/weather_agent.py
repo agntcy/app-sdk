@@ -58,7 +58,7 @@ class WeatherAgent:
 
 
 class WeatherAgentExecutor(AgentExecutor):
-    def __init__(self):
+    def __init__(self) -> None:
         self.agent = WeatherAgent()
 
     async def execute(
@@ -78,7 +78,7 @@ class WeatherAgentExecutor(AgentExecutor):
 # ---------------------------------------------------------------------------
 
 
-async def main(transport_type: str, endpoint: str):
+async def main(transport_type: str, endpoint: str) -> None:
     factory = AgntcyFactory()
 
     request_handler = DefaultRequestHandler(
