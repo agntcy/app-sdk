@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any, Optional, Union
 
 import httpx
@@ -11,7 +12,6 @@ import urllib.parse
 import uvicorn
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.fast_mcp.client import MCPClient
-from agntcy_app_sdk.semantic.mcp.protocol import MCPProtocol
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 from mcp.server.fastmcp import FastMCP
@@ -22,19 +22,16 @@ from identityservice.auth.starlette import IdentityServiceMCPMiddleware
 logger = get_logger(__name__)
 
 
-class FastMCPProtocol(MCPProtocol):
+class FastMCPProtocol:
     """
     Protocol implementation for FastMCP.
 
     This class provides methods to bind a FastMCP server, set up an ingress handler,
-    create a client, and handle messages. It extends the MCPProtocol base class.
+    create a client, and handle messages.
     """
 
-    def __init__(self):
-        """
-        Initialize the FastMCPProtocol instance.
-        """
-        super().__init__()
+    def __init__(self) -> None:
+        self._server: FastMCP | None = None
 
     def type(self) -> str:
         """
@@ -56,7 +53,7 @@ class FastMCPProtocol(MCPProtocol):
             raise TypeError("Provided server is not an instance of FastMCP")
         self._server = server
 
-    async def setup(self, *args, **kwargs) -> None:
+    async def setup(self, *args: Any, **kwargs: Any) -> None:
         """
         Set up the ingress handler for the FastMCP server.
 
@@ -91,12 +88,12 @@ class FastMCPProtocol(MCPProtocol):
 
     async def create_client(
         self,
-        url: str,
+        url: str | None,
         topic: Optional[str] = None,
         transport: Optional[BaseTransport] = None,
         route_path: Optional[str] = None,
         auth: Union[httpx.Auth, str, None] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> MCPClient:
         """
         Create an MCP client for interacting with the FastMCP server.
@@ -117,6 +114,8 @@ class FastMCPProtocol(MCPProtocol):
         """
         if not url:
             raise ValueError("URL must be provided")
+        if transport and not topic:
+            raise ValueError("A topic is required when a transport is given")
 
         if transport:
             await transport.setup()
@@ -241,12 +240,15 @@ class FastMCPProtocol(MCPProtocol):
             }
 
             payload_bytes = json.dumps(payload_dict).encode("utf-8")
+            response_complete = asyncio.Event()
 
             # Create a receive function for the ASGI app
-            def make_receive(payload: bytes):
+            def make_receive(
+                payload: bytes,
+            ) -> Callable[[], Awaitable[dict[str, Any]]]:
                 sent = False
 
-                async def receive():
+                async def receive() -> dict[str, Any]:
                     nonlocal sent
                     if not sent:
                         sent = True
@@ -255,16 +257,21 @@ class FastMCPProtocol(MCPProtocol):
                             "body": payload,
                             "more_body": False,
                         }
-                    await asyncio.sleep(3600)
+                    # Streaming responses keep listening for a disconnect
+                    await response_complete.wait()
+                    return {"type": "http.disconnect"}
 
                 return receive
 
-            # Prepare response data and completion event
-            response_data = {"status": None, "headers": None, "body": bytearray()}
-            response_complete = asyncio.Event()
+            # Prepare response data
+            response_data: dict[str, Any] = {
+                "status": None,
+                "headers": None,
+                "body": bytearray(),
+            }
 
             # Define the send function for the ASGI app
-            async def send(resp: dict[str, Any]):
+            async def send(resp: MutableMapping[str, Any]) -> None:
                 if resp["type"] == "http.response.start":
                     response_data["status"] = resp["status"]
                     response_data["headers"] = resp.get("headers", [])

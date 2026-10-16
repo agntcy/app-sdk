@@ -35,6 +35,8 @@ class MCPServerHandler(ServerHandler):
         """Full lifecycle: transport.setup() → set_callback() → subscribe() → protocol.setup()."""
         if self._transport is None:
             raise ValueError("Transport must be set before running MCP handler.")
+        if self._topic is None:
+            raise ValueError("Topic must be provided for MCP server")
 
         # Transport setup
         await self._transport.setup()

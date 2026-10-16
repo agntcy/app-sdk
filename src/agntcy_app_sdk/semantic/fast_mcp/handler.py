@@ -38,6 +38,11 @@ class FastMCPServerHandler(ServerHandler):
         self._protocol.bind_server(self._managed_object)
 
         if self._transport is not None:
+            if self._topic is None:
+                raise ValueError(
+                    "Topic must be provided when transport is set for FastMCP"
+                )
+
             # Transport setup
             await self._transport.setup()
 

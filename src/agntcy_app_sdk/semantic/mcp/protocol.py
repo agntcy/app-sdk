@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable
 import json
 
 from agntcy_app_sdk.common.logging_config import get_logger
@@ -32,7 +32,10 @@ class MCPProtocol:
     - Handle incoming MCP messages and pass them to the server via transport
     """
 
-    def type(self):
+    def __init__(self) -> None:
+        self._low_level_server: MCPServer | None = None
+
+    def type(self) -> str:
         """Return the protocol type identifier."""
         return "MCP"
 
@@ -40,12 +43,12 @@ class MCPProtocol:
     async def create_client(
         self,
         topic: str,
-        url: str = None,
-        transport: BaseTransport = None,
+        url: str | None = None,
+        transport: BaseTransport | None = None,
         message_timeout: int = 15,
         message_retries: int = 2,
-        **kwargs,
-    ) -> ClientSession:
+        **kwargs: Any,
+    ) -> AsyncIterator[ClientSession]:
         """
         Create and manage an MCP client session.
 
@@ -77,7 +80,7 @@ class MCPProtocol:
 
         # Define the send method that will be used by the write stream
         # This method bridges the session messages to the transport layer
-        async def send_method(session_message: SessionMessage):
+        async def send_method(session_message: SessionMessage) -> None:
             await self._client_send(transport, session_message, topic)
 
         # Create bidirectional streams and establish the MCP session
@@ -88,14 +91,24 @@ class MCPProtocol:
                 yield mcp_session
 
     @asynccontextmanager
-    async def new_streams(self, send_method: Callable, **kwargs):
+    async def new_streams(
+        self,
+        send_method: Callable[[SessionMessage], Awaitable[None]],
+        **kwargs: Any,
+    ) -> AsyncIterator[
+        tuple[
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
+        ]
+    ]:
         """
         Create bidirectional memory streams for MCP message communication.
 
         This method establishes in-memory streams that bridge MCP session messages
-        with the underlying transport layer. It creates two concurrent tasks:
-        - Reader: Routes incoming messages from transport to the read stream
-        - Writer: Routes outgoing messages from write stream to transport
+        with the underlying transport layer. Incoming messages are pushed
+        straight into the read stream via ``self.read_stream_writer``; a
+        writer task routes outgoing messages from the write stream to the
+        transport.
 
         Args:
             send_method: Callable that handles sending messages via transport
@@ -105,7 +118,7 @@ class MCPProtocol:
             tuple: (read_stream, write_stream) - Bidirectional communication streams
 
         Architecture:
-            Transport -> Reader Task -> read_stream -> MCP Session
+            Transport -> read_stream_writer -> read_stream -> MCP Session
             MCP Session -> write_stream -> Writer Task -> Transport
         """
         # Initialize bidirectional memory streams for internal communication
@@ -123,15 +136,7 @@ class MCPProtocol:
         # Store writer reference for use in message handling
         self.read_stream_writer = read_stream_writer
 
-        async def reader():
-            try:
-                async for message in read_stream:
-                    await read_stream_writer.send(message)
-            except Exception as e:
-                logger.error(f"Error reading from stream: {e}")
-                raise
-
-        async def writer():
+        async def writer() -> None:
             try:
                 async for session_message in write_stream_reader:
                     try:
@@ -143,10 +148,7 @@ class MCPProtocol:
                 # Ensure write stream is properly closed
                 await write_stream_reader.aclose()
 
-        # Create concurrent task group to run reader and writer simultaneously
         async with anyio.create_task_group() as tg:
-            # Start both reader and writer tasks concurrently
-            tg.start_soon(reader)
             tg.start_soon(writer)
 
             try:
@@ -159,7 +161,12 @@ class MCPProtocol:
                 await read_stream_writer.aclose()
                 await write_stream.aclose()
 
-    async def _client_send(self, transport, session_message, topic):
+    async def _client_send(
+        self,
+        transport: BaseTransport | None,
+        session_message: SessionMessage,
+        topic: str,
+    ) -> None:
         """
         Send a session message through the transport layer and handle the response.
 
@@ -169,12 +176,19 @@ class MCPProtocol:
             topic: The communication topic/channel
 
         Raises:
-            ValueError: If no response is received from the MCP server
+            ValueError: If no transport is given
 
         Message Flow:
             SessionMessage -> JSON-RPC -> Transport -> Server
             Server -> Transport -> JSON-RPC -> SessionMessage -> Session
         """
+        root = session_message.message.root
+        if not isinstance(root, types.JSONRPCRequest):
+            # Only requests get a reply over the transport; a notification
+            # sent through request() would block until it times out.
+            logger.debug(f"Dropping client {type(root).__name__}: not a request")
+            return
+
         # Serialize the MCP message to JSON-RPC format
         # model_dump with specific options ensures proper serialization
         msg_dict = session_message.message.model_dump(
@@ -182,6 +196,9 @@ class MCPProtocol:
             mode="json",  # JSON serialization mode
             exclude_none=True,  # Omit None values from output
         )
+
+        if transport is None:
+            raise ValueError("Transport must be provided to send MCP messages")
 
         # Send message through transport and wait for response
         resp = await transport.request(
@@ -191,10 +208,6 @@ class MCPProtocol:
                 payload=json.dumps(msg_dict),
             ),
         )
-
-        # Validate that we received a response
-        if not resp:
-            raise ValueError("No response received from MCP server")
 
         # Deserialize the response back to MCP format
         msg = resp.payload.decode()
@@ -220,16 +233,24 @@ class MCPProtocol:
         else:
             self._low_level_server = server
 
-    async def setup(self, *args, **kwargs) -> None:
+    async def setup(self, *args: Any, **kwargs: Any) -> None:
         if not self._low_level_server:
             raise ValueError(
                 "MCP server is not bound to the protocol, please bind it first"
             )
 
-        self._response_futures: dict[str, asyncio.Future] = {}
+        self._response_futures: dict[
+            types.RequestId, asyncio.Future[SessionMessage]
+        ] = {}
 
-        async def reply_method(session_message: SessionMessage):
-            request_id = session_message.message.root.id
+        async def reply_method(session_message: SessionMessage) -> None:
+            root = session_message.message.root
+            if not isinstance(root, (types.JSONRPCResponse, types.JSONRPCError)):
+                # The transport can only answer a request; there is no
+                # channel to push server notifications to the client.
+                logger.debug(f"Dropping server {type(root).__name__}: not a reply")
+                return
+            request_id = root.id
             fut = self._response_futures.get(request_id)
             if fut and not fut.done():
                 fut.set_result(session_message)
@@ -238,12 +259,14 @@ class MCPProtocol:
             else:
                 logger.warning(f"Unexpected response for id={request_id}")
 
-        async def _run_server():
+        server = self._low_level_server
+
+        async def _run_server() -> None:
             async with self.new_streams(reply_method) as (read_stream, write_stream):
-                await self._low_level_server.run(
+                await server.run(
                     read_stream,
                     write_stream,
-                    self._low_level_server.create_initialization_options(),
+                    server.create_initialization_options(),
                     stateless=True,
                 )
                 logger.info("[setup] MCP server stopped.")
@@ -278,10 +301,15 @@ class MCPProtocol:
         """
         # Deserialize the incoming JSON-RPC message
         rpc_message = types.JSONRPCMessage.model_validate_json(message.payload.decode())
+        request = rpc_message.root
+        if not isinstance(request, types.JSONRPCRequest):
+            raise ValueError(
+                f"Expected a JSON-RPC request, got {type(request).__name__}"
+            )
 
         # Create a future to track the response for this request
         future = asyncio.get_event_loop().create_future()
-        self._response_futures[rpc_message.root.id] = future
+        self._response_futures[request.id] = future
 
         # Route the message to the MCP server via the read stream
         session_message = SessionMessage(rpc_message)
@@ -304,10 +332,8 @@ class MCPProtocol:
             )
         except asyncio.TimeoutError:
             # Handle timeout - log and raise appropriate error
-            logger.warning(f"Timeout waiting for response for id={rpc_message.root.id}")
-            raise TimeoutError(
-                f"Timeout waiting for response for id={rpc_message.root.id}"
-            )
+            logger.warning(f"Timeout waiting for response for id={request.id}")
+            raise TimeoutError(f"Timeout waiting for response for id={request.id}")
         except Exception as e:
             # Handle other errors with proper logging
             logger.error(f"Error waiting for response: {e}")
@@ -319,4 +345,4 @@ class MCPProtocol:
         This method should be implemented to convert the request format
         into the Message format used by the MCP protocol.
         """
-        pass
+        raise NotImplementedError("MCPProtocol does not translate requests")

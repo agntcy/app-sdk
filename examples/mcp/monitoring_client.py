@@ -20,16 +20,21 @@ import asyncio
 import argparse
 import json
 
+from mcp.types import CallToolResult, TextContent
+
 from agntcy_app_sdk.factory import AgntcyFactory
 
 factory = AgntcyFactory(enable_tracing=False)
 
 
-def _extract_text(result) -> str:
+def _extract_text(result: CallToolResult) -> str:
     """Extract and pretty-print text from a tool call result."""
     content_list = result.content
     if isinstance(content_list, list) and len(content_list) > 0:
-        text = content_list[0].text
+        first = content_list[0]
+        if not isinstance(first, TextContent):
+            raise TypeError(f"Expected text content, got {type(first).__name__}")
+        text = first.text
         try:
             parsed = json.loads(text)
             return json.dumps(parsed, indent=2)
@@ -38,7 +43,7 @@ def _extract_text(result) -> str:
     return "No content returned."
 
 
-async def _query_server(topic: str, transport_type: str, endpoint: str):
+async def _query_server(topic: str, transport_type: str, endpoint: str) -> None:
     """Create a client for the given topic, list tools, and call each one."""
     clean_name = topic.replace(".", "_")
     transport = factory.create_transport(
@@ -80,7 +85,7 @@ async def _query_server(topic: str, transport_type: str, endpoint: str):
             await transport.close()
 
 
-async def main(transport_type: str, endpoint: str, topics: list[str]):
+async def main(transport_type: str, endpoint: str, topics: list[str]) -> None:
     for topic in topics:
         print("=" * 60)
         print(f"Querying topic: {topic}")
