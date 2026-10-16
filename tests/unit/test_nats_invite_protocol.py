@@ -9,10 +9,12 @@ to each recipient's unique name, waits for ACKs, then publishes the real
 message on an ephemeral topic.
 """
 
-from types import SimpleNamespace
+import functools
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from nats.aio.msg import Msg
 
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.nats.transport import NatsTransport
@@ -25,9 +27,9 @@ pytest_plugins = "pytest_asyncio"
 # ---------------------------------------------------------------------------
 
 
-def _make_nats_msg(message: Message, *, reply: str = "") -> SimpleNamespace:
-    """Build a fake ``nats.aio.msg.Msg``-like object from a :class:`Message`."""
-    return SimpleNamespace(data=message.serialize(), reply=reply)
+def _make_nats_msg(message: Message, *, reply: str = "") -> Msg:
+    """Build a ``nats.aio.msg.Msg`` from a :class:`Message`."""
+    return Msg(_client=AsyncMock(), data=message.serialize(), reply=reply)
 
 
 def _make_transport(nc_mock: AsyncMock) -> NatsTransport:
@@ -38,6 +40,7 @@ def _make_transport(nc_mock: AsyncMock) -> NatsTransport:
     transport._nc = nc_mock
     transport.endpoint = "localhost:4222"
     transport._callback = None
+    transport._callback_takes_publish_fn = False
     transport.subscriptions = []
     transport._ephemeral_subs = {}
     return transport
@@ -59,7 +62,7 @@ def _make_nc_mock() -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_handle_invite_subscribes_and_sends_ack():
+async def test_handle_invite_subscribes_and_sends_ack() -> None:
     """``_handle_invite`` subscribes to the broadcast topic and publishes an ACK."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)
@@ -101,7 +104,7 @@ async def test_handle_invite_subscribes_and_sends_ack():
 
 
 @pytest.mark.asyncio
-async def test_handle_teardown_unsubscribes():
+async def test_handle_teardown_unsubscribes() -> None:
     """``_handle_teardown`` removes and unsubscribes the ephemeral sub."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)
@@ -126,7 +129,7 @@ async def test_handle_teardown_unsubscribes():
 
 
 @pytest.mark.asyncio
-async def test_handle_teardown_unknown_topic_is_noop():
+async def test_handle_teardown_unknown_topic_is_noop() -> None:
     """``_handle_teardown`` is a no-op when the topic is not tracked."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)
@@ -151,11 +154,12 @@ async def test_handle_teardown_unknown_topic_is_noop():
 
 
 @pytest.mark.asyncio
-async def test_message_handler_intercepts_invite():
+async def test_message_handler_intercepts_invite() -> None:
     """Invite messages are handled by ``_handle_invite`` and never reach the callback."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)
-    transport._callback = AsyncMock(return_value=Message(type="resp", payload=b"ok"))
+    callback = AsyncMock(return_value=Message(type="resp", payload=b"ok"))
+    transport.set_callback(callback)
 
     invite_msg = Message(
         type="invite",
@@ -171,15 +175,16 @@ async def test_message_handler_intercepts_invite():
     await transport._message_handler(nats_msg)
 
     # Callback must NOT have been called
-    transport._callback.assert_not_called()
+    callback.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_message_handler_intercepts_teardown():
+async def test_message_handler_intercepts_teardown() -> None:
     """Teardown messages are handled by ``_handle_teardown`` and never reach the callback."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)
-    transport._callback = AsyncMock(return_value=Message(type="resp", payload=b"ok"))
+    callback = AsyncMock(return_value=Message(type="resp", payload=b"ok"))
+    transport.set_callback(callback)
 
     # Pre-register an ephemeral sub so teardown has something to remove
     mock_sub = AsyncMock()
@@ -197,28 +202,152 @@ async def test_message_handler_intercepts_teardown():
 
     await transport._message_handler(nats_msg)
 
-    transport._callback.assert_not_called()
+    callback.assert_not_called()
     mock_sub.unsubscribe.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_message_handler_passes_normal_messages():
+async def test_message_handler_passes_normal_messages() -> None:
     """Normal (non-invite) messages reach the callback and get a reply published."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)
 
     response = Message(type="response", payload=b"hello")
-    transport._callback = AsyncMock(return_value=response)
+    callback = AsyncMock(return_value=response)
+    transport.set_callback(callback)
 
     normal_msg = Message(type="request", payload=b"ping", reply_to="reply_topic")
     nats_msg = _make_nats_msg(normal_msg)
 
     await transport._message_handler(nats_msg)
 
-    transport._callback.assert_awaited_once()
+    callback.assert_awaited_once()
     # The response should be published to the reply_to topic
     nc.publish.assert_called_once()
     assert nc.publish.call_args[0][0] == "reply_topic"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response", [Message(type="response", payload=b"hello"), None])
+async def test_message_handler_without_reply_to_publishes_nothing(
+    response: Message | None,
+) -> None:
+    """One-way messages run the callback but are never answered."""
+    nc = _make_nc_mock()
+    transport = _make_transport(nc)
+    callback = AsyncMock(return_value=response)
+    transport.set_callback(callback)
+
+    await transport._message_handler(
+        _make_nats_msg(Message(type="request", payload=b"ping"))
+    )
+
+    callback.assert_awaited_once()
+    nc.publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_message_handler_empty_response_sends_one_error_reply() -> None:
+    nc = _make_nc_mock()
+    transport = _make_transport(nc)
+    callback = AsyncMock(return_value=None)
+    transport.set_callback(callback)
+
+    await transport._message_handler(
+        _make_nats_msg(Message(type="request", payload=b"ping", reply_to="inbox"))
+    )
+
+    nc.publish.assert_called_once()
+    topic, data = nc.publish.call_args[0]
+    assert topic == "inbox"
+    reply = Message.deserialize(data)
+    assert reply.type == "error"
+    assert reply.payload == b"No response from handler"
+
+
+async def _positional_only(message: Message) -> Message:
+    return message
+
+
+async def _with_publish_fn(
+    message: Message,
+    *,
+    publish_fn: Callable[[Message], Awaitable[None]] | None = None,
+) -> Message:
+    assert publish_fn is not None
+    return message
+
+
+async def _with_kwargs(message: Message, **kwargs: object) -> Message:
+    assert "publish_fn" in kwargs
+    return message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler",
+    [_positional_only, _with_publish_fn, _with_kwargs],
+    ids=lambda h: h.__name__,
+)
+async def test_message_handler_passes_publish_fn_only_when_accepted(
+    handler: Callable[..., Awaitable[Message]],
+) -> None:
+    nc = _make_nc_mock()
+    transport = _make_transport(nc)
+    transport.set_callback(handler)
+
+    await transport._message_handler(
+        _make_nats_msg(Message(type="request", payload=b"ping", reply_to="inbox"))
+    )
+
+    nc.publish.assert_called_once()
+    assert Message.deserialize(nc.publish.call_args[0][1]).payload == b"ping"
+
+
+@pytest.mark.asyncio
+async def test_message_handler_calls_wraps_wrapper_without_publish_fn() -> None:
+    nc = _make_nc_mock()
+    transport = _make_transport(nc)
+    calls: list[Message] = []
+
+    @functools.wraps(_with_publish_fn)
+    async def wrapper(message: Message) -> Message:
+        calls.append(message)
+        return message
+
+    transport.set_callback(wrapper)
+
+    await transport._message_handler(
+        _make_nats_msg(Message(type="request", payload=b"ping", reply_to="inbox"))
+    )
+
+    assert len(calls) == 1
+    nc.publish.assert_called_once()
+    assert Message.deserialize(nc.publish.call_args[0][1]).payload == b"ping"
+
+
+@pytest.mark.asyncio
+async def test_message_handler_type_error_inside_handler_runs_it_once() -> None:
+    nc = _make_nc_mock()
+    transport = _make_transport(nc)
+    calls: list[bool] = []
+
+    async def handler(
+        message: Message,
+        *,
+        publish_fn: Callable[[Message], Awaitable[None]] | None = None,
+    ) -> Message:
+        calls.append(publish_fn is not None)
+        raise TypeError("bug inside the handler")
+
+    transport.set_callback(handler)
+
+    with pytest.raises(TypeError, match="bug inside the handler"):
+        await transport._message_handler(
+            _make_nats_msg(Message(type="request", payload=b"ping", reply_to="inbox"))
+        )
+
+    assert calls == [True]
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +356,7 @@ async def test_message_handler_passes_normal_messages():
 
 
 @pytest.mark.asyncio
-async def test_gather_stream_single_recipient_skips_invite():
+async def test_gather_stream_single_recipient_skips_invite() -> None:
     """With a single recipient, gather_stream publishes directly (no invite)."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)
@@ -236,9 +365,11 @@ async def test_gather_stream_single_recipient_skips_invite():
     response_msg = Message(type="response", payload=b"ok")
 
     # Make subscribe capture the callback so we can inject a response
-    captured_cb = None
+    captured_cb: Callable[[Msg], Awaitable[None]] | None = None
 
-    async def fake_subscribe(topic, cb=None):
+    async def fake_subscribe(
+        topic: str, cb: Callable[[Msg], Awaitable[None]] | None = None
+    ) -> AsyncMock:
         nonlocal captured_cb
         captured_cb = cb
         sub = AsyncMock()
@@ -246,7 +377,7 @@ async def test_gather_stream_single_recipient_skips_invite():
 
     nc.subscribe = AsyncMock(side_effect=fake_subscribe)
 
-    async def fake_publish(topic, data):
+    async def fake_publish(topic: str, data: bytes) -> None:
         # After publish, simulate a response arriving on the reply subscription
         if captured_cb is not None:
             fake_nats_msg = _make_nats_msg(response_msg)
@@ -255,7 +386,7 @@ async def test_gather_stream_single_recipient_skips_invite():
     nc.publish = AsyncMock(side_effect=fake_publish)
 
     msg = Message(type="request", payload=b"test")
-    results = []
+    results: list[Message] = []
     with patch(
         "agntcy_app_sdk.transport.nats.transport.is_identity_auth_enabled",
         return_value=False,
@@ -283,7 +414,7 @@ async def test_gather_stream_single_recipient_skips_invite():
 
 
 @pytest.mark.asyncio
-async def test_gather_stream_multi_recipient_uses_invite():
+async def test_gather_stream_multi_recipient_uses_invite() -> None:
     """With multiple recipients, gather_stream uses the invite protocol."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)
@@ -293,18 +424,21 @@ async def test_gather_stream_multi_recipient_uses_invite():
         type="ack", payload=b"", headers={"x-nats-invite-type": "invite_ack"}
     )
 
-    captured_cbs: dict[str, AsyncMock] = {}
+    captured_cbs: dict[str, Callable[[Msg], Awaitable[None]]] = {}
 
-    async def fake_subscribe(topic, cb=None):
+    async def fake_subscribe(
+        topic: str, cb: Callable[[Msg], Awaitable[None]] | None = None
+    ) -> AsyncMock:
+        assert cb is not None
         captured_cbs[topic] = cb
         sub = AsyncMock()
         return sub
 
     nc.subscribe = AsyncMock(side_effect=fake_subscribe)
 
-    publish_calls = []
+    publish_calls: list[tuple[str, bytes]] = []
 
-    async def fake_publish(topic, data):
+    async def fake_publish(topic: str, data: bytes) -> None:
         publish_calls.append((topic, data))
         msg = Message.deserialize(data)
 
@@ -325,7 +459,7 @@ async def test_gather_stream_multi_recipient_uses_invite():
     nc.publish = AsyncMock(side_effect=fake_publish)
 
     msg = Message(type="request", payload=b"test")
-    results = []
+    results: list[Message] = []
     with patch(
         "agntcy_app_sdk.transport.nats.transport.is_identity_auth_enabled",
         return_value=False,
@@ -361,13 +495,99 @@ async def test_gather_stream_multi_recipient_uses_invite():
     assert len(teardown_publishes) == 1
 
 
+def _wire_invite_protocol(
+    nc: AsyncMock, *, fail_on_request: bool = False
+) -> list[Message]:
+    """ACK every invite and answer the broadcast twice; return what was published."""
+    callbacks: dict[str, Callable[[Msg], Awaitable[None]]] = {}
+    published: list[Message] = []
+    ack = Message(type="ack", payload=b"", headers={"x-nats-invite-type": "invite_ack"})
+
+    async def fake_subscribe(
+        topic: str, cb: Callable[[Msg], Awaitable[None]] | None = None
+    ) -> AsyncMock:
+        assert cb is not None
+        callbacks[topic] = cb
+        return AsyncMock()
+
+    async def fake_publish(topic: str, data: bytes) -> None:
+        msg = Message.deserialize(data)
+        published.append(msg)
+        if msg.headers.get("x-nats-invite-type") == "invite":
+            await callbacks[msg.headers["x-nats-ack-topic"]](_make_nats_msg(ack))
+        elif msg.type == "request":
+            if fail_on_request:
+                raise ConnectionError("publish failed")
+            assert msg.reply_to is not None
+            for _ in range(2):
+                await callbacks[msg.reply_to](
+                    _make_nats_msg(Message(type="response", payload=b"ok"))
+                )
+
+    nc.subscribe = AsyncMock(side_effect=fake_subscribe)
+    nc.publish = AsyncMock(side_effect=fake_publish)
+    return published
+
+
+def _teardowns(published: list[Message]) -> list[Message]:
+    return [m for m in published if m.headers.get("x-nats-invite-type") == "teardown"]
+
+
+@pytest.mark.asyncio
+async def test_gather_stream_sends_teardown_when_caller_stops_early() -> None:
+    """The A2A client breaks out once every recipient replied; recipients must
+    still be told to drop their ephemeral subscription."""
+    nc = _make_nc_mock()
+    transport = _make_transport(nc)
+    published = _wire_invite_protocol(nc)
+
+    with patch(
+        "agntcy_app_sdk.transport.nats.transport.is_identity_auth_enabled",
+        return_value=False,
+    ):
+        stream = transport.gather_stream(
+            "broadcast", Message(type="request", payload=b"x"), ["a", "b"], timeout=5
+        )
+        assert isinstance(stream, AsyncGenerator)
+        received = 0
+        async for _ in stream:
+            received += 1
+            if received == 2:
+                break
+        await stream.aclose()
+
+    assert len(_teardowns(published)) == 1
+
+
+@pytest.mark.asyncio
+async def test_gather_stream_sends_teardown_when_publish_fails() -> None:
+    nc = _make_nc_mock()
+    transport = _make_transport(nc)
+    published = _wire_invite_protocol(nc, fail_on_request=True)
+
+    with patch(
+        "agntcy_app_sdk.transport.nats.transport.is_identity_auth_enabled",
+        return_value=False,
+    ):
+        with pytest.raises(ConnectionError, match="publish failed"):
+            async for _ in transport.gather_stream(
+                "broadcast",
+                Message(type="request", payload=b"x"),
+                ["a", "b"],
+                timeout=5,
+            ):
+                pass
+
+    assert len(_teardowns(published)) == 1
+
+
 # ---------------------------------------------------------------------------
 # close() — ephemeral subscription cleanup
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_close_cleans_up_ephemeral_subs():
+async def test_close_cleans_up_ephemeral_subs() -> None:
     """``close()`` unsubscribes all ephemeral subscriptions before draining."""
     nc = _make_nc_mock()
     transport = _make_transport(nc)

@@ -9,11 +9,15 @@ import weakref
 import click
 import datetime
 import json
+from typing import Any, cast
+
 import slim_bindings
 
 from agntcy_app_sdk.common.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+PLACEHOLDER_SHARED_SECRET = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
 
 
 # Split an ID into its components
@@ -34,15 +38,19 @@ def split_id(id: str) -> slim_bindings.Name:
 # Takes an identity and a shared secret as parameters
 # Returns a tuple of (provider, verifier)
 # This is used for shared secret authentication
-def shared_secret_identity(identity, secret):
+def shared_secret_identity(
+    identity: str, secret: str
+) -> tuple[slim_bindings.IdentityProviderConfig, slim_bindings.IdentityVerifierConfig]:
     """
     Create a provider and verifier using a shared secret.
     """
-    provider = slim_bindings.IdentityProviderConfig.SHARED_SECRET(
-        id=identity, data=secret
+    provider = cast(
+        slim_bindings.IdentityProviderConfig,
+        slim_bindings.IdentityProviderConfig.SHARED_SECRET(id=identity, data=secret),
     )
-    verifier = slim_bindings.IdentityVerifierConfig.SHARED_SECRET(
-        id=identity, data=secret
+    verifier = cast(
+        slim_bindings.IdentityVerifierConfig,
+        slim_bindings.IdentityVerifierConfig.SHARED_SECRET(id=identity, data=secret),
     )
 
     return provider, verifier
@@ -56,10 +64,10 @@ def jwt_identity(
     jwt_path: str,
     jwk_path: str,
     local_name: str,
-    iss: str = None,
-    sub: str = None,
-    aud: list = None,
-):
+    iss: str | None = None,
+    sub: str | None = None,
+    aud: list[str] | None = None,
+) -> tuple[slim_bindings.IdentityProviderConfig, slim_bindings.IdentityVerifierConfig]:
     """
     Parse the JWK and JWT from the provided strings.
     """
@@ -68,12 +76,12 @@ def jwt_identity(
         jwk_string = jwk_file.read()
 
     # The JWK is normally encoded as base64, so we need to decode it
-    spire_jwks = json.loads(jwk_string)
-
-    for _, v in spire_jwks.items():
-        # Decode first item from base64
-        spire_jwks = base64.b64decode(v)
-        break
+    spire_jwks: dict[str, str] = json.loads(jwk_string)
+    try:
+        encoded_jwks = next(iter(spire_jwks.values()))
+    except StopIteration:
+        raise ValueError(f"JWK file {jwk_path} contains no keys") from None
+    jwks = base64.b64decode(encoded_jwks).decode("utf-8")
 
     # Read the static JWT file for signing
     with open(jwt_path) as jwt_file:
@@ -83,36 +91,50 @@ def jwt_identity(
     encoding_key_config = slim_bindings.JwtKeyConfig(
         algorithm=slim_bindings.JwtAlgorithm.RS256,
         format=slim_bindings.JwtKeyFormat.PEM,
-        key=slim_bindings.JwtKeyData.DATA(value=jwt_content),
+        key=cast(
+            slim_bindings.JwtKeyData, slim_bindings.JwtKeyData.DATA(value=jwt_content)
+        ),
     )
 
     # Create provider config for JWT authentication
-    provider_config = slim_bindings.IdentityProviderConfig.JWT(
-        config=slim_bindings.ClientJwtAuth(
-            key=slim_bindings.JwtKeyType.ENCODING(key=encoding_key_config),
-            audience=aud or ["default-audience"],
-            issuer=iss or "default-issuer",
-            subject=sub or local_name,
-            duration=datetime.timedelta(seconds=3600),
-        )
+    provider_config = cast(
+        slim_bindings.IdentityProviderConfig,
+        slim_bindings.IdentityProviderConfig.JWT(
+            config=slim_bindings.ClientJwtAuth(
+                key=cast(
+                    slim_bindings.JwtKeyType,
+                    slim_bindings.JwtKeyType.ENCODING(key=encoding_key_config),
+                ),
+                audience=aud or ["default-audience"],
+                issuer=iss or "default-issuer",
+                subject=sub or local_name,
+                duration=datetime.timedelta(seconds=3600),
+            )
+        ),
     )
 
     # Create decoding key config for JWKS verification
     decoding_key_config = slim_bindings.JwtKeyConfig(
         algorithm=slim_bindings.JwtAlgorithm.RS256,
         format=slim_bindings.JwtKeyFormat.JWKS,
-        key=slim_bindings.JwtKeyData.DATA(value=spire_jwks),
+        key=cast(slim_bindings.JwtKeyData, slim_bindings.JwtKeyData.DATA(value=jwks)),
     )
 
     # Create verifier config
-    verifier_config = slim_bindings.IdentityVerifierConfig.JWT(
-        config=slim_bindings.JwtAuth(
-            key=slim_bindings.JwtKeyType.DECODING(key=decoding_key_config),
-            audience=aud or ["default-audience"],
-            issuer=iss or "default-issuer",
-            subject=sub,
-            duration=datetime.timedelta(seconds=3600),
-        )
+    verifier_config = cast(
+        slim_bindings.IdentityVerifierConfig,
+        slim_bindings.IdentityVerifierConfig.JWT(
+            config=slim_bindings.JwtAuth(
+                key=cast(
+                    slim_bindings.JwtKeyType,
+                    slim_bindings.JwtKeyType.DECODING(key=decoding_key_config),
+                ),
+                audience=aud or ["default-audience"],
+                issuer=iss or "default-issuer",
+                subject=sub,
+                duration=datetime.timedelta(seconds=3600),
+            )
+        ),
     )
 
     return provider_config, verifier_config
@@ -123,7 +145,9 @@ def jwt_identity(
 class DictParamType(click.ParamType):
     name = "dict"
 
-    def convert(self, value, param, ctx):
+    def convert(
+        self, value: Any, param: click.Parameter | None, ctx: click.Context | None
+    ) -> Any:
         import json
 
         if isinstance(value, dict):
@@ -134,9 +158,9 @@ class DictParamType(click.ParamType):
             self.fail(f"{value} is not valid JSON", param, ctx)
 
 
-global_slim = None
-global_connection_id = None
-global_slim_service = None
+global_slim: slim_bindings.App | None = None
+global_connection_id: int | None = None
+global_slim_service: slim_bindings.Service | None = None
 # ``insecure`` flag the cached connection above was opened with.
 global_slim_insecure: bool | None = None
 global_slim_endpoint: str | None = None
@@ -239,7 +263,7 @@ async def get_or_create_slim_instance(
     jwt: str | None = None,
     bundle: str | None = None,
     audience: list[str] | None = None,
-):
+) -> tuple[slim_bindings.Service, slim_bindings.App, int]:
     if enable_opentelemetry is not None:
         warnings.warn(
             "enable_opentelemetry is deprecated and ignored. SLIM is traced "
@@ -270,7 +294,7 @@ async def _get_or_create_slim_instance(
     jwt: str | None = None,
     bundle: str | None = None,
     audience: list[str] | None = None,
-):
+) -> tuple[slim_bindings.Service, slim_bindings.App, int]:
     global global_slim, global_connection_id, global_slim_service
     global global_slim_insecure, global_slim_endpoint
 
@@ -284,7 +308,11 @@ async def _get_or_create_slim_instance(
     # into an immediate, self-explanatory error at the point of the mistake,
     # without changing how the shared connection works for callers that are
     # consistent.
-    if global_slim is not None and global_slim_service is not None:
+    if (
+        global_slim is not None
+        and global_slim_service is not None
+        and global_connection_id is not None
+    ):
         if global_slim_endpoint is not None and not _same_endpoint(
             slim_endpoint, global_slim_endpoint
         ):
@@ -312,25 +340,32 @@ async def _get_or_create_slim_instance(
     # ``tls_insecure`` / URL combination must not leave an App behind.
     client_config = new_client_config(slim_endpoint, insecure=slim_insecure_client)
 
-    if not jwt and not bundle:
-        if not shared_secret:
-            raise ValueError(
-                "Either JWT or bundle must be provided, or a shared secret."
-            )
-
     # Derive identity provider and verifier from JWK and JWT
-    if jwt and bundle:
+    if jwt or bundle:
+        if not (jwt and bundle):
+            raise ValueError(
+                "JWT authentication needs both jwt and bundle; got only "
+                f"{'jwt' if jwt else 'bundle'}."
+            )
         provider, verifier = jwt_identity(
             jwt,
             bundle,
             local_name=str(local),
             aud=audience,
         )
-    else:
+    elif shared_secret:
+        if shared_secret == PLACEHOLDER_SHARED_SECRET:
+            logger.warning(
+                "Using the placeholder SLIM shared secret; any peer with the "
+                "default can join your sessions. Set shared_secret_identity, "
+                "or .with_shared_secret() / SLIM_SHARED_SECRET with CardBuilder."
+            )
         provider, verifier = shared_secret_identity(
             identity=str(local),
             secret=shared_secret,
         )
+    else:
+        raise ValueError("Either JWT or bundle must be provided, or a shared secret.")
 
     slim_app = slim_service.create_app(local, provider, verifier)
 
@@ -344,4 +379,4 @@ async def _get_or_create_slim_instance(
     global_slim_insecure = slim_insecure_client
     global_slim_endpoint = slim_endpoint
 
-    return slim_service, global_slim, global_connection_id
+    return slim_service, slim_app, slim_conn_id

@@ -1,9 +1,33 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+import inspect
 from abc import ABC, abstractmethod
 from agntcy_app_sdk.semantic.message import Message
 from typing import Callable, Awaitable, AsyncIterator, List, Any, TypeVar, Type
+
+
+def accepts_publish_fn(callback: Callable[..., Awaitable[Any]]) -> bool:
+    """Return whether *callback* can be called with a ``publish_fn`` keyword.
+
+    The wrapper's own signature is used, not the one ``functools.wraps``
+    copies from the wrapped function, so a wrapper must forward only what
+    the inner handler accepts.
+    """
+    try:
+        params = inspect.signature(callback, follow_wrapped=False).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            p.name == "publish_fn"
+            and p.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        )
+        for p in params
+    )
+
 
 """
 # Transport Mixins: Messaging Patterns & Unified Interface
@@ -43,14 +67,14 @@ class PointToPointMixin(ABC):
     """
 
     @abstractmethod
-    async def send(self, recipient: str, message: Message, **kwargs) -> None:
+    async def send(self, recipient: str, message: Message, **kwargs: Any) -> None:
         """
         Send a message to a single recipient without expecting a response.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def request(self, recipient: str, message: Message, **kwargs) -> Message:
+    async def request(self, recipient: str, message: Message, **kwargs: Any) -> Message:
         """
         Send a message to a recipient and await a single response.
         """
@@ -58,7 +82,7 @@ class PointToPointMixin(ABC):
 
     @abstractmethod
     async def request_stream(
-        self, recipient: str, message: Message, **kwargs
+        self, recipient: str, message: Message, **kwargs: Any
     ) -> AsyncIterator[Message]:
         """
         Send a request and receive a continuous stream of responses.
@@ -67,6 +91,7 @@ class PointToPointMixin(ABC):
         can override to provide streaming semantics.
         """
         raise NotImplementedError("Streaming not supported for point-to-point.")
+        yield  # makes this an async generator, so the error surfaces during iteration
 
 
 # -----------------------------------------------------------------------------
@@ -84,14 +109,16 @@ class FanOutMixin(ABC):
     """
 
     @abstractmethod
-    async def publish(self, topic: str, message: Message, **kwargs) -> None:
+    async def publish(self, topic: str, message: Message, **kwargs: Any) -> None:
         """
         Publish a message to all subscribers of the topic.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def gather(self, topic: str, message: Message, **kwargs) -> List[Message]:
+    async def gather(
+        self, topic: str, message: Message, recipients: List[str], **kwargs: Any
+    ) -> List[Message]:
         """
         Publish a message and collect responses from multiple subscribers.
 
@@ -102,7 +129,13 @@ class FanOutMixin(ABC):
 
     @abstractmethod
     async def gather_stream(
-        self, topic: str, message: Message, message_limit: int = None, **kwargs
+        self,
+        topic: str,
+        message: Message,
+        recipients: List[str],
+        *,
+        message_limit: int | None = None,
+        **kwargs: Any,
     ) -> AsyncIterator[Message]:
         """
         Publish a message and yield responses from multiple subscribers.
@@ -111,6 +144,7 @@ class FanOutMixin(ABC):
         can override to provide scatter/gather semantics.
         """
         raise NotImplementedError("Gather streaming not supported for this transport.")
+        yield  # makes this an async generator, so the error surfaces during iteration
 
 
 # -----------------------------------------------------------------------------
@@ -136,7 +170,7 @@ class GroupChatMixin(ABC):
         participants: List[str],
         init_message: Message,
         end_message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> List[Message]:
         """
         Create a new conversation including the given participants.
@@ -150,12 +184,13 @@ class GroupChatMixin(ABC):
         participants: List[str],
         init_message: Message,
         end_message: str,
-        **kwargs,
+        **kwargs: Any,
     ) -> AsyncIterator[Message]:
         """
         Create a new streaming conversation including the given participants.
         """
         raise NotImplementedError
+        yield  # makes this an async generator, so the error surfaces during iteration
 
 
 # -----------------------------------------------------------------------------
@@ -178,15 +213,24 @@ class BaseTransport(PointToPointMixin, FanOutMixin, GroupChatMixin, ABC):
         - Group Chat / Conversations (create_conversation/get_conversation)
     """
 
+    # Signature contract for subclasses: every method accepts the parameters
+    # that all concrete transports and BaseTransport-typed callers share.
+    # Transport-specific options (timeout, message_limit, org, ...) are extra
+    # parameters with defaults, or keyword arguments absorbed by ``**kwargs``.
+    # ``name`` (from_config) and ``message_limit`` (gather_stream) are
+    # keyword-only so subclasses may order their positional parameters freely.
+
     @classmethod
     @abstractmethod
-    def from_client(cls: Type[T], client: Any, name: str = None) -> T:
+    def from_client(cls: Type[T], client: Any, name: str | None = None) -> T:
         """Create a transport instance from a client."""
         pass
 
     @classmethod
     @abstractmethod
-    def from_config(cls: Type[T], endpoint: str, name: str = None, **kwargs) -> T:
+    def from_config(
+        cls: Type[T], endpoint: str, *, name: str | None = None, **kwargs: Any
+    ) -> T:
         """Create a transport instance from a configuration."""
         pass
 
@@ -196,7 +240,7 @@ class BaseTransport(PointToPointMixin, FanOutMixin, GroupChatMixin, ABC):
         pass
 
     @abstractmethod
-    async def setup(self, **kwargs) -> None:
+    async def setup(self) -> None:
         """Perform any necessary setup for the transport, useful for async initialization."""
         pass
 
@@ -210,7 +254,7 @@ class BaseTransport(PointToPointMixin, FanOutMixin, GroupChatMixin, ABC):
     # -----------------------------------------------------------------------------
 
     @abstractmethod
-    async def subscribe(self, topic: str, callback: callable = None) -> None:
+    async def subscribe(self, topic: str) -> None:
         """Subscribe to a topic with a callback."""
         pass
 

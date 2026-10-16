@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, Callable, List, AsyncIterator
+from typing import Optional, Callable, List, AsyncIterator, Any, Awaitable
 import asyncio
 import datetime
 import warnings
@@ -10,18 +10,36 @@ from identityservice.sdk import IdentityServiceSdk
 from slim_bindings import Name, Session, MessageContext
 
 from .common import (
+    PLACEHOLDER_SHARED_SECRET,
     get_or_create_slim_instance,
     split_id,
 )
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.common.tracing import SLIM_INSTRUMENTOR, instrument_if_ready
-from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.transport.base import BaseTransport, accepts_publish_fn
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 
 logger = get_logger(__name__)
+
+# UniFFI attaches error variants at import time, so they are invisible to mypy.
+_SlimReceiveError: type[slim_bindings.SlimError] = getattr(
+    slim_bindings.SlimError, "ReceiveError"
+)
+_SlimSessionError: type[slim_bindings.SlimError] = getattr(
+    slim_bindings.SlimError, "SessionError"
+)
+
+# Substrings of SessionError messages that mean the session no longer exists.
+_SESSION_GONE = (
+    "session channel closed",
+    "session closed",
+    "session already closed",
+    "receive channel closed",
+    "session not found",
+)
 
 """
 SLIM implementation of the BaseTransport interface.
@@ -45,16 +63,16 @@ class SLIMTransport(BaseTransport):
 
     def __init__(
         self,
-        routable_name: str = None,
-        slim_service=None,
-        slim_app=None,
-        slim_connection_id: int = None,
+        routable_name: str | None = None,
+        slim_service: slim_bindings.Service | None = None,
+        slim_app: slim_bindings.App | None = None,
+        slim_connection_id: int | None = None,
         endpoint: Optional[str] = None,
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         message_retries: int = 2,
-        shared_secret_identity: str = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS",
+        shared_secret_identity: str = PLACEHOLDER_SHARED_SECRET,
         tls_insecure: bool = True,
-        jwt: str = None,
+        jwt: str | None = None,
         bundle: str | None = None,
         audience: list[str] | None = None,
     ) -> None:
@@ -84,7 +102,8 @@ class SLIMTransport(BaseTransport):
         self._slim_app = slim_app
         self._slim_connection_id = slim_connection_id
 
-        self._callback = None
+        self._callback: Callable[..., Awaitable[Any]] | None = None
+        self._callback_takes_publish_fn = False
         self.message_timeout = message_timeout
         self.message_retries = message_retries
         self._shared_secret_identity = shared_secret_identity
@@ -94,8 +113,14 @@ class SLIMTransport(BaseTransport):
         self._audience = audience
 
         self._session_manager = SessionManager()
-        self._tasks: set[asyncio.Task] = set()
-        self._listener_task: asyncio.Task | None = None
+        if slim_app is not None:
+            if slim_connection_id is None:
+                raise ValueError(
+                    "slim_connection_id is required when slim_app is given"
+                )
+            self._session_manager.set_slim(slim_app, slim_connection_id)
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._listener_task: asyncio.Task[None] | None = None
         self._shutdown_event = asyncio.Event()
 
         instrument_if_ready("SLIMTransport", SLIM_INSTRUMENTOR)
@@ -120,14 +145,14 @@ class SLIMTransport(BaseTransport):
     # -----------------------------------------------------------------------------
     # Point-to-Point
     # -----------------------------------------------------------------------------
-    async def send(self, recipient: str, message: Message, **kwargs) -> None:
+    async def send(self, recipient: str, message: Message, **kwargs: Any) -> None:
         """
         Send a message to a single recipient without expecting a response.
         """
         raise NotImplementedError
 
     async def request(
-        self, recipient: str, message: Message, timeout: int = 6, **kwargs
+        self, recipient: str, message: Message, timeout: int = 6, **kwargs: Any
     ) -> Message:
         """
         Send a message to a recipient and await a single response.
@@ -138,6 +163,8 @@ class SLIMTransport(BaseTransport):
         if not self._slim_app:
             logger.warning("SLIM client is not initialized, calling setup() ...")
             await self.setup()
+        if self._slim_app is None or self._slim_connection_id is None:
+            raise ValueError("SLIM client is not set, please call setup() first.")
 
         logger.debug(f"Requesting response from topic: {remote_name}")
 
@@ -164,21 +191,20 @@ class SLIMTransport(BaseTransport):
             logger.debug(f"Received message back from {remote_name}")
         except asyncio.TimeoutError:
             logger.warning(f"Request timed out after {timeout} seconds")
-            return None
+            raise
         except Exception:
             logger.exception("Failed to publish message in p2p session")
-            return None
+            raise
         finally:
             logger.debug(
                 f"Closing point-to-point session: {point_to_point_session.session_id()} "
             )
             await self._session_manager.close_session(point_to_point_session)
 
-        reply = Message.deserialize(reply.payload)
-        return reply
+        return Message.deserialize(reply.payload)
 
     async def request_stream(
-        self, recipient: str, message: Message, timeout: int = 90, **kwargs
+        self, recipient: str, message: Message, timeout: int = 90, **kwargs: Any
     ) -> AsyncIterator[Message]:
         """
         Send a request and receive a stream of responses over a single
@@ -196,6 +222,8 @@ class SLIMTransport(BaseTransport):
         if not self._slim_app:
             logger.warning("SLIM client is not initialized, calling setup() ...")
             await self.setup()
+        if self._slim_app is None or self._slim_connection_id is None:
+            raise ValueError("SLIM client is not set, please call setup() first.")
 
         logger.debug(f"request_stream: opening session to {remote_name}")
 
@@ -234,7 +262,7 @@ class SLIMTransport(BaseTransport):
     # Fan-Out / Publish-Subscribe
     # -----------------------------------------------------------------------------
 
-    async def publish(self, topic: str, message: Message, **kwargs) -> None:
+    async def publish(self, topic: str, message: Message, **kwargs: Any) -> None:
         """
         Publish a message to all subscribers of the topic.
         """
@@ -245,9 +273,9 @@ class SLIMTransport(BaseTransport):
         topic: str,
         message: Message,
         recipients: List[str],
-        message_limit: int = None,
-        timeout: int = 60,
-        **kwargs,
+        message_limit: int | None = None,
+        timeout: float = 60,
+        **kwargs: Any,
     ) -> List[Message]:
         """
         Publish a message and collect responses from multiple subscribers.
@@ -255,7 +283,7 @@ class SLIMTransport(BaseTransport):
         if message_limit is None:
             message_limit = len(recipients)
 
-        responses = []
+        responses: List[Message] = []
         async for msg in self.gather_stream(
             topic,
             message,
@@ -272,9 +300,9 @@ class SLIMTransport(BaseTransport):
         topic: str,
         message: Message,
         recipients: List[str],
-        message_limit: int = None,
-        timeout: int = 60,
-        **kwargs,
+        message_limit: int | None = None,
+        timeout: float = 60,
+        **kwargs: Any,
     ) -> AsyncIterator[Message]:
         """
         Publish a message and yield responses from multiple subscribers as they arrive.
@@ -293,11 +321,10 @@ class SLIMTransport(BaseTransport):
         # convert recipients to Name objects
         invitees = [self.build_name(recipient) for recipient in recipients]
 
-        if message_limit is None:
-            message_limit = float("inf")
+        limit: float = float("inf") if message_limit is None else message_limit
 
         logger.debug(
-            f"Broadcasting to topic: {remote_name} and waiting for {message_limit} responses"
+            f"Broadcasting to topic: {remote_name} and waiting for {limit} responses"
         )
 
         # The deadline wraps each await, never a ``yield``: an
@@ -305,7 +332,7 @@ class SLIMTransport(BaseTransport):
         # code between events, and the consumer gets ``CancelledError``
         # instead of ``TimeoutError``.
         deadline = asyncio.get_running_loop().time() + timeout
-        group_session = None
+        group_session: Session | None = None
         try:
             async with asyncio.timeout_at(deadline):
                 _, group_session = await self._session_manager.group_broadcast_session(
@@ -339,7 +366,7 @@ class SLIMTransport(BaseTransport):
 
             # wait for responses from all invitees or be interrupted by caller
             messages_received = 0
-            while messages_received < message_limit:
+            while messages_received < limit:
                 try:
                     _raise_if_past(deadline)
                     async with asyncio.timeout_at(deadline):
@@ -379,12 +406,12 @@ class SLIMTransport(BaseTransport):
         init_message: Message,
         end_message: str = "done",
         timeout: float = 60.0,
-        **kwargs,
+        **kwargs: Any,
     ) -> List[Message]:
         """
         Create a new conversation including the given participants.
         """
-        responses = []
+        responses: List[Message] = []
         async for msg in self.start_streaming_conversation(
             group_channel, participants, init_message, end_message, timeout, **kwargs
         ):
@@ -398,7 +425,7 @@ class SLIMTransport(BaseTransport):
         init_message: Message,
         end_message: str = "done",
         timeout: float = 60.0,
-        **kwargs,
+        **kwargs: Any,
     ) -> AsyncIterator[Message]:
         """
         Create a new conversation including the given participants.
@@ -426,7 +453,7 @@ class SLIMTransport(BaseTransport):
         init_message.headers["x-respond-to-group"] = "true"
         # See gather_stream: the deadline must not be held across ``yield``.
         deadline = asyncio.get_running_loop().time() + timeout
-        group_session = None
+        group_session: Session | None = None
         try:
             async with asyncio.timeout_at(deadline):
                 (
@@ -482,7 +509,7 @@ class SLIMTransport(BaseTransport):
     # -----------------------------------------------------------------------------
 
     @classmethod
-    def from_client(cls, client, name: str = None) -> "SLIMTransport":
+    def from_client(cls, client: Any, name: str | None = None) -> "SLIMTransport":
         """
         Create a SLIM transport instance from an existing SLIM client.
         :param client: An instance of slim_bindings.App
@@ -494,7 +521,9 @@ class SLIMTransport(BaseTransport):
         raise NotImplementedError("from_client method is not yet implemented")
 
     @classmethod
-    def from_config(cls, endpoint: str, name: str, **kwargs) -> "SLIMTransport":
+    def from_config(
+        cls, endpoint: str, name: str | None = None, **kwargs: Any
+    ) -> "SLIMTransport":
         """
         Create a SLIM transport instance from a configuration.
         :param endpoint: The SLIM server endpoint.
@@ -505,12 +534,6 @@ class SLIMTransport(BaseTransport):
             raise ValueError(
                 "Routable name must be provided in the form 'org/namespace/local_name'"
             )
-        shared_secret_identity = kwargs.get("shared_secret_identity", "slim-mls-secret")
-        jwt = kwargs.get("jwt", None)
-
-        if not jwt and not shared_secret_identity:
-            logger.warning("No JWT or shared_secret_identity provided, using defaults.")
-
         return cls(routable_name=name, endpoint=endpoint, **kwargs)
 
     def type(self) -> str:
@@ -518,7 +541,7 @@ class SLIMTransport(BaseTransport):
         return self.TRANSPORT_TYPE
 
     async def close(self) -> None:
-        if not self._slim_service:
+        if not self._slim_service or self._slim_connection_id is None:
             logger.warning("SLIM client is not initialized, no connection close.")
             return
 
@@ -534,16 +557,17 @@ class SLIMTransport(BaseTransport):
             else:
                 logger.error(f"Error disconnecting SLIM transport: {e}")
 
-    def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
+    def set_callback(self, handler: Callable[..., Awaitable[Any]]) -> None:
         """Set the message handler function."""
         self._callback = handler
+        self._callback_takes_publish_fn = accepts_publish_fn(handler)
 
         # Start the listener task after setting the callback
         if not self._slim_app:
             raise ValueError("SLIM client is not set, please call setup() first.")
         self._listener_task = asyncio.create_task(self._listen_for_sessions())
 
-    async def setup(self):
+    async def setup(self) -> None:
         """
         Start the async receive loop for incoming messages.
         """
@@ -575,7 +599,9 @@ class SLIMTransport(BaseTransport):
             logger.error(f"Error building Name from topic '{topic}': {e}")
             raise
 
-    async def subscribe(self, topic: str, org=None, namespace=None) -> None:
+    async def subscribe(
+        self, topic: str, org: str | None = None, namespace: str | None = None
+    ) -> None:
         """
         Store the subscription information for a given topic, org, and namespace
         to be used for receive filtering.
@@ -589,6 +615,10 @@ class SLIMTransport(BaseTransport):
         try:
             while not self._shutdown_event.is_set():
                 try:
+                    if self._slim_app is None:
+                        raise ValueError(
+                            "SLIM client is not set, please call setup() first."
+                        )
                     received_session = await self._slim_app.listen_for_session_async(
                         timeout=self.message_timeout
                     )
@@ -604,7 +634,7 @@ class SLIMTransport(BaseTransport):
                     task.add_done_callback(self._tasks.discard)
                 except asyncio.CancelledError:
                     raise
-                except slim_bindings.SlimError.ReceiveError as e:
+                except _SlimReceiveError as e:
                     if "timed out" in str(e).lower():
                         logger.debug("listen_for_session timed out (no new sessions)")
                         continue
@@ -632,19 +662,22 @@ class SLIMTransport(BaseTransport):
                     await self._process_received_message(session, received_msg)
                 except asyncio.CancelledError:
                     raise
-                except slim_bindings.SlimError.SessionError as e:
+                except _SlimSessionError as e:
                     msg = str(e).lower()
 
-                    if (
-                        "session channel closed" in msg
-                        or "session closed" in msg
-                        or "session already closed"
-                    ):
+                    if any(gone in msg for gone in _SESSION_GONE):
                         logger.debug(
                             f"Session {session_id} closed remotely (likely by moderator), stopping listener"
                         )
                         break
                     else:
+                        consecutive_errors += 1
+                        if consecutive_errors > max_retries:
+                            logger.error(
+                                f"Max retries exceeded for session {session_id}, closing: {e}"
+                            )
+                            await self._session_manager.close_session(session)
+                            break
                         logger.error(
                             f"Unexpected session error while getting messages: {e}"
                         )
@@ -670,7 +703,9 @@ class SLIMTransport(BaseTransport):
         finally:
             logger.debug(f"Session {session_id} receive loop terminated")
 
-    async def _process_received_message(self, session: Session, msg):
+    async def _process_received_message(
+        self, session: Session, msg: slim_bindings.ReceivedMessage
+    ) -> None:
         """Process a single received message and handle response logic."""
         # Deserialize the message
         try:
@@ -683,7 +718,7 @@ class SLIMTransport(BaseTransport):
         # client over the same session.  This is passed as ``publish_fn``
         # to the callback so that streaming handlers can emit status
         # updates before the final response.
-        async def _publish_intermediate(intermediate_msg: Message):
+        async def _publish_intermediate(intermediate_msg: Message) -> None:
             try:
                 await session.publish_to_async(
                     msg.context, intermediate_msg.serialize(), None, None
@@ -692,18 +727,16 @@ class SLIMTransport(BaseTransport):
                 logger.error(f"Error publishing intermediate message: {pub_err}")
 
         # Call the callback function
+        if self._callback is None:
+            logger.error("Error in callback function: no callback set")
+            return
         try:
-            output = await self._callback(
-                deserialized_msg, publish_fn=_publish_intermediate
-            )
-        except TypeError:
-            # Fallback: callback does not accept publish_fn (e.g. tests
-            # or custom handlers).  Call without the extra kwarg.
-            try:
+            if self._callback_takes_publish_fn:
+                output = await self._callback(
+                    deserialized_msg, publish_fn=_publish_intermediate
+                )
+            else:
                 output = await self._callback(deserialized_msg)
-            except Exception as e:
-                logger.error(f"Error in callback function: {e}")
-                return
         except Exception as e:
             logger.error(f"Error in callback function: {e}")
             return
@@ -716,7 +749,11 @@ class SLIMTransport(BaseTransport):
         await self._handle_response(session, msg.context, deserialized_msg, output)
 
     async def _handle_response(
-        self, session: Session, msg_ctx: MessageContext, original_msg, output: Message
+        self,
+        session: Session,
+        msg_ctx: MessageContext,
+        original_msg: Message,
+        output: Message,
     ) -> None:
         """Handle response publishing based on message headers."""
         session_id = session.session_id()

@@ -1,7 +1,7 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional
+from typing import Any, Optional
 import json
 import base64
 
@@ -14,26 +14,28 @@ class Message:
     def __init__(
         self,
         type: str,
-        payload: bytes,
+        payload: bytes | str,
         reply_to: Optional[str] = None,
         route_path: Optional[str] = "/",
         method: Optional[str] = "POST",
-        headers: Optional[dict] = None,
+        headers: Optional[dict[str, str]] = None,
         status_code: Optional[int] = None,
-    ):
+    ) -> None:
         self.type = type
-        self.payload = payload
+        self.payload: bytes = (
+            payload.encode("utf-8") if isinstance(payload, str) else payload
+        )
         self.reply_to = reply_to
         self.route_path = route_path
         self.method = method
-        self.headers = headers if headers is not None else {}
+        self.headers: dict[str, str] = headers if headers is not None else {}
         self.status_code = status_code
 
     def __repr__(self) -> str:
-        return f"Message(type={self.type}, payload={self.payload}, reply_to={self.reply_to}, route_path={self.route_path}, method={self.method}, headers={self.headers}, status_code={self.status_code})"
+        return f"Message(type={self.type}, payload={self.payload!s}, reply_to={self.reply_to}, route_path={self.route_path}, method={self.method}, headers={self.headers}, status_code={self.status_code})"
 
     def __str__(self) -> str:
-        return f"Message(type={self.type}, payload={self.payload}, reply_to={self.reply_to}, route_path={self.route_path}, method={self.method}, headers={self.headers}, status_code={self.status_code})"
+        return f"Message(type={self.type}, payload={self.payload!s}, reply_to={self.reply_to}, route_path={self.route_path}, method={self.method}, headers={self.headers}, status_code={self.status_code})"
 
     def serialize(self) -> bytes:
         """
@@ -51,7 +53,7 @@ class Message:
                 payload_bytes = str(payload_bytes).encode("utf-8")
 
         # Create a dictionary representation of the Message
-        message_dict = {
+        message_dict: dict[str, Any] = {
             "type": self.type,
             "payload": base64.b64encode(payload_bytes).decode("ascii"),
         }

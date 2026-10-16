@@ -12,7 +12,9 @@ between events).
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,7 +25,7 @@ from agntcy_app_sdk.transport.slim.transport import SLIMTransport
 pytest_plugins = "pytest_asyncio"
 
 
-def _transport(session_manager) -> SLIMTransport:
+def _transport(session_manager: MagicMock) -> SLIMTransport:
     transport = SLIMTransport(
         routable_name="org/ns/client", endpoint="http://localhost:46357"
     )
@@ -42,11 +44,15 @@ def _replying_session() -> MagicMock:
     return session
 
 
-def _session_manager(session: MagicMock | None = None, *, hang: bool = False):
+def _session_manager(
+    session: MagicMock | None = None, *, hang: bool = False
+) -> MagicMock:
     manager = MagicMock()
     manager.close_session = AsyncMock()
 
-    async def open_session(*_args, **_kwargs):
+    async def open_session(
+        *_args: Any, **_kwargs: Any
+    ) -> tuple[None, MagicMock | None]:
         if hang:
             await asyncio.Event().wait()
         return None, session
@@ -55,14 +61,14 @@ def _session_manager(session: MagicMock | None = None, *, hang: bool = False):
     return manager
 
 
-async def _consume_slowly(stream, delay: float) -> None:
+async def _consume_slowly(stream: AsyncIterator[Message], delay: float) -> None:
     async for _ in stream:
         await asyncio.sleep(delay)
 
 
 class TestGatherStreamTimeout:
     @pytest.mark.asyncio
-    async def test_timeout_during_session_setup_raises_timeout_error(self):
+    async def test_timeout_during_session_setup_raises_timeout_error(self) -> None:
         """An offline recipient stalls the invite; that is a timeout, not an
         ``UnboundLocalError`` from the cleanup code."""
         manager = _session_manager(hang=True)
@@ -79,7 +85,7 @@ class TestGatherStreamTimeout:
         manager.close_session.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_slow_consumer_gets_timeout_error_not_cancelled(self):
+    async def test_slow_consumer_gets_timeout_error_not_cancelled(self) -> None:
         session = _replying_session()
         manager = _session_manager(session)
         transport = _transport(manager)
@@ -97,10 +103,10 @@ class TestGatherStreamTimeout:
         manager.close_session.assert_awaited_once_with(session)
 
     @pytest.mark.asyncio
-    async def test_no_reply_raises_timeout_error_and_closes_the_session(self):
+    async def test_no_reply_raises_timeout_error_and_closes_the_session(self) -> None:
         session = _replying_session()
 
-        async def never(**_kwargs):
+        async def never(**_kwargs: Any) -> None:
             await asyncio.Event().wait()
 
         session.get_message_async = AsyncMock(side_effect=never)
@@ -120,7 +126,7 @@ class TestGatherStreamTimeout:
 
 class TestStreamingConversationTimeout:
     @pytest.mark.asyncio
-    async def test_timeout_during_session_setup_raises_timeout_error(self):
+    async def test_timeout_during_session_setup_raises_timeout_error(self) -> None:
         manager = _session_manager(hang=True)
         transport = _transport(manager)
 
@@ -136,7 +142,7 @@ class TestStreamingConversationTimeout:
         manager.close_session.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_slow_consumer_gets_timeout_error_not_cancelled(self):
+    async def test_slow_consumer_gets_timeout_error_not_cancelled(self) -> None:
         session = _replying_session()
         manager = _session_manager(session)
         transport = _transport(manager)

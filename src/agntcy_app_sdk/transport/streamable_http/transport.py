@@ -1,6 +1,5 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
-import asyncio
 from contextlib import AsyncExitStack
 
 from mcp import ClientSession
@@ -9,7 +8,7 @@ from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.transport.streamable_http.models import StreamsContextProtocol
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
-from typing import Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 logger = get_logger(__name__)
 
@@ -18,20 +17,24 @@ class StreamableHTTPTransport(BaseTransport):
     TRANSPORT_TYPE: str = "STREAMABLE_HTTP"
     """Registry key used by :class:`AgntcyFactory`."""
 
-    def __init__(self, endpoint: str):
-        self.endpoint: str = endpoint if endpoint else None
+    def __init__(self, endpoint: str) -> None:
+        self.endpoint: str | None = endpoint if endpoint else None
         self.session: Optional[ClientSession] = None
         self._exit_stack = AsyncExitStack()
-        self._session_context: Optional[AsyncExitStack] = None
+        self._session_context: Optional[ClientSession] = None
         self._streams_context: Optional[StreamsContextProtocol] = None
 
     @classmethod
-    def from_client(cls, client):
-        """Create a Streamable HTTP transport instance from a client."""
-        return cls(client=client)
+    def from_client(
+        cls, client: Any, name: str | None = None
+    ) -> "StreamableHTTPTransport":
+        """Not supported: this transport opens its own session in ``connect()``."""
+        raise NotImplementedError(
+            "Streamable HTTP transport cannot wrap an existing client"
+        )
 
     @classmethod
-    def from_config(cls, endpoint: str, **kwargs):
+    def from_config(cls, endpoint: str, **kwargs: Any) -> "StreamableHTTPTransport":
         """
         Create a Streamable HTTP transport instance from a configuration.
         :param endpoint: The Streamable HTTP server endpoint.
@@ -42,13 +45,13 @@ class StreamableHTTPTransport(BaseTransport):
     def type(self) -> str:
         return self.TRANSPORT_TYPE
 
-    def set_callback(self, handler: Callable[[Message], asyncio.Future]) -> None:
+    def set_callback(self, handler: Callable[..., Awaitable[Any]]) -> None:
         """Set the message handler function."""
         raise NotImplementedError(
             "Set callback method is not implemented for Streamable HTTP transport"
         )
 
-    async def connect(self, streams_context: StreamsContextProtocol):
+    async def connect(self, streams_context: StreamsContextProtocol) -> None:
         """Connect to the Streamable HTTP server."""
         if self.session is not None:
             logger.info("Already connected to Streamable HTTP server.")
@@ -82,6 +85,7 @@ class StreamableHTTPTransport(BaseTransport):
         message: Message,
         respond: Optional[bool] = False,
         headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
     ) -> None:
         """Publish a message to a topic."""
         raise NotImplementedError(
@@ -94,8 +98,13 @@ class StreamableHTTPTransport(BaseTransport):
         )
 
     async def broadcast(
-        self, topic, message, expected_responses=1, timeout=30, headers=None
-    ):
+        self,
+        topic: str,
+        message: Message,
+        expected_responses: int = 1,
+        timeout: int = 30,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
         """Broadcast a message to all subscribers of a topic."""
         raise NotImplementedError(
             "Broadcast method is not implemented for Streamable HTTP transport"
