@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/agntcy/app-sdk/compare/v0.5.5...v0.6.0) (2026-10-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* BaseTransport.gather() and gather_stream() require `recipients`; gather_stream()'s `message_limit` is keyword-only; setup() takes no kwargs, subscribe() takes no callback, from_config() takes `name` keyword-only. SLIMTransport.request() raises instead of returning None. SLIM JWT auth needs both `jwt` and `bundle` (even with a shared secret). SLIMTransport(slim_app=...) requires `slim_connection_id`. Message(payload=str) is stored as UTF-8 bytes.
+* **a2a:** tls_insecure=False now requires an https:// endpoint and a certificate the host trusts.
+
+### Features
+
+* **a2a:** migrate to a2a-sdk 1.x and upgrade to SLIM 2.2.0 ([#126](https://github.com/agntcy/app-sdk/issues/126)) ([6e6cf4b](https://github.com/agntcy/app-sdk/commit/6e6cf4b4ada0375bb1db0b4fd1c022ebde998443))
+* type the SDK with mypy --strict, ship py.typed, and fix the bugs typing exposed ([#136](https://github.com/agntcy/app-sdk/issues/136)) ([18a5d04](https://github.com/agntcy/app-sdk/commit/18a5d04d8e69f3166d6f5674560d98ca5638f304))
+
 ## [0.5.5](https://github.com/agntcy/app-sdk/compare/v0.5.4...v0.5.5) (2026-04-09)
 
 
