@@ -11,6 +11,7 @@ from a2a.client.client import ClientConfig as A2AClientConfig
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.card_utils import wire_binding
+from agntcy_app_sdk.transport.slim.common import PLACEHOLDER_SHARED_SECRET
 
 if TYPE_CHECKING:
     from agntcy_app_sdk.transport.base import BaseTransport
@@ -73,7 +74,7 @@ class SlimTransportConfig:
 
     # -- Security / auth -----------------------------------------------------
 
-    shared_secret_identity: str = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+    shared_secret_identity: str = PLACEHOLDER_SHARED_SECRET
     """MLS shared secret.  Must be ≥ 32 characters for SLIM v0.7+."""
 
     tls_insecure: bool = True
@@ -128,7 +129,7 @@ class NatsTransportConfig:
 # ---------------------------------------------------------------------------
 
 
-class _ResolvedBindings(list):
+class _ResolvedBindings(list[str]):
     """Marker for binding lists resolved by ``ClientConfig.__post_init__``.
 
     ``dataclasses.replace`` copies attributes by reference, so this lets

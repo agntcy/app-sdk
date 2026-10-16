@@ -13,11 +13,14 @@ import asyncio
 import dataclasses
 import json
 import warnings
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from a2a.client.client import Client, ClientCallContext
+from a2a.client.client import ClientConfig as A2AClientConfig
 from a2a.client.errors import A2AClientError
 from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
 from a2a.helpers import get_stream_response_text, new_text_message
@@ -36,6 +39,7 @@ from a2a.types import (
     TaskState,
 )
 from a2a.utils.errors import InternalError, TaskNotFoundError
+from slima2a.client_transport import SRPCTransport
 
 from agntcy_app_sdk.semantic.a2a.client.config import (
     ClientConfig,
@@ -48,7 +52,11 @@ from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
     A2ABroadcastTimeoutError,
     A2AExperimentalClient,
 )
-from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+from agntcy_app_sdk.semantic.a2a.client.factory import (
+    A2AClientFactory,
+    _produce_patterns,
+    _produce_slimrpc,
+)
 from agntcy_app_sdk.semantic.a2a.client.transports import (
     PatternsClientTransport,
     _parse_topic_from_url,
@@ -106,7 +114,7 @@ def _user_request(text: str = "Hi") -> SendMessageRequest:
     return SendMessageRequest(message=new_text_message(text, role=Role.ROLE_USER))
 
 
-def _message_result(text: str = "Hello") -> dict:
+def _message_result(text: str = "Hello") -> dict[str, Any]:
     """ProtoJSON ``result`` carrying an agent message."""
     return {
         "message": {
@@ -117,7 +125,9 @@ def _message_result(text: str = "Hello") -> dict:
     }
 
 
-def _status_result(state: str = "TASK_STATE_WORKING", text: str = "tok") -> dict:
+def _status_result(
+    state: str = "TASK_STATE_WORKING", text: str = "tok"
+) -> dict[str, Any]:
     """ProtoJSON ``result`` carrying a task status update."""
     return {
         "statusUpdate": {
@@ -136,11 +146,11 @@ def _status_result(state: str = "TASK_STATE_WORKING", text: str = "tok") -> dict
 
 
 def _rpc_response(
-    result: dict | None = None,
+    result: dict[str, Any] | None = None,
     *,
     type_: str = "A2AResponse",
     status_code: int = 200,
-    error: dict | None = None,
+    error: dict[str, Any] | None = None,
     sender: str | None = None,
 ) -> MagicMock:
     """Create a mock transport response with a JSON-RPC payload.
@@ -148,7 +158,7 @@ def _rpc_response(
     *sender* sets the ``x-a2a-sender`` header an SDK server stamps on replies.
     """
     resp = MagicMock()
-    payload: dict = {"jsonrpc": "2.0", "id": "1"}
+    payload: dict[str, Any] = {"jsonrpc": "2.0", "id": "1"}
     if error is not None:
         payload["error"] = error
     else:
@@ -160,10 +170,10 @@ def _rpc_response(
     return resp
 
 
-def _async_gen(*items):
+def _async_gen(*items: Any) -> Callable[..., AsyncIterator[Any]]:
     """Return a factory for an async generator yielding *items*."""
 
-    async def _gen(*_args, **_kwargs):
+    async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
         for item in items:
             yield item
 
@@ -178,7 +188,7 @@ _RPC_ERROR = {"code": -32603, "message": "boom"}
 _HANG_GUARD_S = 5.0
 
 
-def _hanging_gen(*items):
+def _hanging_gen(*items: Any) -> Callable[..., AsyncIterator[Any]]:
     """Like :func:`_async_gen`, but the stream never ends after *items*.
 
     This mimics a transport still waiting for more replies until its timeout
@@ -186,7 +196,7 @@ def _hanging_gen(*items):
     blocks here, which the tests turn into a failure via ``asyncio.wait_for``.
     """
 
-    async def _gen(*_args, **_kwargs):
+    async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
         for item in items:
             yield item
         await asyncio.Event().wait()
@@ -194,10 +204,10 @@ def _hanging_gen(*items):
     return _gen
 
 
-def _timeout_gen(*items):
+def _timeout_gen(*items: Any) -> Callable[..., AsyncIterator[Any]]:
     """Like :func:`_async_gen`, then raise ``TimeoutError`` as SLIM does."""
 
-    async def _gen(*_args, **_kwargs):
+    async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
         for item in items:
             yield item
         raise asyncio.TimeoutError("Timeout while waiting for replies")
@@ -205,9 +215,12 @@ def _timeout_gen(*items):
     return _gen
 
 
-async def _drain(stream):
+async def _drain(
+    stream: AsyncIterator[StreamResponse],
+) -> tuple[list[StreamResponse], A2ABroadcastError | None]:
     """Consume a broadcast stream; return ``(events, A2ABroadcastError | None)``."""
-    events, error = [], None
+    events: list[StreamResponse] = []
+    error: A2ABroadcastError | None = None
     try:
         async for event in stream:
             events.append(event)
@@ -216,10 +229,11 @@ async def _drain(stream):
     return events, error
 
 
-def _sent_rpc(mock_call) -> dict:
+def _sent_rpc(mock_call: MagicMock) -> dict[str, Any]:
     """Decode the JSON-RPC envelope from the transport ``Message`` that was sent."""
     message = mock_call.call_args.args[1]
-    return json.loads(message.payload)
+    rpc: dict[str, Any] = json.loads(message.payload)
+    return rpc
 
 
 class _RecordingInterceptor(ClientCallInterceptor):
@@ -229,7 +243,7 @@ class _RecordingInterceptor(ClientCallInterceptor):
     actual a2a-sdk 1.x interface contract.
     """
 
-    def __init__(self, headers: dict[str, str] | None = None):
+    def __init__(self, headers: dict[str, str] | None = None) -> None:
         self.before_calls: list[BeforeArgs] = []
         self.after_calls: list[AfterArgs] = []
         self._headers = headers
@@ -253,25 +267,27 @@ class _RecordingInterceptor(ClientCallInterceptor):
 
 
 class TestTransportConfigs:
-    def test_slim_transport_config_requires_fields(self):
+    def test_slim_transport_config_requires_fields(self) -> None:
         """SlimTransportConfig should require endpoint and name."""
         cfg = SlimTransportConfig(endpoint="http://localhost:46357", name="a/b/c")
         assert cfg.endpoint == "http://localhost:46357"
         assert cfg.name == "a/b/c"
 
-    def test_slim_transport_config_missing_name_raises(self):
+    def test_slim_transport_config_missing_name_raises(self) -> None:
+        factory: Any = SlimTransportConfig
         with pytest.raises(TypeError):
-            SlimTransportConfig(endpoint="http://localhost:46357")  # type: ignore[call-arg]
+            factory(endpoint="http://localhost:46357")
 
-    def test_nats_transport_config_requires_endpoint(self):
+    def test_nats_transport_config_requires_endpoint(self) -> None:
         cfg = NatsTransportConfig(endpoint="nats://localhost:4222")
         assert cfg.endpoint == "nats://localhost:4222"
 
-    def test_nats_transport_config_missing_endpoint_raises(self):
+    def test_nats_transport_config_missing_endpoint_raises(self) -> None:
+        factory: Any = NatsTransportConfig
         with pytest.raises(TypeError):
-            NatsTransportConfig()  # type: ignore[call-arg]
+            factory()
 
-    def test_slim_rpc_config_requires_all_fields(self):
+    def test_slim_rpc_config_requires_all_fields(self) -> None:
         cfg = SlimRpcConfig(namespace="agntcy", group="demo", name="client")
         assert cfg.namespace == "agntcy"
         assert cfg.group == "demo"
@@ -284,7 +300,7 @@ class TestTransportConfigs:
 
 
 class TestClientConfig:
-    def test_extends_upstream_config(self):
+    def test_extends_upstream_config(self) -> None:
         config = ClientConfig()
         assert config.slim_config is None
         assert config.slim_transport is None
@@ -295,11 +311,11 @@ class TestClientConfig:
         # Upstream fields should be present
         assert config.streaming is True
 
-    def test_post_init_default_jsonrpc(self):
+    def test_post_init_default_jsonrpc(self) -> None:
         """Empty config should auto-derive supported_protocol_bindings with JSONRPC."""
         assert ClientConfig().supported_protocol_bindings == ["JSONRPC"]
 
-    def test_post_init_slim_config(self):
+    def test_post_init_slim_config(self) -> None:
         config = ClientConfig(
             slim_config=SlimTransportConfig(
                 endpoint="http://localhost:46357", name="a/b/c"
@@ -308,25 +324,25 @@ class TestClientConfig:
         assert "JSONRPC" in config.supported_protocol_bindings
         assert "slimpatterns" in config.supported_protocol_bindings
 
-    def test_post_init_slim_transport(self):
+    def test_post_init_slim_transport(self) -> None:
         config = ClientConfig(slim_transport=_make_mock_transport())
         assert "slimpatterns" in config.supported_protocol_bindings
 
-    def test_post_init_nats_config(self):
+    def test_post_init_nats_config(self) -> None:
         config = ClientConfig(
             nats_config=NatsTransportConfig(endpoint="nats://localhost:4222"),
         )
         assert "natspatterns" in config.supported_protocol_bindings
 
-    def test_post_init_nats_transport(self):
+    def test_post_init_nats_transport(self) -> None:
         config = ClientConfig(nats_transport=_make_mock_transport("NATS"))
         assert "natspatterns" in config.supported_protocol_bindings
 
-    def test_post_init_slimrpc_channel_factory(self):
+    def test_post_init_slimrpc_channel_factory(self) -> None:
         config = ClientConfig(slimrpc_channel_factory=MagicMock())
         assert "slimrpc" in config.supported_protocol_bindings
 
-    def test_post_init_slimrpc_config(self):
+    def test_post_init_slimrpc_config(self) -> None:
         config = ClientConfig(
             slimrpc_config=SlimRpcConfig(
                 namespace="agntcy", group="demo", name="client"
@@ -334,7 +350,7 @@ class TestClientConfig:
         )
         assert "slimrpc" in config.supported_protocol_bindings
 
-    def test_post_init_multiple_transports(self):
+    def test_post_init_multiple_transports(self) -> None:
         config = ClientConfig(
             slim_config=SlimTransportConfig(
                 endpoint="http://localhost:46357", name="a/b/c"
@@ -349,7 +365,7 @@ class TestClientConfig:
             "slimrpc",
         ]
 
-    def test_explicit_bindings_not_overridden(self):
+    def test_explicit_bindings_not_overridden(self) -> None:
         """If the user sets supported_protocol_bindings, __post_init__ keeps them."""
         config = ClientConfig(
             supported_protocol_bindings=["custom_transport"],
@@ -357,7 +373,7 @@ class TestClientConfig:
         )
         assert config.supported_protocol_bindings == ["custom_transport"]
 
-    def test_explicit_bindings_are_normalised(self):
+    def test_explicit_bindings_are_normalised(self) -> None:
         """Casing and aliases are normalised to what the upstream factory expects."""
         config = ClientConfig(supported_protocol_bindings=["jsonrpc", "SLIM", "nats"])
         assert config.supported_protocol_bindings == [
@@ -366,7 +382,7 @@ class TestClientConfig:
             "natspatterns",
         ]
 
-    def test_deprecated_supported_transports_is_honoured_with_warning(self):
+    def test_deprecated_supported_transports_is_honoured_with_warning(self) -> None:
         """The a2a-sdk 0.3 field name still works, but warns."""
         with pytest.warns(DeprecationWarning, match="supported_transports"):
             config = ClientConfig(
@@ -375,14 +391,16 @@ class TestClientConfig:
             )
         assert config.supported_protocol_bindings == ["custom_transport"]
 
-    def test_deprecated_supported_transports_mirrors_bindings(self):
+    def test_deprecated_supported_transports_mirrors_bindings(self) -> None:
         """Reading the old attribute keeps working (mirrors the new field)."""
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             config = ClientConfig(slim_transport=_make_mock_transport())
         assert config.supported_transports == config.supported_protocol_bindings
 
-    def test_replace_with_deprecated_transports_overrides_populated_config(self):
+    def test_replace_with_deprecated_transports_overrides_populated_config(
+        self,
+    ) -> None:
         """replace(..., supported_transports=...) must win over existing bindings."""
         with warnings.catch_warnings():
             warnings.simplefilter("error")
@@ -395,7 +413,9 @@ class TestClientConfig:
         assert replaced.supported_protocol_bindings == ["JSONRPC"]
         assert replaced.supported_transports == ["JSONRPC"]
 
-    def test_assigning_deprecated_transports_after_construction_takes_effect(self):
+    def test_assigning_deprecated_transports_after_construction_takes_effect(
+        self,
+    ) -> None:
         """The factory reads supported_protocol_bindings, so assigning the old
         field must update it rather than be silently ignored."""
         config = ClientConfig(slim_transport=_make_mock_transport())
@@ -411,7 +431,7 @@ class TestClientConfig:
             replaced = dataclasses.replace(config)
         assert replaced.supported_protocol_bindings == ["slimpatterns"]
 
-    def test_assigning_bindings_after_construction_does_not_warn(self):
+    def test_assigning_bindings_after_construction_does_not_warn(self) -> None:
         config = ClientConfig()
         with warnings.catch_warnings():
             warnings.simplefilter("error")
@@ -419,7 +439,7 @@ class TestClientConfig:
             config.use_client_preference = True
         assert config.supported_protocol_bindings == ["slimrpc"]
 
-    def test_both_passed_with_different_values_bindings_win(self):
+    def test_both_passed_with_different_values_bindings_win(self) -> None:
         """A fresh config given both fields: the new field wins, with a warning."""
         with pytest.warns(DeprecationWarning, match="supported_transports is ignored"):
             config = ClientConfig(
@@ -429,7 +449,7 @@ class TestClientConfig:
         assert config.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
         assert config.supported_transports == config.supported_protocol_bindings
 
-    def test_both_passed_with_equal_values_only_deprecation_warning(self):
+    def test_both_passed_with_equal_values_only_deprecation_warning(self) -> None:
         """Equal after normalisation (case/alias): no 'ignored' message."""
         with pytest.warns(DeprecationWarning, match="deprecated") as record:
             config = ClientConfig(
@@ -439,7 +459,7 @@ class TestClientConfig:
         assert not any("ignored" in str(w.message) for w in record)
         assert config.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
 
-    def test_replace_with_both_fields_is_both_passed(self):
+    def test_replace_with_both_fields_is_both_passed(self) -> None:
         """Both overridden in replace(): treated as a fresh 'both passed'."""
         base = ClientConfig(slim_transport=_make_mock_transport())
         with pytest.warns(DeprecationWarning, match="supported_transports is ignored"):
@@ -450,7 +470,7 @@ class TestClientConfig:
             )
         assert replaced.supported_protocol_bindings == ["custom_a"]
 
-    def test_resolved_bindings_copied_with_list_count_as_user_passed(self):
+    def test_resolved_bindings_copied_with_list_count_as_user_passed(self) -> None:
         """Copying another config's bindings drops the marker -> 'both passed'."""
         other = ClientConfig(slim_transport=_make_mock_transport())
         with pytest.warns(DeprecationWarning, match="supported_transports is ignored"):
@@ -460,7 +480,7 @@ class TestClientConfig:
             )
         assert config.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
 
-    def test_resolved_bindings_passed_as_same_object_behave_like_replace(self):
+    def test_resolved_bindings_passed_as_same_object_behave_like_replace(self) -> None:
         """Documented limitation: the same resolved object is treated as replace()."""
         other = ClientConfig(slim_transport=_make_mock_transport())
         with pytest.warns(DeprecationWarning, match="deprecated"):
@@ -470,7 +490,7 @@ class TestClientConfig:
             )
         assert config.supported_protocol_bindings == ["custom_transport"]
 
-    def test_replace_with_bindings_not_overridden_by_stale_mirror(self):
+    def test_replace_with_bindings_not_overridden_by_stale_mirror(self) -> None:
         """The mirror copied by replace() must not clobber new bindings."""
         base = ClientConfig(slim_transport=_make_mock_transport())
 
@@ -483,7 +503,7 @@ class TestClientConfig:
         assert replaced.supported_protocol_bindings == ["custom_transport"]
         assert replaced.supported_transports == ["custom_transport"]
 
-    def test_replace_unrelated_field_keeps_bindings_without_warning(self):
+    def test_replace_unrelated_field_keeps_bindings_without_warning(self) -> None:
         base = ClientConfig(slim_transport=_make_mock_transport())
 
         with warnings.catch_warnings():
@@ -501,32 +521,32 @@ class TestClientConfig:
 
 
 class TestParseTopicFromUrl:
-    def test_slim_scheme(self):
+    def test_slim_scheme(self) -> None:
         assert _parse_topic_from_url("slim://my_topic") == "my_topic"
 
-    def test_nats_scheme(self):
+    def test_nats_scheme(self) -> None:
         assert _parse_topic_from_url("nats://my_topic") == "my_topic"
 
-    def test_plain_topic(self):
+    def test_plain_topic(self) -> None:
         assert _parse_topic_from_url("my_topic") == "my_topic"
 
-    def test_http_url_passthrough(self):
+    def test_http_url_passthrough(self) -> None:
         """HTTP URLs should pass through unchanged (not a patterns scheme)."""
         assert _parse_topic_from_url("http://localhost:9999") == "http://localhost:9999"
 
-    def test_topic_with_slashes(self):
+    def test_topic_with_slashes(self) -> None:
         assert (
             _parse_topic_from_url("slim://default/default/agent")
             == "default/default/agent"
         )
 
-    def test_slim_endpoint_with_port(self):
+    def test_slim_endpoint_with_port(self) -> None:
         assert _parse_topic_from_url("slim://localhost:46357/my_topic") == "my_topic"
 
-    def test_nats_endpoint_with_port(self):
+    def test_nats_endpoint_with_port(self) -> None:
         assert _parse_topic_from_url("nats://localhost:4222/my_topic") == "my_topic"
 
-    def test_slim_endpoint_with_port_and_slashes(self):
+    def test_slim_endpoint_with_port_and_slashes(self) -> None:
         assert (
             _parse_topic_from_url("slim://localhost:46357/default/default/agent")
             == "default/default/agent"
@@ -539,7 +559,7 @@ class TestParseTopicFromUrl:
 
 
 class TestPatternsClientTransport:
-    def test_create_slim_eager(self):
+    def test_create_slim_eager(self) -> None:
         """create() should use slim_transport from config for slim interfaces."""
         mock_transport = _make_mock_transport("SLIM")
         config = ClientConfig(slim_transport=mock_transport)
@@ -550,7 +570,7 @@ class TestPatternsClientTransport:
         assert transport._topic == "topic_1"
         assert transport._agent_card is card
 
-    def test_create_nats_eager(self):
+    def test_create_nats_eager(self) -> None:
         mock_transport = _make_mock_transport("NATS")
         config = ClientConfig(nats_transport=mock_transport)
         card = _make_agent_card([_iface("natspatterns", "nats://topic_1")])
@@ -559,7 +579,7 @@ class TestPatternsClientTransport:
         assert transport._transport is mock_transport
         assert transport._topic == "topic_1"
 
-    def test_create_no_transport_raises(self):
+    def test_create_no_transport_raises(self) -> None:
         """create() should raise if no pre-built transport is on config."""
         # Only deferred config, no eager transport — sync create() can't handle it
         config = ClientConfig(
@@ -572,15 +592,52 @@ class TestPatternsClientTransport:
         with pytest.raises(ValueError, match="No pre-built transport"):
             PatternsClientTransport.create(card, "slim://topic_1", config)
 
-    def test_create_unknown_transport_raises(self):
+    def test_create_unknown_transport_raises(self) -> None:
         config = ClientConfig(supported_protocol_bindings=["unknown"])
         card = _make_agent_card([_iface("unknown", "topic_1")])
 
         with pytest.raises(ValueError, match="No pre-built transport"):
             PatternsClientTransport.create(card, "topic_1", config)
 
+    def test_patterns_producer_uses_sdk_config(self) -> None:
+        mock_transport = _make_mock_transport("SLIM")
+        card = _make_agent_card([_iface("slimpatterns", "slim://topic_1")])
+
+        transport = _produce_patterns(
+            card, "slim://topic_1", ClientConfig(slim_transport=mock_transport)
+        )
+
+        assert isinstance(transport, PatternsClientTransport)
+        assert transport._transport is mock_transport
+
+    def test_slimrpc_producer_uses_channel_factory(self) -> None:
+        channel_factory = MagicMock()
+        card = _make_agent_card([_iface("slimrpc", "a/b/c")])
+
+        transport = _produce_slimrpc(
+            card, "a/b/c", ClientConfig(slimrpc_channel_factory=channel_factory)
+        )
+
+        assert isinstance(transport, SRPCTransport)
+        channel_factory.assert_called_once_with("a/b/c")
+
+    @pytest.mark.parametrize(
+        "config",
+        [A2AClientConfig(), ClientConfig()],
+        ids=["upstream-config", "no-channel-factory"],
+    )
+    def test_slimrpc_producer_needs_channel_factory(
+        self, config: A2AClientConfig
+    ) -> None:
+        with pytest.raises(ValueError, match="slimrpc_channel_factory is required"):
+            _produce_slimrpc(_make_agent_card(), "a/b/c", config)
+
+    def test_patterns_producer_rejects_upstream_config(self) -> None:
+        with pytest.raises(ValueError, match="SDK's ClientConfig"):
+            _produce_patterns(_make_agent_card(), "slim://topic_1", A2AClientConfig())
+
     @pytest.mark.asyncio
-    async def test_send_message(self):
+    async def test_send_message(self) -> None:
         """send_message sends a JSON-RPC SendMessage and parses the proto reply."""
         mock_transport = _make_mock_transport()
         mock_transport.request.return_value = _rpc_response(_message_result("Hello"))
@@ -601,7 +658,7 @@ class TestPatternsClientTransport:
         assert rpc["params"]["message"]["role"] == "ROLE_USER"
 
     @pytest.mark.asyncio
-    async def test_send_message_returns_task_result(self):
+    async def test_send_message_returns_task_result(self) -> None:
         mock_transport = _make_mock_transport()
         mock_transport.request.return_value = _rpc_response(
             {
@@ -621,7 +678,7 @@ class TestPatternsClientTransport:
         assert response.task.status.state == TaskState.TASK_STATE_COMPLETED
 
     @pytest.mark.asyncio
-    async def test_send_message_forwards_headers(self):
+    async def test_send_message_forwards_headers(self) -> None:
         """service_parameters become message headers; the version header is added."""
         mock_transport = _make_mock_transport()
         mock_transport.request.return_value = _rpc_response()
@@ -635,7 +692,7 @@ class TestPatternsClientTransport:
         assert sent.headers["A2A-Version"] == "1.0"
 
     @pytest.mark.asyncio
-    async def test_json_rpc_error_raises_matching_a2a_error(self):
+    async def test_json_rpc_error_raises_matching_a2a_error(self) -> None:
         mock_transport = _make_mock_transport()
         mock_transport.request.return_value = _rpc_response(
             error={"code": -32001, "message": "no such task"}
@@ -646,7 +703,7 @@ class TestPatternsClientTransport:
             await pct.get_task(GetTaskRequest(id="missing"))
 
     @pytest.mark.asyncio
-    async def test_forbidden_send_message_returns_agent_message(self):
+    async def test_forbidden_send_message_returns_agent_message(self) -> None:
         """An identity-auth rejection is surfaced as an agent message."""
         mock_transport = _make_mock_transport()
         resp = MagicMock()
@@ -661,7 +718,7 @@ class TestPatternsClientTransport:
         assert "Forbidden" in response.message.parts[0].text
 
     @pytest.mark.asyncio
-    async def test_get_task(self):
+    async def test_get_task(self) -> None:
         mock_transport = _make_mock_transport()
         mock_transport.request.return_value = _rpc_response(
             {"id": "t1", "contextId": "c1", "status": {"state": "TASK_STATE_WORKING"}}
@@ -677,7 +734,7 @@ class TestPatternsClientTransport:
         assert rpc["params"]["id"] == "t1"
 
     @pytest.mark.asyncio
-    async def test_cancel_task(self):
+    async def test_cancel_task(self) -> None:
         mock_transport = _make_mock_transport()
         mock_transport.request.return_value = _rpc_response(
             {"id": "t1", "status": {"state": "TASK_STATE_CANCELED"}}
@@ -690,7 +747,9 @@ class TestPatternsClientTransport:
         assert _sent_rpc(mock_transport.request)["method"] == "CancelTask"
 
     @pytest.mark.asyncio
-    async def test_send_message_streaming_yields_events_and_stops_at_final(self):
+    async def test_send_message_streaming_yields_events_and_stops_at_final(
+        self,
+    ) -> None:
         """Intermediate A2AStatusUpdate items and the final A2AResponse are yielded."""
         mock_transport = _make_mock_transport()
         mock_transport.request_stream = MagicMock(
@@ -717,10 +776,10 @@ class TestPatternsClientTransport:
         assert json.loads(sent.payload)["method"] == "SendStreamingMessage"
 
     @pytest.mark.asyncio
-    async def test_send_message_streaming_falls_back_to_unary(self):
+    async def test_send_message_streaming_falls_back_to_unary(self) -> None:
         """If the transport cannot stream, a single SendMessage is used."""
 
-        async def _unsupported(*_a, **_k):
+        async def _unsupported(*_a: Any, **_k: Any) -> AsyncIterator[Any]:
             raise NotImplementedError
             yield  # pragma: no cover
 
@@ -736,7 +795,7 @@ class TestPatternsClientTransport:
         assert _sent_rpc(mock_transport.request)["method"] == "SendMessage"
 
     @pytest.mark.asyncio
-    async def test_get_extended_agent_card_returns_cached_card(self):
+    async def test_get_extended_agent_card_returns_cached_card(self) -> None:
         """Without an advertised extended card, no request is made."""
         mock_transport = _make_mock_transport()
         card = _make_agent_card()
@@ -748,7 +807,7 @@ class TestPatternsClientTransport:
         mock_transport.request.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_subscribe_not_supported(self):
+    async def test_subscribe_not_supported(self) -> None:
         pct = PatternsClientTransport(
             _make_mock_transport(), _make_agent_card(), "test_topic"
         )
@@ -757,7 +816,7 @@ class TestPatternsClientTransport:
                 pass
 
     @pytest.mark.asyncio
-    async def test_close(self):
+    async def test_close(self) -> None:
         mock_transport = _make_mock_transport()
         pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
 
@@ -787,7 +846,7 @@ def _make_experimental(
 
 
 class TestA2AExperimentalClient:
-    def test_properties(self):
+    def test_properties(self) -> None:
         mock_client = MagicMock()
         experimental, mock_transport, card = _make_experimental(inner=mock_client)
 
@@ -796,11 +855,11 @@ class TestA2AExperimentalClient:
         assert experimental.transport is mock_transport
         assert experimental.topic == "test_topic"
 
-    def test_is_client_subclass(self):
+    def test_is_client_subclass(self) -> None:
         experimental, _, _ = _make_experimental()
         assert isinstance(experimental, Client)
 
-    def test_experimental_methods_available(self):
+    def test_experimental_methods_available(self) -> None:
         experimental, _, _ = _make_experimental()
 
         assert callable(experimental.broadcast_message)
@@ -809,7 +868,7 @@ class TestA2AExperimentalClient:
         assert callable(experimental.start_streaming_groupchat)
 
     @pytest.mark.asyncio
-    async def test_get_extended_agent_card_delegates(self):
+    async def test_get_extended_agent_card_delegates(self) -> None:
         inner = MagicMock()
         inner.get_extended_agent_card = AsyncMock(return_value="card")
         experimental, _, _ = _make_experimental(inner=inner)
@@ -821,12 +880,14 @@ class TestA2AExperimentalClient:
         inner.get_extended_agent_card.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_send_message_delegates(self):
+    async def test_send_message_delegates(self) -> None:
         inner = MagicMock()
         expected = StreamResponse()
         expected.message.CopyFrom(new_text_message("hello"))
 
-        async def _send(request, *, context=None):
+        async def _send(
+            request: SendMessageRequest, *, context: ClientCallContext | None = None
+        ) -> AsyncIterator[StreamResponse]:
             yield expected
 
         inner.send_message = _send
@@ -836,7 +897,7 @@ class TestA2AExperimentalClient:
         assert events == [expected]
 
     @pytest.mark.asyncio
-    async def test_close_closes_inner_client(self):
+    async def test_close_closes_inner_client(self) -> None:
         inner = MagicMock()
         inner.close = AsyncMock()
         experimental, _, _ = _make_experimental(inner=inner)
@@ -845,7 +906,7 @@ class TestA2AExperimentalClient:
         inner.close.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_add_interceptor_registers_on_both_clients(self):
+    async def test_add_interceptor_registers_on_both_clients(self) -> None:
         inner = MagicMock()
         inner.add_interceptor = AsyncMock()
         experimental, _, _ = _make_experimental(inner=inner)
@@ -864,7 +925,7 @@ class TestA2AExperimentalClient:
 
 class TestA2AExperimentalClientOperations:
     @pytest.mark.asyncio
-    async def test_broadcast_message_sends_send_message_rpc(self):
+    async def test_broadcast_message_sends_send_message_rpc(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_async_gen(_rpc_response(), _rpc_response())
@@ -884,7 +945,7 @@ class TestA2AExperimentalClientOperations:
         assert rpc["params"]["message"]["parts"][0]["text"] == "ping"
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_skips_intermediate_status_updates(self):
+    async def test_broadcast_message_skips_intermediate_status_updates(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_async_gen(
@@ -901,7 +962,7 @@ class TestA2AExperimentalClientOperations:
         assert responses[0].message.parts[0].text == "final"
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_yields_all_events(self):
+    async def test_broadcast_message_streaming_yields_all_events(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_async_gen(
@@ -932,7 +993,9 @@ class TestA2AExperimentalClientOperations:
         assert json.loads(msg.payload)["method"] == "SendStreamingMessage"
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_stops_after_expected_finals(self):
+    async def test_broadcast_message_streaming_stops_after_expected_finals(
+        self,
+    ) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_async_gen(
@@ -952,7 +1015,7 @@ class TestA2AExperimentalClientOperations:
         assert len(events) == 2
 
     @pytest.mark.asyncio
-    async def test_broadcast_forbidden_response_is_a_failure(self):
+    async def test_broadcast_forbidden_response_is_a_failure(self) -> None:
         """A refusal is not an answer: it must not count as a success."""
         experimental, mock_transport, _ = _make_experimental()
         forbidden = MagicMock()
@@ -985,7 +1048,9 @@ class TestA2AExperimentalClientOperations:
         )
 
     @pytest.mark.asyncio
-    async def test_broadcast_streaming_forbidden_by_status_code_is_a_failure(self):
+    async def test_broadcast_streaming_forbidden_by_status_code_is_a_failure(
+        self,
+    ) -> None:
         """A bare 403 (no ``"forbidden"`` body) is a refusal too."""
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
@@ -993,24 +1058,25 @@ class TestA2AExperimentalClientOperations:
         )
 
         events, error = await _drain(
-            experimental.broadcast_message_streaming(_user_request())
+            experimental.broadcast_message_streaming(_user_request(), recipients=["a"])
         )
 
         assert events == []
         assert error is not None
         assert isinstance(error.errors[0], A2AClientError)
 
-    def test_groupchat_parsing_keeps_forbidden_as_message(self):
+    def test_groupchat_parsing_keeps_forbidden_as_message(self) -> None:
         """Group chat still uses the synthetic message (unchanged)."""
         smr = A2AExperimentalClient._parse_payload(
             {"error": "forbidden"}, 403, SendMessageResponse()
         )
+        assert isinstance(smr, SendMessageResponse)
         assert "Forbidden" in smr.message.parts[0].text
 
     # -- error replies: count as finals (no hang) AND surface as an error ----
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_error_reply_raises_without_hanging(self):
+    async def test_broadcast_message_error_reply_raises_without_hanging(self) -> None:
         """An error reply must not make the call wait for the transport timeout
         (the transport here never ends on its own) and must not be silent."""
         experimental, mock_transport, _ = _make_experimental()
@@ -1035,7 +1101,7 @@ class TestA2AExperimentalClientOperations:
         assert "boom" in str(err)
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_all_error_replies_raise(self):
+    async def test_broadcast_message_all_error_replies_raise(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -1053,7 +1119,9 @@ class TestA2AExperimentalClientOperations:
         assert exc_info.value.responses == []
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_undecodable_reply_raises_and_logs_decoding(self):
+    async def test_broadcast_message_undecodable_reply_raises_and_logs_decoding(
+        self,
+    ) -> None:
         experimental, mock_transport, _ = _make_experimental()
         garbage = MagicMock()
         garbage.payload = b"not json"
@@ -1082,7 +1150,7 @@ class TestA2AExperimentalClientOperations:
         )
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_rpc_error_is_not_logged_as_decoding(self):
+    async def test_broadcast_message_rpc_error_is_not_logged_as_decoding(self) -> None:
         """A well-formed JSON-RPC error is the recipient's failure, not a
         decoding problem, so it must not be logged as one."""
         experimental, mock_transport, _ = _make_experimental()
@@ -1095,7 +1163,7 @@ class TestA2AExperimentalClientOperations:
         ) as log:
             with pytest.raises(A2ABroadcastError):
                 await asyncio.wait_for(
-                    experimental.broadcast_message(_user_request()),
+                    experimental.broadcast_message(_user_request(), recipients=["a"]),
                     timeout=_HANG_GUARD_S,
                 )
 
@@ -1103,7 +1171,7 @@ class TestA2AExperimentalClientOperations:
         assert log.warning.called
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_non_object_payload_is_a_decode_error(self):
+    async def test_broadcast_message_non_object_payload_is_a_decode_error(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         weird = MagicMock()
         weird.payload = b"[1, 2]"
@@ -1113,14 +1181,16 @@ class TestA2AExperimentalClientOperations:
 
         with pytest.raises(A2ABroadcastError) as exc_info:
             await asyncio.wait_for(
-                experimental.broadcast_message(_user_request()),
+                experimental.broadcast_message(_user_request(), recipients=["a"]),
                 timeout=_HANG_GUARD_S,
             )
 
         assert isinstance(exc_info.value.errors[0], ValueError)
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_status_updates_do_not_count_as_finals(self):
+    async def test_broadcast_message_status_updates_do_not_count_as_finals(
+        self,
+    ) -> None:
         """Intermediates must not end the call early, even with errors around."""
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
@@ -1142,7 +1212,7 @@ class TestA2AExperimentalClientOperations:
         assert [r.message.parts[0].text for r in exc_info.value.responses] == ["late"]
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_without_errors_does_not_raise(self):
+    async def test_broadcast_message_without_errors_does_not_raise(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -1159,7 +1229,9 @@ class TestA2AExperimentalClientOperations:
         assert [r.message.parts[0].text for r in responses] == ["one", "two"]
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_error_reply_raises_after_events(self):
+    async def test_broadcast_message_streaming_error_reply_raises_after_events(
+        self,
+    ) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -1183,7 +1255,7 @@ class TestA2AExperimentalClientOperations:
         assert isinstance(error.errors[0], InternalError)
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_error_reply_first(self):
+    async def test_broadcast_message_streaming_error_reply_first(self) -> None:
         """The failing recipient may reply before the healthy one."""
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
@@ -1206,7 +1278,7 @@ class TestA2AExperimentalClientOperations:
         assert error is not None and len(error.errors) == 1
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_all_error_replies_raise(self):
+    async def test_broadcast_message_streaming_all_error_replies_raise(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -1227,7 +1299,7 @@ class TestA2AExperimentalClientOperations:
         assert error is not None and len(error.errors) == 2
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_status_updates_not_counted(self):
+    async def test_broadcast_message_streaming_status_updates_not_counted(self) -> None:
         """Intermediates are yielded but never end the stream, even after an error."""
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
@@ -1256,7 +1328,9 @@ class TestA2AExperimentalClientOperations:
         assert error is not None and error.received == 2
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_honors_message_limit_with_errors(self):
+    async def test_broadcast_message_streaming_honors_message_limit_with_errors(
+        self,
+    ) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -1279,7 +1353,9 @@ class TestA2AExperimentalClientOperations:
         assert error is not None and error.received == 2
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_malformed_intermediate_is_skipped(self):
+    async def test_broadcast_message_streaming_malformed_intermediate_is_skipped(
+        self,
+    ) -> None:
         """Only *final* failures fail the call; a bad status update is logged."""
         experimental, mock_transport, _ = _make_experimental()
         garbage = MagicMock()
@@ -1291,7 +1367,11 @@ class TestA2AExperimentalClientOperations:
         )
 
         events, error = await asyncio.wait_for(
-            _drain(experimental.broadcast_message_streaming(_user_request())),
+            _drain(
+                experimental.broadcast_message_streaming(
+                    _user_request(), recipients=["a"]
+                )
+            ),
             timeout=_HANG_GUARD_S,
         )
 
@@ -1301,7 +1381,7 @@ class TestA2AExperimentalClientOperations:
     # -- missing replies, timeouts, sender identity ------------------------
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_stream_ending_early_raises(self):
+    async def test_broadcast_message_stream_ending_early_raises(self) -> None:
         """NATS ends the stream at its timeout without raising: a missing
         reply must not be reported as success."""
         experimental, mock_transport, _ = _make_experimental()
@@ -1323,7 +1403,7 @@ class TestA2AExperimentalClientOperations:
         assert "1 of 2" in str(err) and "1 missing [b]" in str(err)
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_empty_stream_raises(self):
+    async def test_broadcast_message_empty_stream_raises(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(side_effect=_async_gen())
 
@@ -1334,7 +1414,9 @@ class TestA2AExperimentalClientOperations:
         assert exc_info.value.responses == []
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_transport_timeout_keeps_partial_responses(self):
+    async def test_broadcast_message_transport_timeout_keeps_partial_responses(
+        self,
+    ) -> None:
         """SLIM raises at its timeout: the replies already received survive."""
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
@@ -1362,7 +1444,7 @@ class TestA2AExperimentalClientOperations:
         assert str(err).startswith("Broadcast timed out")
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_failure_names_its_sender(self):
+    async def test_broadcast_message_failure_names_its_sender(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(
@@ -1387,7 +1469,7 @@ class TestA2AExperimentalClientOperations:
         assert "b: InternalError" in str(err)
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_duplicate_final_does_not_count_twice(self):
+    async def test_broadcast_message_duplicate_final_does_not_count_twice(self) -> None:
         """One recipient answering twice must not stand in for a silent one."""
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
@@ -1412,7 +1494,7 @@ class TestA2AExperimentalClientOperations:
         assert any("duplicate" in str(c) for c in log.warning.call_args_list)
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_anonymous_replies_are_counted(self):
+    async def test_broadcast_message_anonymous_replies_are_counted(self) -> None:
         """Replies without a sender header (older servers) still count, but
         the missing recipients can no longer be named."""
         experimental, mock_transport, _ = _make_experimental()
@@ -1437,7 +1519,9 @@ class TestA2AExperimentalClientOperations:
         assert exc_info.value.missing_recipients == []
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_unknown_sender_does_not_guess_missing(self):
+    async def test_broadcast_message_unknown_sender_does_not_guess_missing(
+        self,
+    ) -> None:
         """A sender id that is not one of the recipient names (e.g. a SLIM
         topic that differs from its app name) must not make the client
         blame a recipient that may well have answered."""
@@ -1453,7 +1537,7 @@ class TestA2AExperimentalClientOperations:
         assert exc_info.value.missing_recipients == []
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_bad_result_is_logged_as_decoding(self):
+    async def test_broadcast_message_bad_result_is_logged_as_decoding(self) -> None:
         """A reply with a ``result`` that does not fit the schema is a decode
         problem, not the recipient replying with an error."""
         experimental, mock_transport, _ = _make_experimental()
@@ -1481,7 +1565,7 @@ class TestA2AExperimentalClientOperations:
         )
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_error_reply_log_names_sender(self):
+    async def test_broadcast_message_error_reply_log_names_sender(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_hanging_gen(_rpc_response(error=_RPC_ERROR, sender="b"))
@@ -1502,7 +1586,7 @@ class TestA2AExperimentalClientOperations:
         )
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_stream_ending_early_raises(self):
+    async def test_broadcast_message_streaming_stream_ending_early_raises(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_async_gen(
@@ -1529,7 +1613,7 @@ class TestA2AExperimentalClientOperations:
         assert error.responses == []
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_transport_timeout_raises(self):
+    async def test_broadcast_message_streaming_transport_timeout_raises(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_timeout_gen(_rpc_response(_message_result("ok"), sender="a"))
@@ -1547,7 +1631,7 @@ class TestA2AExperimentalClientOperations:
         assert error.missing_recipients == ["b"]
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_partial_limit_names_no_one(self):
+    async def test_broadcast_message_streaming_partial_limit_names_no_one(self) -> None:
         """With message_limit below len(recipients) any subset may answer, so
         a shortfall cannot be pinned on particular recipients."""
         experimental, mock_transport, _ = _make_experimental()
@@ -1565,12 +1649,12 @@ class TestA2AExperimentalClientOperations:
         assert error.missing_recipients == []
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_transport_failure_propagates(self):
+    async def test_broadcast_message_transport_failure_propagates(self) -> None:
         """A broadcast that never went out must not look like "no replies"."""
         experimental, mock_transport, _ = _make_experimental()
         closed = asyncio.Event()
 
-        async def _gen(*_args, **_kwargs):
+        async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
             try:
                 raise RuntimeError("NATS client is not connected")
                 yield  # pragma: no cover - makes this an async generator
@@ -1584,10 +1668,12 @@ class TestA2AExperimentalClientOperations:
         assert closed.is_set()
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_missing_recipients_error_propagates(self):
+    async def test_broadcast_message_missing_recipients_error_propagates(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
 
-        async def _gen(*_args, recipients=None, **_kwargs):
+        async def _gen(
+            *_args: Any, recipients: list[str] | None = None, **_kwargs: Any
+        ) -> AsyncIterator[Any]:
             if not recipients:
                 raise ValueError("recipients list must be provided")
             yield  # pragma: no cover
@@ -1595,19 +1681,21 @@ class TestA2AExperimentalClientOperations:
         mock_transport.gather_stream = MagicMock(side_effect=_gen)
 
         with pytest.raises(ValueError, match="recipients"):
-            await experimental.broadcast_message(_user_request())
+            await experimental.broadcast_message(_user_request(), recipients=[])
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_transport_failure_propagates(self):
+    async def test_broadcast_message_streaming_transport_failure_propagates(
+        self,
+    ) -> None:
         experimental, mock_transport, _ = _make_experimental()
 
-        async def _gen(*_args, **_kwargs):
+        async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
             yield _rpc_response(_message_result("ok"), sender="a")
             raise RuntimeError("publish failed")
 
         mock_transport.gather_stream = MagicMock(side_effect=_gen)
 
-        events = []
+        events: list[StreamResponse] = []
         with pytest.raises(RuntimeError, match="publish failed"):
             async for event in experimental.broadcast_message_streaming(
                 _user_request(), recipients=["a", "b"]
@@ -1616,13 +1704,13 @@ class TestA2AExperimentalClientOperations:
         assert [get_stream_response_text(e) for e in events] == ["ok"]
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_early_stop_does_not_raise(self):
+    async def test_broadcast_message_streaming_early_stop_does_not_raise(self) -> None:
         """A caller that stops iterating gets no error for replies it did
         not wait for, and the transport stream is closed."""
         experimental, mock_transport, _ = _make_experimental()
         closed = asyncio.Event()
 
-        async def _gen(*_args, **_kwargs):
+        async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
             try:
                 yield _rpc_response(_message_result("one"), sender="a")
                 await asyncio.Event().wait()
@@ -1636,12 +1724,13 @@ class TestA2AExperimentalClientOperations:
         )
         async for _event in stream:
             break
+        assert isinstance(stream, AsyncGenerator)
         await stream.aclose()
 
         assert closed.is_set()
 
     @pytest.mark.asyncio
-    async def test_start_groupchat(self):
+    async def test_start_groupchat(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.start_conversation = AsyncMock(
             return_value=[_rpc_response(), _rpc_response()]
@@ -1661,7 +1750,7 @@ class TestA2AExperimentalClientOperations:
         assert json.loads(kwargs["init_message"].payload)["method"] == "SendMessage"
 
     @pytest.mark.asyncio
-    async def test_start_streaming_groupchat(self):
+    async def test_start_streaming_groupchat(self) -> None:
         experimental, mock_transport, _ = _make_experimental()
         mock_transport.start_streaming_conversation = MagicMock(
             side_effect=_async_gen(_rpc_response(), _rpc_response())
@@ -1687,11 +1776,11 @@ class TestA2AExperimentalClientOperations:
 
 
 class TestA2AClientFactory:
-    def test_constructor_default_config(self):
+    def test_constructor_default_config(self) -> None:
         factory = A2AClientFactory()
         assert factory._config.supported_protocol_bindings == ["JSONRPC"]
 
-    def test_constructor_with_config(self):
+    def test_constructor_with_config(self) -> None:
         config = ClientConfig(
             slim_config=SlimTransportConfig(
                 endpoint="http://localhost:46357", name="a/b/c"
@@ -1703,7 +1792,7 @@ class TestA2AClientFactory:
 
     # -- Negotiation tests --------------------------------------------------
 
-    def test_negotiate_server_preference(self):
+    def test_negotiate_server_preference(self) -> None:
         """Default negotiation follows the card's interface order."""
         factory = A2AClientFactory(ClientConfig(slim_transport=_make_mock_transport()))
 
@@ -1717,7 +1806,7 @@ class TestA2AClientFactory:
         assert label == "slimpatterns"
         assert url == "slim://my_agent"
 
-    def test_negotiate_fallback_to_jsonrpc(self):
+    def test_negotiate_fallback_to_jsonrpc(self) -> None:
         """Unsupported transports are skipped; the first supported one wins."""
         factory = A2AClientFactory(ClientConfig())  # only JSONRPC
 
@@ -1731,7 +1820,7 @@ class TestA2AClientFactory:
         assert label == "JSONRPC"
         assert url == "http://localhost:8080"
 
-    def test_negotiate_no_match_raises(self):
+    def test_negotiate_no_match_raises(self) -> None:
         factory = A2AClientFactory(
             ClientConfig(supported_protocol_bindings=["custom_only"])
         )
@@ -1740,12 +1829,12 @@ class TestA2AClientFactory:
         with pytest.raises(ValueError, match="No compatible transports"):
             factory._negotiate(card)
 
-    def test_negotiate_empty_card_raises(self):
+    def test_negotiate_empty_card_raises(self) -> None:
         factory = A2AClientFactory(ClientConfig())
         with pytest.raises(ValueError, match="No compatible transports"):
             factory._negotiate(_make_agent_card([]))
 
-    def test_negotiate_client_preference(self):
+    def test_negotiate_client_preference(self) -> None:
         """With use_client_preference, the client's order wins."""
         config = ClientConfig(
             slim_transport=_make_mock_transport(),
@@ -1767,7 +1856,7 @@ class TestA2AClientFactory:
 
     # -- _select_card -------------------------------------------------------
 
-    def test_select_card_keeps_only_chosen_interface(self):
+    def test_select_card_keeps_only_chosen_interface(self) -> None:
         card = _make_agent_card(
             [
                 _iface("slimpatterns", "slim://a"),
@@ -1785,7 +1874,7 @@ class TestA2AClientFactory:
         assert len(card.supported_interfaces) == 2
         assert card.supported_interfaces[1].protocol_binding == "jsonrpc"
 
-    def test_select_card_url_override(self):
+    def test_select_card_url_override(self) -> None:
         card = _make_agent_card([_iface("slimrpc", "slim://host:46357/org/ns/agent")])
         selected = A2AClientFactory._select_card(
             card, "slimrpc", "slim://host:46357/org/ns/agent", url="org/ns/agent"
@@ -1796,7 +1885,7 @@ class TestA2AClientFactory:
     # -- create() async path tests ------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_create_with_eager_slim_transport(self):
+    async def test_create_with_eager_slim_transport(self) -> None:
         mock_transport = _make_mock_transport("SLIM")
         factory = A2AClientFactory(ClientConfig(slim_transport=mock_transport))
 
@@ -1811,7 +1900,7 @@ class TestA2AClientFactory:
         mock_transport.setup.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_create_with_eager_nats_transport(self):
+    async def test_create_with_eager_nats_transport(self) -> None:
         mock_transport = _make_mock_transport("NATS")
         factory = A2AClientFactory(ClientConfig(nats_transport=mock_transport))
 
@@ -1823,7 +1912,7 @@ class TestA2AClientFactory:
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
-    async def test_create_jsonrpc_returns_upstream_client(self):
+    async def test_create_jsonrpc_returns_upstream_client(self) -> None:
         """JSONRPC returns the upstream Client, not A2AExperimentalClient."""
         factory = A2AClientFactory(ClientConfig())
 
@@ -1833,7 +1922,7 @@ class TestA2AClientFactory:
         assert not isinstance(result, A2AExperimentalClient)
 
     @pytest.mark.asyncio
-    async def test_create_accepts_lowercase_jsonrpc_binding(self):
+    async def test_create_accepts_lowercase_jsonrpc_binding(self) -> None:
         """Cards written with the SDK's lowercase constant still negotiate."""
         factory = A2AClientFactory(ClientConfig())
 
@@ -1844,7 +1933,7 @@ class TestA2AClientFactory:
         assert isinstance(result, Client)
 
     @pytest.mark.asyncio
-    async def test_create_does_not_mutate_card(self):
+    async def test_create_does_not_mutate_card(self) -> None:
         factory = A2AClientFactory(ClientConfig())
         card = _make_agent_card([_iface("jsonrpc", "http://localhost:8080")])
         before = AgentCard()
@@ -1855,7 +1944,7 @@ class TestA2AClientFactory:
         assert card == before
 
     @pytest.mark.asyncio
-    async def test_create_deferred_slim_missing_config_raises(self):
+    async def test_create_deferred_slim_missing_config_raises(self) -> None:
         """slimpatterns negotiated but neither config nor transport set → error."""
         config = ClientConfig(supported_protocol_bindings=["slimpatterns", "JSONRPC"])
         factory = A2AClientFactory(config)
@@ -1865,7 +1954,7 @@ class TestA2AClientFactory:
             await factory.create(card)
 
     @pytest.mark.asyncio
-    async def test_create_consumers_are_deprecated_and_ignored(self):
+    async def test_create_consumers_are_deprecated_and_ignored(self) -> None:
         """a2a-sdk 1.x removed client consumers; passing them warns."""
         factory = A2AClientFactory(ClientConfig())
 
@@ -1877,7 +1966,7 @@ class TestA2AClientFactory:
     # -- connect() classmethod test -----------------------------------------
 
     @pytest.mark.asyncio
-    async def test_connect_with_card(self):
+    async def test_connect_with_card(self) -> None:
         """connect() with an AgentCard should skip HTTP resolution."""
         result = await A2AClientFactory.connect(
             _make_agent_card(), config=ClientConfig()
@@ -1885,7 +1974,7 @@ class TestA2AClientFactory:
         assert isinstance(result, Client)
 
     @pytest.mark.asyncio
-    async def test_connect_backfills_jsonrpc_interface_for_bare_card(self):
+    async def test_connect_backfills_jsonrpc_interface_for_bare_card(self) -> None:
         """A resolved card with no interfaces is assumed to be JSONRPC at the base URL."""
         resolved = AgentCard(name="bare", version="1")
 
@@ -1908,7 +1997,7 @@ class TestA2AClientFactory:
 # ---------------------------------------------------------------------------
 
 
-def _make_multi_transport_factory():
+def _make_multi_transport_factory() -> tuple[A2AClientFactory, ClientConfig]:
     """Build an A2AClientFactory whose ClientConfig supports all transports."""
     config = ClientConfig(
         slimrpc_channel_factory=MagicMock(),
@@ -1924,7 +2013,7 @@ class TestMultiTransportNegotiation:
     preference is the order of ``supported_interfaces``.
     """
 
-    def test_bindings_contain_all(self):
+    def test_bindings_contain_all(self) -> None:
         _factory, config = _make_multi_transport_factory()
         assert config.supported_protocol_bindings == [
             "JSONRPC",
@@ -1942,13 +2031,13 @@ class TestMultiTransportNegotiation:
             ("JSONRPC", "http://localhost:9999"),
         ],
     )
-    def test_server_preference_per_transport(self, binding, url):
+    def test_server_preference_per_transport(self, binding: str, url: str) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card([_iface(binding, url)])
 
         assert factory._negotiate(card) == (binding, url)
 
-    def test_first_listed_interface_wins(self):
+    def test_first_listed_interface_wins(self) -> None:
         """Even though the client supports all of them, the card's first entry wins."""
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
@@ -1962,7 +2051,7 @@ class TestMultiTransportNegotiation:
 
         assert factory._negotiate(card) == ("slimrpc", "default/default/agent")
 
-    def test_unsupported_first_falls_back_to_next_supported(self):
+    def test_unsupported_first_falls_back_to_next_supported(self) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
             [
@@ -1974,7 +2063,7 @@ class TestMultiTransportNegotiation:
 
         assert factory._negotiate(card) == ("natspatterns", "nats://agent_topic")
 
-    def test_client_preference_overrides_server(self):
+    def test_client_preference_overrides_server(self) -> None:
         config = ClientConfig(
             slimrpc_channel_factory=MagicMock(),
             slim_transport=_make_mock_transport("SLIM"),
@@ -1993,7 +2082,7 @@ class TestMultiTransportNegotiation:
 
         assert factory._negotiate(card) == ("JSONRPC", "http://localhost:9999")
 
-    def test_no_match_raises(self):
+    def test_no_match_raises(self) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
             [_iface("grpc", "grpc://agent"), _iface("websocket", "ws://agent")]
@@ -2001,7 +2090,7 @@ class TestMultiTransportNegotiation:
         with pytest.raises(ValueError, match="No compatible transports"):
             factory._negotiate(card)
 
-    def test_same_binding_prefers_protocol_version_1_0(self):
+    def test_same_binding_prefers_protocol_version_1_0(self) -> None:
         """Like upstream: a 1.0 interface wins over an earlier 0.3 one."""
         factory = A2AClientFactory(ClientConfig())
         legacy = _iface("JSONRPC", "http://old:9999")
@@ -2014,7 +2103,7 @@ class TestMultiTransportNegotiation:
             "http://new:9999",
         )
 
-    def test_protocol_version_does_not_override_binding_preference(self):
+    def test_protocol_version_does_not_override_binding_preference(self) -> None:
         """Version only breaks ties within the negotiated binding."""
         factory, _ = _make_multi_transport_factory()
         rpc = _iface("slimrpc", "default/default/agent")
@@ -2029,7 +2118,7 @@ class TestMultiTransportNegotiation:
     # -- create() dispatches to correct path --------------------------------
 
     @pytest.mark.asyncio
-    async def test_create_dispatches_slimrpc(self):
+    async def test_create_dispatches_slimrpc(self) -> None:
         """slimrpc goes through the upstream sync path → upstream Client."""
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card([_iface("slimrpc", "default/default/agent")])
@@ -2040,17 +2129,18 @@ class TestMultiTransportNegotiation:
         assert not isinstance(result, A2AExperimentalClient)
 
     @pytest.mark.asyncio
-    async def test_create_slimrpc_strips_slim_scheme_from_url(self):
+    async def test_create_slimrpc_strips_slim_scheme_from_url(self) -> None:
         """The channel factory receives a bare ``org/ns/name`` identity."""
         factory, config = _make_multi_transport_factory()
         card = _make_agent_card([_iface("slimrpc", "slim://host:46357/org/ns/agent")])
 
         await factory.create(card)
 
+        assert isinstance(config.slimrpc_channel_factory, MagicMock)
         config.slimrpc_channel_factory.assert_called_once_with("org/ns/agent")
 
     @pytest.mark.asyncio
-    async def test_create_dispatches_slimpatterns(self):
+    async def test_create_dispatches_slimpatterns(self) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card([_iface("slimpatterns", "slim://my_agent")])
 
@@ -2061,7 +2151,7 @@ class TestMultiTransportNegotiation:
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
-    async def test_create_dispatches_natspatterns(self):
+    async def test_create_dispatches_natspatterns(self) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card([_iface("natspatterns", "nats://my_agent")])
 
@@ -2072,7 +2162,7 @@ class TestMultiTransportNegotiation:
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
-    async def test_create_dispatches_jsonrpc_after_unsupported(self):
+    async def test_create_dispatches_jsonrpc_after_unsupported(self) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
             [
@@ -2107,13 +2197,13 @@ class TestTransportAliasNegotiation:
             ("SLIM", "slim://my_topic"),
         ],
     )
-    def test_negotiate_alias_binding(self, alias, url):
+    def test_negotiate_alias_binding(self, alias: str, url: str) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card([_iface(alias, url)])
 
         assert factory._negotiate(card) == (alias, url)
 
-    def test_negotiate_alias_after_unsupported(self):
+    def test_negotiate_alias_after_unsupported(self) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card(
             [_iface("grpc", "grpc://agent"), _iface("slim", "slim://my_topic")]
@@ -2122,7 +2212,7 @@ class TestTransportAliasNegotiation:
         assert factory._negotiate(card) == ("slim", "slim://my_topic")
 
     @pytest.mark.asyncio
-    async def test_create_slim_alias_dispatches_to_slimpatterns(self):
+    async def test_create_slim_alias_dispatches_to_slimpatterns(self) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card([_iface("slim", "slim://my_agent")])
 
@@ -2133,7 +2223,7 @@ class TestTransportAliasNegotiation:
         assert result.topic == "my_agent"
 
     @pytest.mark.asyncio
-    async def test_create_nats_alias_dispatches_to_natspatterns(self):
+    async def test_create_nats_alias_dispatches_to_natspatterns(self) -> None:
         factory, _ = _make_multi_transport_factory()
         card = _make_agent_card([_iface("nats", "nats://my_agent")])
 
@@ -2143,7 +2233,7 @@ class TestTransportAliasNegotiation:
         assert result.transport.type() == "NATS"
         assert result.topic == "my_agent"
 
-    def test_client_preference_resolves_aliases(self):
+    def test_client_preference_resolves_aliases(self) -> None:
         config = ClientConfig(
             slim_transport=_make_mock_transport("SLIM"),
             use_client_preference=True,
@@ -2168,7 +2258,7 @@ class TestBuildSlimrpcIfNeeded:
     """
 
     @pytest.mark.asyncio
-    async def test_slimrpc_uses_trailing_slash_endpoint(self):
+    async def test_slimrpc_uses_trailing_slash_endpoint(self) -> None:
         mock_service = MagicMock()
 
         config = ClientConfig(
@@ -2225,7 +2315,7 @@ class TestBuildSlimrpcIfNeeded:
             assert config.slimrpc_channel_factory is not None
 
     @pytest.mark.asyncio
-    async def test_slimrpc_noop_when_eager_factory_set(self):
+    async def test_slimrpc_noop_when_eager_factory_set(self) -> None:
         eager_factory = MagicMock()
         config = ClientConfig(slimrpc_channel_factory=eager_factory)
         factory = A2AClientFactory(config)
@@ -2257,7 +2347,7 @@ async def _patterns_client(
 
 class TestFactoryInterceptorIntegration:
     @pytest.mark.asyncio
-    async def test_send_message_runs_before_and_after_hooks(self):
+    async def test_send_message_runs_before_and_after_hooks(self) -> None:
         interceptor = _RecordingInterceptor()
         client, mock_transport = await _patterns_client([interceptor])
         mock_transport.request.return_value = _rpc_response(_message_result("Hello"))
@@ -2270,7 +2360,7 @@ class TestFactoryInterceptorIntegration:
         assert interceptor.before_calls[0].agent_card.name == "test-agent"
 
     @pytest.mark.asyncio
-    async def test_streaming_send_message_uses_streaming_hooks(self):
+    async def test_streaming_send_message_uses_streaming_hooks(self) -> None:
         interceptor = _RecordingInterceptor()
         client, mock_transport = await _patterns_client([interceptor], streaming=True)
         mock_transport.request_stream = MagicMock(
@@ -2289,7 +2379,7 @@ class TestFactoryInterceptorIntegration:
         assert len(interceptor.after_calls) == 2
 
     @pytest.mark.asyncio
-    async def test_interceptor_headers_reach_the_wire(self):
+    async def test_interceptor_headers_reach_the_wire(self) -> None:
         """service_parameters set in ``before`` become transport message headers."""
         interceptor = _RecordingInterceptor(headers={"Authorization": "Bearer abc"})
         client, mock_transport = await _patterns_client([interceptor])
@@ -2301,7 +2391,7 @@ class TestFactoryInterceptorIntegration:
         assert sent.headers["Authorization"] == "Bearer abc"
 
     @pytest.mark.asyncio
-    async def test_get_task_runs_hooks(self):
+    async def test_get_task_runs_hooks(self) -> None:
         interceptor = _RecordingInterceptor()
         client, mock_transport = await _patterns_client([interceptor])
         mock_transport.request.return_value = _rpc_response(
@@ -2315,12 +2405,12 @@ class TestFactoryInterceptorIntegration:
         assert [a.method for a in interceptor.after_calls] == ["get_task"]
 
     @pytest.mark.asyncio
-    async def test_interceptor_chaining_order(self):
+    async def test_interceptor_chaining_order(self) -> None:
         """``before`` runs in registration order, ``after`` in reverse."""
         order: list[str] = []
 
         class _Ordered(ClientCallInterceptor):
-            def __init__(self, label: str):
+            def __init__(self, label: str) -> None:
                 self._label = label
 
             async def before(self, args: BeforeArgs) -> None:
@@ -2337,7 +2427,7 @@ class TestFactoryInterceptorIntegration:
         assert order == ["before:a", "before:b", "after:b", "after:a"]
 
     @pytest.mark.asyncio
-    async def test_no_interceptors_passthrough(self):
+    async def test_no_interceptors_passthrough(self) -> None:
         client, mock_transport = await _patterns_client()
         mock_transport.request.return_value = _rpc_response(_message_result("plain"))
 
@@ -2353,7 +2443,7 @@ class TestFactoryInterceptorIntegration:
 
 class TestA2AExperimentalClientInterceptors:
     @pytest.mark.asyncio
-    async def test_broadcast_message_runs_hooks(self):
+    async def test_broadcast_message_runs_hooks(self) -> None:
         interceptor = _RecordingInterceptor()
         client, mock_transport, _ = _make_experimental([interceptor])
         mock_transport.gather_stream = MagicMock(
@@ -2366,7 +2456,7 @@ class TestA2AExperimentalClientInterceptors:
         assert [a.method for a in interceptor.after_calls] == ["send_message"]
 
     @pytest.mark.asyncio
-    async def test_broadcast_message_streaming_runs_hooks(self):
+    async def test_broadcast_message_streaming_runs_hooks(self) -> None:
         interceptor = _RecordingInterceptor()
         client, mock_transport, _ = _make_experimental([interceptor])
         mock_transport.gather_stream = MagicMock(
@@ -2386,7 +2476,7 @@ class TestA2AExperimentalClientInterceptors:
         assert len(interceptor.after_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_start_groupchat_runs_hooks(self):
+    async def test_start_groupchat_runs_hooks(self) -> None:
         interceptor = _RecordingInterceptor()
         client, mock_transport, _ = _make_experimental([interceptor])
         mock_transport.start_conversation = AsyncMock(return_value=[_rpc_response()])
@@ -2399,7 +2489,7 @@ class TestA2AExperimentalClientInterceptors:
         assert len(interceptor.after_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_start_streaming_groupchat_runs_hooks(self):
+    async def test_start_streaming_groupchat_runs_hooks(self) -> None:
         interceptor = _RecordingInterceptor()
         client, mock_transport, _ = _make_experimental([interceptor])
         mock_transport.start_streaming_conversation = MagicMock(
@@ -2417,7 +2507,7 @@ class TestA2AExperimentalClientInterceptors:
         assert len(interceptor.after_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_context_is_forwarded_to_interceptors(self):
+    async def test_context_is_forwarded_to_interceptors(self) -> None:
         interceptor = _RecordingInterceptor()
         client, mock_transport, _ = _make_experimental([interceptor])
         mock_transport.gather_stream = MagicMock(
@@ -2433,7 +2523,7 @@ class TestA2AExperimentalClientInterceptors:
         assert interceptor.after_calls[0].context is context
 
     @pytest.mark.asyncio
-    async def test_context_defaults_to_none_without_interceptors(self):
+    async def test_context_defaults_to_none_without_interceptors(self) -> None:
         client, mock_transport, _ = _make_experimental()
         mock_transport.gather_stream = MagicMock(
             side_effect=_async_gen(_rpc_response())
@@ -2444,7 +2534,7 @@ class TestA2AExperimentalClientInterceptors:
         assert len(responses) == 1
 
     @pytest.mark.asyncio
-    async def test_interceptor_headers_reach_the_wire(self):
+    async def test_interceptor_headers_reach_the_wire(self) -> None:
         """Headers an interceptor stores in service_parameters are sent."""
         interceptor = _RecordingInterceptor(headers={"X-Trace": "abc"})
         client, mock_transport, _ = _make_experimental([interceptor])
@@ -2458,7 +2548,7 @@ class TestA2AExperimentalClientInterceptors:
         assert msg.headers["X-Trace"] == "abc"
 
     @pytest.mark.asyncio
-    async def test_interceptor_can_replace_the_request(self):
+    async def test_interceptor_can_replace_the_request(self) -> None:
         class _Rewrite(ClientCallInterceptor):
             async def before(self, args: BeforeArgs) -> None:
                 args.input = SendMessageRequest(

@@ -1,6 +1,8 @@
 # Copyright AGNTCY Contributors (https://github.com/agntcy)
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any
+
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
 from agntcy_app_sdk.semantic.mcp.client_factory import MCPClientFactory
@@ -12,7 +14,7 @@ pytest_plugins = "pytest_asyncio"
 
 
 @pytest.mark.asyncio
-async def test_factory():
+async def test_factory() -> None:
     """
     Unit test for the AgntcyFactory and its components.
     """
@@ -42,7 +44,7 @@ async def test_factory():
 
 
 @pytest.mark.asyncio
-async def test_base_client_factory_protocol():
+async def test_base_client_factory_protocol() -> None:
     """All client factory accessors satisfy the BaseClientFactory protocol."""
     factory = AgntcyFactory()
 
@@ -57,7 +59,7 @@ async def test_base_client_factory_protocol():
 
 
 @pytest.mark.asyncio
-async def test_create_transport_unknown_raises():
+async def test_create_transport_unknown_raises() -> None:
     """create_transport raises ValueError for an unknown transport type."""
     factory = AgntcyFactory()
 
@@ -66,7 +68,7 @@ async def test_create_transport_unknown_raises():
 
 
 @pytest.mark.asyncio
-async def test_observability_providers_constant():
+async def test_observability_providers_constant() -> None:
     """OBSERVABILITY_PROVIDERS class constant is accessible and consistent."""
     assert AgntcyFactory.OBSERVABILITY_PROVIDERS == ["ioa_observe"]
 
@@ -75,7 +77,7 @@ async def test_observability_providers_constant():
 
 
 @pytest.mark.asyncio
-async def test_reexports():
+async def test_reexports() -> None:
     """Top-level package re-exports work for the primary public API."""
     import agntcy_app_sdk
 
@@ -114,7 +116,7 @@ async def test_reexports():
 
 
 @pytest.mark.asyncio
-async def test_create_directory_agntcy():
+async def test_create_directory_agntcy() -> None:
     """create_directory("agntcy") creates an AgentDirectory with the given endpoint."""
     from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
 
@@ -126,7 +128,7 @@ async def test_create_directory_agntcy():
 
 
 @pytest.mark.asyncio
-async def test_create_directory_default_endpoint():
+async def test_create_directory_default_endpoint() -> None:
     """create_directory("agntcy") without endpoint uses the Config default."""
     from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
 
@@ -137,7 +139,7 @@ async def test_create_directory_default_endpoint():
 
 
 @pytest.mark.asyncio
-async def test_create_directory_unknown_raises():
+async def test_create_directory_unknown_raises() -> None:
     """create_directory() raises ValueError for an unknown directory type."""
     factory = AgntcyFactory()
 
@@ -146,7 +148,7 @@ async def test_create_directory_unknown_raises():
 
 
 @pytest.mark.asyncio
-async def test_registered_directories():
+async def test_registered_directories() -> None:
     """registered_directories() returns the list of registered directory types."""
     factory = AgntcyFactory()
 
@@ -155,7 +157,7 @@ async def test_registered_directories():
 
 
 @pytest.mark.asyncio
-async def test_register_custom_directory():
+async def test_register_custom_directory() -> None:
     """register_directory() allows plugging in a custom directory backend."""
     from agntcy_app_sdk.directory.base import BaseAgentDirectory, RecordVisibility
 
@@ -163,39 +165,51 @@ async def test_register_custom_directory():
         DIRECTORY_TYPE: str = "stub"
 
         @classmethod
-        def from_config(cls, endpoint=None, **kwargs):
+        def from_config(
+            cls, endpoint: str | None = None, **kwargs: Any
+        ) -> "StubDirectory":
             return cls(endpoint=endpoint)
 
-        def __init__(self, endpoint=None):
+        def __init__(self, endpoint: str | None = None) -> None:
             self.endpoint = endpoint
 
         async def push_agent_record(
-            self, record, visibility=RecordVisibility.PUBLIC, *a, **kw
-        ):
+            self,
+            record: Any,
+            visibility: RecordVisibility = RecordVisibility.PUBLIC,
+            *a: Any,
+            **kw: Any,
+        ) -> str | None:
             pass
 
-        async def pull_agent_record(self, ref, *a, **kw):
+        async def pull_agent_record(self, ref: Any, *a: Any, **kw: Any) -> Any:
             pass
 
-        async def delete_agent_record(self, ref, *a, **kw):
+        async def delete_agent_record(self, ref: Any, *a: Any, **kw: Any) -> None:
             pass
 
-        async def list_agent_records(self, *a, **kw):
+        async def list_agent_records(self, *a: Any, **kw: Any) -> list[Any]:
             return []
 
-        async def search_agent_records(self, query, limit=1, *a, **kw):
+        async def search_agent_records(
+            self, query: Any, limit: int = 1, *a: Any, **kw: Any
+        ) -> list[Any]:
             return []
 
-        async def sign_agent_record(self, record_ref, provider, *a, **kw):
+        async def sign_agent_record(
+            self, record_ref: Any, provider: Any, *a: Any, **kw: Any
+        ) -> None:
             pass
 
-        async def verify_agent_record(self, record_ref):
+        async def verify_agent_record(self, record_ref: Any) -> None:
             pass
 
-        async def get_record_visibility(self, ref, *a, **kw):
+        async def get_record_visibility(self, ref: Any, *a: Any, **kw: Any) -> bool:
             return True
 
-        async def set_record_visibility(self, ref, visibility, *a, **kw):
+        async def set_record_visibility(
+            self, ref: Any, visibility: RecordVisibility, *a: Any, **kw: Any
+        ) -> bool:
             return True
 
     factory = AgntcyFactory()

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface
 from agntcy.dir_sdk.models import core_v1, search_v1
 from google.protobuf.json_format import ParseDict
 
+from agntcy_app_sdk.directory.base import RecordVisibility
 from agntcy_app_sdk.directory.dir.agent_directory import AgentDirectory
 from agntcy_app_sdk.directory.oasf_converter import MODULE_NAME_A2A
 
@@ -23,8 +25,8 @@ pytest_plugins = "pytest_asyncio"
 # ---------------------------------------------------------------------------
 
 
-def _minimal_card(**overrides) -> AgentCard:
-    defaults = {
+def _minimal_card(**overrides: Any) -> AgentCard:
+    defaults: dict[str, Any] = {
         "name": "test-agent",
         "supported_interfaces": [
             AgentInterface(protocol_binding="JSONRPC", url="http://localhost:9000")
@@ -40,7 +42,7 @@ def _minimal_card(**overrides) -> AgentCard:
     return AgentCard(**defaults)
 
 
-def _make_record_from_dict(data: dict) -> core_v1.Record:
+def _make_record_from_dict(data: dict[str, Any]) -> core_v1.Record:
     """Build a protobuf Record whose ``data`` Struct holds *data*."""
     rec = core_v1.Record()
     ParseDict(data, rec.data)
@@ -53,7 +55,7 @@ def _make_record_from_dict(data: dict) -> core_v1.Record:
 
 
 @pytest.mark.asyncio
-async def test_setup_creates_client():
+async def test_setup_creates_client() -> None:
     directory = AgentDirectory()
     with patch("agntcy_app_sdk.directory.dir.agent_directory.Client") as MockClient:
         await directory.setup()
@@ -62,7 +64,7 @@ async def test_setup_creates_client():
 
 
 @pytest.mark.asyncio
-async def test_setup_idempotent():
+async def test_setup_idempotent() -> None:
     directory = AgentDirectory()
     with patch("agntcy_app_sdk.directory.dir.agent_directory.Client") as MockClient:
         await directory.setup()
@@ -76,7 +78,7 @@ async def test_setup_idempotent():
 
 
 @pytest.mark.asyncio
-async def test_push_agent_card():
+async def test_push_agent_card() -> None:
     directory = AgentDirectory()
     mock_client = MagicMock()
     ref = core_v1.RecordRef(cid="Qm123abc")
@@ -94,7 +96,7 @@ async def test_push_agent_card():
 
 
 @pytest.mark.asyncio
-async def test_push_raw_dict():
+async def test_push_raw_dict() -> None:
     directory = AgentDirectory()
     mock_client = MagicMock()
     ref = core_v1.RecordRef(cid="QmDict456")
@@ -109,7 +111,7 @@ async def test_push_raw_dict():
 
 
 @pytest.mark.asyncio
-async def test_push_unsupported_type():
+async def test_push_unsupported_type() -> None:
     directory = AgentDirectory()
     directory._client = MagicMock()
 
@@ -118,7 +120,7 @@ async def test_push_unsupported_type():
 
 
 @pytest.mark.asyncio
-async def test_push_without_setup():
+async def test_push_without_setup() -> None:
     directory = AgentDirectory()
     with pytest.raises(RuntimeError, match="not connected"):
         await directory.push_agent_record(_minimal_card())
@@ -130,7 +132,7 @@ async def test_push_without_setup():
 
 
 @pytest.mark.asyncio
-async def test_pull_by_cid():
+async def test_pull_by_cid() -> None:
     directory = AgentDirectory()
     mock_client = MagicMock()
 
@@ -155,7 +157,7 @@ async def test_pull_by_cid():
 
 
 @pytest.mark.asyncio
-async def test_pull_extract_card():
+async def test_pull_extract_card() -> None:
     directory = AgentDirectory()
     mock_client = MagicMock()
 
@@ -191,7 +193,7 @@ async def test_pull_extract_card():
 
 
 @pytest.mark.asyncio
-async def test_pull_no_results():
+async def test_pull_no_results() -> None:
     directory = AgentDirectory()
     mock_client = MagicMock()
     mock_client.pull.return_value = []
@@ -207,7 +209,7 @@ async def test_pull_no_results():
 
 
 @pytest.mark.asyncio
-async def test_search_by_string():
+async def test_search_by_string() -> None:
     directory = AgentDirectory()
     mock_client = MagicMock()
 
@@ -234,7 +236,7 @@ async def test_search_by_string():
 
 
 @pytest.mark.asyncio
-async def test_not_implemented_methods():
+async def test_not_implemented_methods() -> None:
     directory = AgentDirectory()
     directory._client = MagicMock()
 
@@ -254,7 +256,7 @@ async def test_not_implemented_methods():
         await directory.get_record_visibility("ref")
 
     with pytest.raises(NotImplementedError):
-        await directory.set_record_visibility("ref", "public")
+        await directory.set_record_visibility("ref", RecordVisibility.PUBLIC)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +265,7 @@ async def test_not_implemented_methods():
 
 
 @pytest.mark.asyncio
-async def test_teardown():
+async def test_teardown() -> None:
     directory = AgentDirectory()
     directory._client = MagicMock()
 

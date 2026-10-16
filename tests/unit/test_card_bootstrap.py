@@ -17,6 +17,7 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
     ServeCardPlan,
     parse_interface_url,
 )
+from agntcy_app_sdk.transport.base import BaseTransport
 
 pytest_plugins = "pytest_asyncio"
 
@@ -75,7 +76,7 @@ def _make_builder(
 class TestParseSlimRpcExplicitEndpoint:
     """slimrpc with explicit host:port in URL."""
 
-    def test_basic(self):
+    def test_basic(self) -> None:
         iface = AgentInterface(
             protocol_binding="slimrpc",
             url="slim://myhost:46357/org/ns/agent_name",
@@ -86,7 +87,7 @@ class TestParseSlimRpcExplicitEndpoint:
             "identity": "org/ns/agent_name",
         }
 
-    def test_custom_port(self):
+    def test_custom_port(self) -> None:
         iface = AgentInterface(
             protocol_binding="slimrpc", url="slim://myhost:9999/org/ns/name"
         )
@@ -98,7 +99,7 @@ class TestParseSlimRpcExplicitEndpoint:
 class TestParseSlimRpcTopicOnly:
     """slimrpc with topic-only URL (identity encoded as path)."""
 
-    def test_identity_only(self):
+    def test_identity_only(self) -> None:
         """slim://org/ns/name -> identity, endpoint from env/default."""
         iface = AgentInterface(
             protocol_binding="slimrpc", url="slim://org/ns/agent_name"
@@ -108,7 +109,7 @@ class TestParseSlimRpcTopicOnly:
         # Default endpoint
         assert result["endpoint"] == "http://localhost:46357"
 
-    def test_identity_only_with_env(self):
+    def test_identity_only_with_env(self) -> None:
         """SLIM_ENDPOINT env var overrides the default."""
         iface = AgentInterface(
             protocol_binding="slimrpc", url="slim://org/ns/agent_name"
@@ -118,7 +119,7 @@ class TestParseSlimRpcTopicOnly:
         assert result["endpoint"] == "http://custom:11111"
         assert result["identity"] == "org/ns/agent_name"
 
-    def test_missing_identity_raises(self):
+    def test_missing_identity_raises(self) -> None:
         iface = AgentInterface(protocol_binding="slimrpc", url="slim://")
         with pytest.raises(ValueError, match="identity"):
             parse_interface_url(iface)
@@ -132,7 +133,7 @@ class TestParseSlimRpcTopicOnly:
 class TestParseSlimExplicitEndpoint:
     """slim/slimpatterns with explicit host:port in URL."""
 
-    def test_with_port(self):
+    def test_with_port(self) -> None:
         iface = AgentInterface(
             protocol_binding="slim", url="slim://myhost:46357/my_topic"
         )
@@ -142,7 +143,7 @@ class TestParseSlimExplicitEndpoint:
             "topic": "my_topic",
         }
 
-    def test_slimpatterns_with_port(self):
+    def test_slimpatterns_with_port(self) -> None:
         iface = AgentInterface(
             protocol_binding="slimpatterns", url="slim://host:12345/agent_topic"
         )
@@ -150,7 +151,7 @@ class TestParseSlimExplicitEndpoint:
         assert result["endpoint"] == "http://host:12345"
         assert result["topic"] == "agent_topic"
 
-    def test_three_part_name_with_port(self):
+    def test_three_part_name_with_port(self) -> None:
         """A port keeps the whole path as the SLIM name."""
         iface = AgentInterface(
             protocol_binding="slimpatterns",
@@ -164,14 +165,14 @@ class TestParseSlimExplicitEndpoint:
 class TestParseSlimTopicOnly:
     """slim/slimpatterns with topic-only URL (existing convention)."""
 
-    def test_topic_only(self):
+    def test_topic_only(self) -> None:
         """slim://my_topic -> topic, endpoint from default."""
         iface = AgentInterface(protocol_binding="slim", url="slim://my_topic")
         result = parse_interface_url(iface)
         assert result["topic"] == "my_topic"
         assert result["endpoint"] == "http://localhost:46357"
 
-    def test_topic_only_with_env(self):
+    def test_topic_only_with_env(self) -> None:
         """SLIM_ENDPOINT env var overrides the default."""
         iface = AgentInterface(protocol_binding="slimpatterns", url="slim://my_topic")
         with patch.dict(os.environ, {"SLIM_ENDPOINT": "http://slim:9999"}):
@@ -179,7 +180,7 @@ class TestParseSlimTopicOnly:
         assert result["endpoint"] == "http://slim:9999"
         assert result["topic"] == "my_topic"
 
-    def test_topic_with_underscores(self):
+    def test_topic_with_underscores(self) -> None:
         """Topic names like Hello_World_1.0.0 (underscore-separated)."""
         iface = AgentInterface(
             protocol_binding="slimpatterns", url="slim://Hello_World_Agent_1.0.0"
@@ -188,7 +189,7 @@ class TestParseSlimTopicOnly:
         assert result["topic"] == "hello_world_agent_1.0.0"
         assert result["endpoint"] == "http://localhost:46357"
 
-    def test_three_part_name_is_the_topic(self):
+    def test_three_part_name_is_the_topic(self) -> None:
         """slim://org/ns/agent is the topic org/ns/agent on the default endpoint."""
         iface = AgentInterface(
             protocol_binding="slimpatterns", url="slim://org/ns/agent"
@@ -197,26 +198,26 @@ class TestParseSlimTopicOnly:
         assert result["topic"] == "org/ns/agent"
         assert result["endpoint"] == "http://localhost:46357"
 
-    def test_three_part_name_uses_slim_endpoint_env(self):
+    def test_three_part_name_uses_slim_endpoint_env(self) -> None:
         iface = AgentInterface(protocol_binding="slim", url="slim://org/ns/agent")
         with patch.dict(os.environ, {"SLIM_ENDPOINT": "http://custom:11111"}):
             result = parse_interface_url(iface)
         assert result["topic"] == "org/ns/agent"
         assert result["endpoint"] == "http://custom:11111"
 
-    def test_path_without_port_is_part_of_the_name(self):
+    def test_path_without_port_is_part_of_the_name(self) -> None:
         """slim://host/my_topic has no port, so both segments are the name."""
         iface = AgentInterface(protocol_binding="slim", url="slim://host/my_topic")
         result = parse_interface_url(iface)
         assert result["topic"] == "host/my_topic"
         assert result["endpoint"] == "http://localhost:46357"
 
-    def test_empty_topic_raises(self):
+    def test_empty_topic_raises(self) -> None:
         iface = AgentInterface(protocol_binding="slim", url="slim://")
         with pytest.raises(ValueError, match="topic"):
             parse_interface_url(iface)
 
-    def test_trailing_slash_only_is_explicit_empty(self):
+    def test_trailing_slash_only_is_explicit_empty(self) -> None:
         """slim://host:46357/ has explicit endpoint but no topic."""
         iface = AgentInterface(protocol_binding="slim", url="slim://host:46357/")
         with pytest.raises(ValueError, match="topic"):
@@ -233,11 +234,13 @@ class TestParseSlimUrlEdgeCases:
             ("slimrpc", "slim://localhost:46357/org/ns/agent/", "identity"),
         ],
     )
-    def test_trailing_slash_is_not_part_of_the_name(self, binding, url, key):
+    def test_trailing_slash_is_not_part_of_the_name(
+        self, binding: str, url: str, key: str
+    ) -> None:
         result = parse_interface_url(AgentInterface(protocol_binding=binding, url=url))
         assert result[key] == "org/ns/agent"
 
-    def test_ipv6_slim_host_is_bracketed(self):
+    def test_ipv6_slim_host_is_bracketed(self) -> None:
         iface = AgentInterface(
             protocol_binding="slimrpc", url="slim://[::1]:46357/org/ns/agent"
         )
@@ -245,7 +248,7 @@ class TestParseSlimUrlEdgeCases:
         assert result["endpoint"] == "http://[::1]:46357"
         assert result["identity"] == "org/ns/agent"
 
-    def test_https_explicit_endpoint_keeps_its_scheme(self):
+    def test_https_explicit_endpoint_keeps_its_scheme(self) -> None:
         iface = AgentInterface(
             protocol_binding="slimrpc",
             url="https://slim.example:46357/org/ns/agent",
@@ -254,7 +257,7 @@ class TestParseSlimUrlEdgeCases:
         assert result["endpoint"] == "https://slim.example:46357"
         assert result["identity"] == "org/ns/agent"
 
-    def test_https_ipv6_endpoint_keeps_brackets_and_scheme(self):
+    def test_https_ipv6_endpoint_keeps_brackets_and_scheme(self) -> None:
         iface = AgentInterface(
             protocol_binding="slim", url="https://[::1]:46357/org/ns/agent"
         )
@@ -262,7 +265,7 @@ class TestParseSlimUrlEdgeCases:
         assert result["endpoint"] == "https://[::1]:46357"
         assert result["topic"] == "org/ns/agent"
 
-    def test_ipv6_nats_host_is_bracketed(self):
+    def test_ipv6_nats_host_is_bracketed(self) -> None:
         iface = AgentInterface(
             protocol_binding="natspatterns", url="nats://[::1]:4222/my_topic"
         )
@@ -279,7 +282,7 @@ class TestParseSlimUrlEdgeCases:
 class TestParseNatsExplicitEndpoint:
     """nats/natspatterns with explicit host:port in URL."""
 
-    def test_basic(self):
+    def test_basic(self) -> None:
         iface = AgentInterface(
             protocol_binding="nats", url="nats://natshost:4222/my_topic"
         )
@@ -289,7 +292,7 @@ class TestParseNatsExplicitEndpoint:
             "topic": "my_topic",
         }
 
-    def test_natspatterns(self):
+    def test_natspatterns(self) -> None:
         iface = AgentInterface(
             protocol_binding="natspatterns", url="nats://host:5555/agent_topic"
         )
@@ -301,14 +304,14 @@ class TestParseNatsExplicitEndpoint:
 class TestParseNatsTopicOnly:
     """nats/natspatterns with topic-only URL (existing convention)."""
 
-    def test_topic_only(self):
+    def test_topic_only(self) -> None:
         """nats://my_topic -> topic, endpoint from default."""
         iface = AgentInterface(protocol_binding="nats", url="nats://my_topic")
         result = parse_interface_url(iface)
         assert result["topic"] == "my_topic"
         assert result["endpoint"] == "nats://localhost:4222"
 
-    def test_topic_only_with_env(self):
+    def test_topic_only_with_env(self) -> None:
         """NATS_ENDPOINT env var overrides the default."""
         iface = AgentInterface(
             protocol_binding="natspatterns", url="nats://agent_topic"
@@ -318,7 +321,7 @@ class TestParseNatsTopicOnly:
         assert result["endpoint"] == "nats://nats:9999"
         assert result["topic"] == "agent_topic"
 
-    def test_empty_topic_raises(self):
+    def test_empty_topic_raises(self) -> None:
         iface = AgentInterface(protocol_binding="nats", url="nats://")
         with pytest.raises(ValueError, match="topic"):
             parse_interface_url(iface)
@@ -330,27 +333,27 @@ class TestParseNatsTopicOnly:
 
 
 class TestParseHttp:
-    def test_jsonrpc(self):
+    def test_jsonrpc(self) -> None:
         iface = AgentInterface(protocol_binding="jsonrpc", url="http://0.0.0.0:9999")
         result = parse_interface_url(iface)
         assert result == {"host": "0.0.0.0", "port": 9999}
 
-    def test_http(self):
+    def test_http(self) -> None:
         iface = AgentInterface(protocol_binding="http", url="http://localhost:8080")
         result = parse_interface_url(iface)
         assert result == {"host": "localhost", "port": 8080}
 
-    def test_missing_port_raises(self):
+    def test_missing_port_raises(self) -> None:
         iface = AgentInterface(protocol_binding="http", url="http://localhost")
         with pytest.raises(ValueError, match="explicit host and port"):
             parse_interface_url(iface)
 
-    def test_missing_host_raises(self):
+    def test_missing_host_raises(self) -> None:
         iface = AgentInterface(protocol_binding="jsonrpc", url="http://")
         with pytest.raises(ValueError, match="explicit host and port"):
             parse_interface_url(iface)
 
-    def test_case_insensitive(self):
+    def test_case_insensitive(self) -> None:
         iface = AgentInterface(protocol_binding="JSONRPC", url="http://0.0.0.0:9999")
         result = parse_interface_url(iface)
         assert result == {"host": "0.0.0.0", "port": 9999}
@@ -362,7 +365,7 @@ class TestParseHttp:
 
 
 class TestParseUnknown:
-    def test_unknown_transport_raises(self):
+    def test_unknown_transport_raises(self) -> None:
         iface = AgentInterface(protocol_binding="grpc", url="grpc://host:50051")
         with pytest.raises(ValueError, match="Unknown transport type"):
             parse_interface_url(iface)
@@ -375,14 +378,14 @@ class TestParseUnknown:
 
 class TestCardBuilderValidation:
     @pytest.mark.asyncio
-    async def test_raises_on_empty_interfaces(self):
+    async def test_raises_on_empty_interfaces(self) -> None:
         builder = _make_builder(interfaces=[])
 
         with pytest.raises(ValueError, match="empty"):
             await builder.start()
 
     @pytest.mark.asyncio
-    async def test_raises_on_none_interfaces(self):
+    async def test_raises_on_none_interfaces(self) -> None:
         card = _make_card(interfaces=None)
         session = MagicMock()
         handler = MagicMock()
@@ -392,7 +395,7 @@ class TestCardBuilderValidation:
             await builder.start()
 
     @pytest.mark.asyncio
-    async def test_raises_on_missing_slim_shared_secret(self):
+    async def test_raises_on_missing_slim_shared_secret(self) -> None:
         """slimrpc interface declared but SLIM_SHARED_SECRET not set."""
         builder = _make_builder(
             interfaces=[
@@ -409,7 +412,9 @@ class TestCardBuilderValidation:
                 await builder.start()
 
     @pytest.mark.asyncio
-    async def test_raises_on_missing_slim_shared_secret_for_slim_transport(self):
+    async def test_raises_on_missing_slim_shared_secret_for_slim_transport(
+        self,
+    ) -> None:
         """slim interface declared but SLIM_SHARED_SECRET not set."""
         builder = _make_builder(
             interfaces=[
@@ -426,7 +431,7 @@ class TestCardBuilderValidation:
                 await builder.start()
 
     @pytest.mark.asyncio
-    async def test_with_shared_secret_bypasses_env_var(self):
+    async def test_with_shared_secret_bypasses_env_var(self) -> None:
         """Using .with_shared_secret() should not require SLIM_SHARED_SECRET env var."""
         factory = MagicMock()
         factory.create_transport.return_value = MagicMock()
@@ -463,7 +468,7 @@ class TestCardBuilderDryRun:
     """dry_run() should return a plan without creating containers."""
 
     @pytest.mark.asyncio
-    async def test_dry_run_slimrpc_topic_only(self):
+    async def test_dry_run_slimrpc_topic_only(self) -> None:
         """slimrpc with topic-only URL (identity format)."""
         session = MagicMock()
         builder = _make_builder(
@@ -488,7 +493,7 @@ class TestCardBuilderDryRun:
         session.add.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_dry_run_slimrpc_explicit_endpoint(self):
+    async def test_dry_run_slimrpc_explicit_endpoint(self) -> None:
         """slimrpc with explicit host:port in URL."""
         session = MagicMock()
         builder = _make_builder(
@@ -509,7 +514,7 @@ class TestCardBuilderDryRun:
         assert "org/ns/agent" in entry["detail"]
 
     @pytest.mark.asyncio
-    async def test_dry_run_slim_topic_only(self):
+    async def test_dry_run_slim_topic_only(self) -> None:
         """slim with topic-only URL (existing convention)."""
         session = MagicMock()
         builder = _make_builder(
@@ -531,7 +536,7 @@ class TestCardBuilderDryRun:
         session.add.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_dry_run_nats_topic_only(self):
+    async def test_dry_run_nats_topic_only(self) -> None:
         """nats with topic-only URL (existing convention)."""
         session = MagicMock()
         builder = _make_builder(
@@ -551,7 +556,7 @@ class TestCardBuilderDryRun:
         assert "my_topic" in plan.containers[0]["detail"]
 
     @pytest.mark.asyncio
-    async def test_dry_run_http(self):
+    async def test_dry_run_http(self) -> None:
         session = MagicMock()
         builder = _make_builder(
             interfaces=[
@@ -572,7 +577,7 @@ class TestCardBuilderDryRun:
         assert "9999" in entry["detail"]
 
     @pytest.mark.asyncio
-    async def test_dry_run_multiple_transports(self):
+    async def test_dry_run_multiple_transports(self) -> None:
         session = MagicMock()
         builder = _make_builder(
             interfaces=[
@@ -600,7 +605,7 @@ class TestCardBuilderDryRun:
         assert ids == ["slimrpc-0", "nats-1", "http-2"]
 
     @pytest.mark.asyncio
-    async def test_dry_run_str_output(self):
+    async def test_dry_run_str_output(self) -> None:
         session = MagicMock()
         builder = _make_builder(
             interfaces=[
@@ -628,7 +633,7 @@ class TestCardBuilderBuildsContainers:
     """Non-dry-run mode: verify the fluent builder calls per transport."""
 
     @pytest.mark.asyncio
-    async def test_builds_slimrpc_container_explicit_endpoint(self):
+    async def test_builds_slimrpc_container_explicit_endpoint(self) -> None:
         mock_builder = MagicMock()
         mock_builder.with_session_id.return_value = mock_builder
         mock_builder.build.return_value = MagicMock()
@@ -668,7 +673,7 @@ class TestCardBuilderBuildsContainers:
         session.start_all_sessions.assert_awaited_once_with(keep_alive=False)
 
     @pytest.mark.asyncio
-    async def test_builds_slimrpc_container_topic_only(self):
+    async def test_builds_slimrpc_container_topic_only(self) -> None:
         """Topic-only format uses SLIM_ENDPOINT env or default."""
         mock_builder = MagicMock()
         mock_builder.with_session_id.return_value = mock_builder
@@ -706,7 +711,7 @@ class TestCardBuilderBuildsContainers:
         assert config.connection.endpoint == "http://custom:11111"
 
     @pytest.mark.asyncio
-    async def test_builds_nats_container_explicit_endpoint(self):
+    async def test_builds_nats_container_explicit_endpoint(self) -> None:
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
         mock_builder.with_topic.return_value = mock_builder
@@ -745,7 +750,7 @@ class TestCardBuilderBuildsContainers:
         session.start_all_sessions.assert_awaited_once_with(keep_alive=False)
 
     @pytest.mark.asyncio
-    async def test_builds_nats_container_topic_only(self):
+    async def test_builds_nats_container_topic_only(self) -> None:
         """Topic-only format: nats://my_topic uses NATS_ENDPOINT or default."""
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
@@ -782,7 +787,7 @@ class TestCardBuilderBuildsContainers:
         mock_builder.with_topic.assert_called_once_with("my_topic")
 
     @pytest.mark.asyncio
-    async def test_builds_http_container(self):
+    async def test_builds_http_container(self) -> None:
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
         mock_builder.with_port.return_value = mock_builder
@@ -816,7 +821,7 @@ class TestCardBuilderBuildsContainers:
         session.start_all_sessions.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_builds_slim_container_topic_only(self):
+    async def test_builds_slim_container_topic_only(self) -> None:
         """Topic-only format: slim://my_topic."""
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
@@ -863,7 +868,7 @@ class TestCardBuilderBuildsContainers:
         mock_builder.with_topic.assert_called_once_with("my_topic")
 
     @pytest.mark.asyncio
-    async def test_builds_slim_container_explicit_endpoint(self):
+    async def test_builds_slim_container_explicit_endpoint(self) -> None:
         """Explicit endpoint format: slim://host:46357/my_topic."""
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
@@ -904,7 +909,7 @@ class TestCardBuilderBuildsContainers:
         mock_builder.with_topic.assert_called_once_with("my_topic")
 
     @pytest.mark.asyncio
-    async def test_keep_alive_forwarded(self):
+    async def test_keep_alive_forwarded(self) -> None:
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
         mock_builder.with_port.return_value = mock_builder
@@ -934,7 +939,7 @@ class TestCardBuilderBuildsContainers:
         session.start_all_sessions.assert_awaited_once_with(keep_alive=True)
 
     @pytest.mark.asyncio
-    async def test_unknown_transport_skipped(self):
+    async def test_unknown_transport_skipped(self) -> None:
         """Unknown transport types are logged and skipped, not fatal."""
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
@@ -992,7 +997,7 @@ class TestSlimNameCollisionWarning:
         ]
 
     @pytest.mark.asyncio
-    async def test_same_name_warns(self):
+    async def test_same_name_warns(self) -> None:
         builder = _make_builder(self._interfaces("org/ns/agent", "org/ns/agent"))
 
         with (
@@ -1005,7 +1010,7 @@ class TestSlimNameCollisionWarning:
         assert "org/ns/agent" in mock_logger.warning.call_args.args
 
     @pytest.mark.asyncio
-    async def test_different_names_do_not_warn(self):
+    async def test_different_names_do_not_warn(self) -> None:
         builder = _make_builder(self._interfaces("org/ns/agent", "org/ns/agent-bus"))
 
         with (
@@ -1017,7 +1022,7 @@ class TestSlimNameCollisionWarning:
         mock_logger.warning.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_skipping_one_side_does_not_warn(self):
+    async def test_skipping_one_side_does_not_warn(self) -> None:
         builder = _make_builder(self._interfaces("org/ns/agent", "org/ns/agent")).skip(
             "slimpatterns"
         )
@@ -1031,7 +1036,7 @@ class TestSlimNameCollisionWarning:
         mock_logger.warning.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_topic_only_same_name_warns(self):
+    async def test_topic_only_same_name_warns(self) -> None:
         """slim://org/ns/agent on both interfaces is one SLIM name."""
         builder = _make_builder(
             [
@@ -1061,11 +1066,11 @@ class TestSlimNameCollisionWarning:
 
 
 class TestServeCardPlan:
-    def test_empty_plan_str(self):
+    def test_empty_plan_str(self) -> None:
         plan = ServeCardPlan()
         assert str(plan) == "No containers to serve."
 
-    def test_plan_str_with_entries(self):
+    def test_plan_str_with_entries(self) -> None:
         plan = ServeCardPlan(
             containers=[
                 {
@@ -1089,7 +1094,7 @@ class TestServeCardPlan:
 class TestAppSessionAddA2aCard:
     """Test the convenience method on AppSession returns a CardBuilder."""
 
-    def test_add_a2a_card_returns_card_builder(self):
+    def test_add_a2a_card_returns_card_builder(self) -> None:
         from agntcy_app_sdk.app_sessions import AppSession
 
         session = AppSession()
@@ -1107,7 +1112,7 @@ class TestAppSessionAddA2aCard:
         assert isinstance(result, CardBuilder)
 
     @pytest.mark.asyncio
-    async def test_start_creates_default_factory(self):
+    async def test_start_creates_default_factory(self) -> None:
         """Calling .start() without .with_factory() auto-creates a factory."""
         from agntcy_app_sdk.app_sessions import AppSession
 
@@ -1133,7 +1138,7 @@ class TestAppSessionAddA2aCard:
         assert cb._factory is not None
 
     @pytest.mark.asyncio
-    async def test_start_uses_provided_factory(self):
+    async def test_start_uses_provided_factory(self) -> None:
         """Calling .with_factory(f).start() uses the provided factory."""
         from agntcy_app_sdk.app_sessions import AppSession
 
@@ -1157,7 +1162,7 @@ class TestAppSessionAddA2aCard:
         assert cb._factory is custom_factory
 
     @pytest.mark.asyncio
-    async def test_dry_run_returns_plan(self):
+    async def test_dry_run_returns_plan(self) -> None:
         from agntcy_app_sdk.app_sessions import AppSession
 
         session = AppSession()
@@ -1184,21 +1189,21 @@ class TestAppSessionAddA2aCard:
 class TestTransportAliasing:
     """Verify that alias labels resolve correctly through parse_interface_url."""
 
-    def test_slim_alias_resolves_to_slimpatterns(self):
+    def test_slim_alias_resolves_to_slimpatterns(self) -> None:
         """transport='slim' should parse as slimpatterns."""
         iface = AgentInterface(protocol_binding="slim", url="slim://my_topic")
         result = parse_interface_url(iface)
         assert result["topic"] == "my_topic"
         assert result["endpoint"] == "http://localhost:46357"
 
-    def test_slim_extended_alias_resolves_to_slimpatterns(self):
+    def test_slim_extended_alias_resolves_to_slimpatterns(self) -> None:
         """transport='slim-extended' should parse as slimpatterns."""
         iface = AgentInterface(protocol_binding="slim-extended", url="slim://my_topic")
         result = parse_interface_url(iface)
         assert result["topic"] == "my_topic"
         assert result["endpoint"] == "http://localhost:46357"
 
-    def test_slim_extended_explicit_endpoint(self):
+    def test_slim_extended_explicit_endpoint(self) -> None:
         """slim-extended with explicit host:port."""
         iface = AgentInterface(
             protocol_binding="slim-extended", url="slim://host:46357/my_topic"
@@ -1207,20 +1212,20 @@ class TestTransportAliasing:
         assert result["endpoint"] == "http://host:46357"
         assert result["topic"] == "my_topic"
 
-    def test_nats_alias_resolves_to_natspatterns(self):
+    def test_nats_alias_resolves_to_natspatterns(self) -> None:
         """transport='nats' should parse as natspatterns."""
         iface = AgentInterface(protocol_binding="nats", url="nats://my_topic")
         result = parse_interface_url(iface)
         assert result["topic"] == "my_topic"
         assert result["endpoint"] == "nats://localhost:4222"
 
-    def test_case_insensitive_alias(self):
+    def test_case_insensitive_alias(self) -> None:
         """Aliases are case-insensitive."""
         iface = AgentInterface(protocol_binding="SLIM-EXTENDED", url="slim://topic")
         result = parse_interface_url(iface)
         assert result["topic"] == "topic"
 
-    def test_case_insensitive_canonical(self):
+    def test_case_insensitive_canonical(self) -> None:
         """Canonical labels are also case-insensitive."""
         iface = AgentInterface(protocol_binding="SLIMPATTERNS", url="slim://my_topic")
         result = parse_interface_url(iface)
@@ -1236,7 +1241,7 @@ class TestCardBuilderAliasedDryRun:
     """Dry-run with aliased transport labels should show canonical names."""
 
     @pytest.mark.asyncio
-    async def test_slim_extended_dry_run(self):
+    async def test_slim_extended_dry_run(self) -> None:
         """slim-extended resolves to slimpatterns in dry-run plan."""
         session = MagicMock()
         builder = _make_builder(
@@ -1260,7 +1265,7 @@ class TestCardBuilderAliasedDryRun:
         assert "my_topic" in entry["detail"]
 
     @pytest.mark.asyncio
-    async def test_nats_alias_dry_run(self):
+    async def test_nats_alias_dry_run(self) -> None:
         """transport='nats' resolves to natspatterns in dry-run plan."""
         session = MagicMock()
         builder = _make_builder(
@@ -1287,7 +1292,7 @@ class TestCardBuilderAliasedBuilds:
     """Non-dry-run with aliases: verify correct builder calls."""
 
     @pytest.mark.asyncio
-    async def test_builds_slim_extended_container(self):
+    async def test_builds_slim_extended_container(self) -> None:
         """slim-extended should build the same as slimpatterns."""
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
@@ -1338,7 +1343,7 @@ class TestCardBuilderOverride:
     """Tests for the .override() fluent method."""
 
     @pytest.mark.asyncio
-    async def test_override_slimrpc_uses_provided_config(self):
+    async def test_override_slimrpc_uses_provided_config(self) -> None:
         """User's pre-built config is passed to session.add() instead of auto-created."""
         mock_builder = MagicMock()
         mock_builder.with_session_id.return_value = mock_builder
@@ -1371,7 +1376,7 @@ class TestCardBuilderOverride:
         mock_builder.with_session_id.assert_called_once_with("slimrpc-0")
 
     @pytest.mark.asyncio
-    async def test_override_slimpatterns_uses_provided_transport(self):
+    async def test_override_slimpatterns_uses_provided_transport(self) -> None:
         """User's transport is used instead of factory.create_transport()."""
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
@@ -1384,7 +1389,7 @@ class TestCardBuilderOverride:
         session.start_all_sessions = AsyncMock()
 
         factory = MagicMock()
-        user_transport = MagicMock(name="UserSlimTransport")
+        user_transport = MagicMock(spec=BaseTransport, name="UserSlimTransport")
 
         card = _make_card(
             interfaces=[
@@ -1407,7 +1412,7 @@ class TestCardBuilderOverride:
         mock_builder.with_topic.assert_called_once_with("my_topic")
 
     @pytest.mark.asyncio
-    async def test_override_natspatterns_uses_provided_transport(self):
+    async def test_override_natspatterns_uses_provided_transport(self) -> None:
         """User's transport is used instead of factory.create_transport()."""
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
@@ -1420,7 +1425,7 @@ class TestCardBuilderOverride:
         session.start_all_sessions = AsyncMock()
 
         factory = MagicMock()
-        user_transport = MagicMock(name="UserNatsTransport")
+        user_transport = MagicMock(spec=BaseTransport, name="UserNatsTransport")
 
         card = _make_card(
             interfaces=[
@@ -1442,7 +1447,7 @@ class TestCardBuilderOverride:
         mock_builder.with_topic.assert_called_once_with("my_topic")
 
     @pytest.mark.asyncio
-    async def test_override_slimrpc_skips_shared_secret_check(self):
+    async def test_override_slimrpc_skips_shared_secret_check(self) -> None:
         """Override should NOT raise even without SLIM_SHARED_SECRET."""
         mock_builder = MagicMock()
         mock_builder.with_session_id.return_value = mock_builder
@@ -1476,7 +1481,7 @@ class TestCardBuilderOverride:
         session.add.assert_called_once_with(user_config)
 
     @pytest.mark.asyncio
-    async def test_override_slimpatterns_skips_shared_secret_check(self):
+    async def test_override_slimpatterns_skips_shared_secret_check(self) -> None:
         """Override should NOT raise even without SLIM_SHARED_SECRET."""
         mock_builder = MagicMock()
         mock_builder.with_transport.return_value = mock_builder
@@ -1489,7 +1494,7 @@ class TestCardBuilderOverride:
         session.start_all_sessions = AsyncMock()
 
         factory = MagicMock()
-        user_transport = MagicMock(name="UserSlimTransport")
+        user_transport = MagicMock(spec=BaseTransport, name="UserSlimTransport")
 
         card = _make_card(
             interfaces=[
@@ -1511,6 +1516,30 @@ class TestCardBuilderOverride:
 
         mock_builder.with_transport.assert_called_once_with(user_transport)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("binding", "url"),
+        [("slimpatterns", "slim://my_topic"), ("natspatterns", "nats://my_topic")],
+    )
+    @pytest.mark.parametrize("run", ["start", "dry_run"])
+    async def test_override_patterns_rejects_non_transport(
+        self, binding: str, url: str, run: str
+    ) -> None:
+        session = MagicMock()
+        session.start_all_sessions = AsyncMock()
+        card = _make_card(
+            interfaces=[AgentInterface(protocol_binding=binding, url=url)]
+        )
+        builder = CardBuilder(session, card, MagicMock())
+        builder.with_factory(MagicMock()).override(
+            binding, MagicMock(name="NotATransport")
+        )
+
+        with pytest.raises(TypeError, match=rf"\.override\('{binding}'\) needs a"):
+            await getattr(builder, run)()
+
+        session.start_all_sessions.assert_not_awaited()
+
 
 # =========================================================================
 # CardBuilder — skip
@@ -1521,7 +1550,7 @@ class TestCardBuilderSkip:
     """Tests for the .skip() fluent method."""
 
     @pytest.mark.asyncio
-    async def test_skip_transport_not_in_plan(self):
+    async def test_skip_transport_not_in_plan(self) -> None:
         """dry-run with .skip("jsonrpc") should omit that entry."""
         session = MagicMock()
 
@@ -1547,7 +1576,7 @@ class TestCardBuilderSkip:
         assert plan.containers[0]["transport"] == "natspatterns"
 
     @pytest.mark.asyncio
-    async def test_skip_transport_not_built(self):
+    async def test_skip_transport_not_built(self) -> None:
         """Non-dry-run with .skip("slimrpc") should not call session.add() for it."""
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
@@ -1585,7 +1614,7 @@ class TestCardBuilderSkip:
         mock_builder.with_session_id.assert_called_once_with("http-1")
 
     @pytest.mark.asyncio
-    async def test_skip_multiple_transports(self):
+    async def test_skip_multiple_transports(self) -> None:
         """Skip 2 transports, verify only remaining are built."""
         session = MagicMock()
 
@@ -1624,7 +1653,7 @@ class TestCardBuilderSkip:
 class TestCardBuilderFluent:
     """Verify fluent API returns self for chaining."""
 
-    def test_chaining_returns_self(self):
+    def test_chaining_returns_self(self) -> None:
         card = _make_card(
             interfaces=[
                 AgentInterface(
@@ -1649,7 +1678,7 @@ class TestCardBuilderFluent:
         assert result3 is builder
 
     @pytest.mark.asyncio
-    async def test_auto_creates_factory(self):
+    async def test_auto_creates_factory(self) -> None:
         """Calling .start() without .with_factory() still works."""
         mock_builder = MagicMock()
         mock_builder.with_host.return_value = mock_builder
@@ -1719,14 +1748,14 @@ class TestCardBuilderPublicUrl:
     """``.with_public_url()``: the card URL is where to bind, the public URL
     is what clients are told."""
 
-    def test_returns_self(self):
+    def test_returns_self(self) -> None:
         builder = _make_builder(
             [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
         )
         assert builder.with_public_url(_PUBLIC_URL) is builder
 
     @pytest.mark.parametrize("url", ["agent.example.com", "ftp://x", "slim://x", ""])
-    def test_rejects_non_http_urls(self, url):
+    def test_rejects_non_http_urls(self, url: str) -> None:
         builder = _make_builder(
             [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
         )
@@ -1734,7 +1763,7 @@ class TestCardBuilderPublicUrl:
             builder.with_public_url(url)
 
     @pytest.mark.asyncio
-    async def test_binds_card_url_and_advertises_public_url(self):
+    async def test_binds_card_url_and_advertises_public_url(self) -> None:
         builder, session, container, card = _public_url_builder(
             [AgentInterface(protocol_binding="JSONRPC", url=_BIND_URL)]
         )
@@ -1749,7 +1778,7 @@ class TestCardBuilderPublicUrl:
         assert _urls(served) == [("JSONRPC", _PUBLIC_URL)]
 
     @pytest.mark.asyncio
-    async def test_callers_card_is_not_modified(self):
+    async def test_callers_card_is_not_modified(self) -> None:
         builder, _, _, card = _public_url_builder(
             [AgentInterface(protocol_binding="JSONRPC", url=_BIND_URL)]
         )
@@ -1759,7 +1788,7 @@ class TestCardBuilderPublicUrl:
         assert _urls(card) == [("JSONRPC", _BIND_URL)]
 
     @pytest.mark.asyncio
-    async def test_without_public_url_the_card_is_served_as_is(self):
+    async def test_without_public_url_the_card_is_served_as_is(self) -> None:
         """Default behavior is unchanged: same object, no copy."""
         builder, session, _, card = _public_url_builder(
             [AgentInterface(protocol_binding="JSONRPC", url=_BIND_URL)]
@@ -1771,7 +1800,7 @@ class TestCardBuilderPublicUrl:
         assert served is card
 
     @pytest.mark.asyncio
-    async def test_only_the_http_interface_changes_and_order_is_kept(self):
+    async def test_only_the_http_interface_changes_and_order_is_kept(self) -> None:
         builder, session, _, _ = _public_url_builder(
             [
                 AgentInterface(protocol_binding="nats", url="nats://my_topic"),
@@ -1790,7 +1819,7 @@ class TestCardBuilderPublicUrl:
         ]
 
     @pytest.mark.asyncio
-    async def test_http_alias_binding_is_covered_too(self):
+    async def test_http_alias_binding_is_covered_too(self) -> None:
         builder, session, container, _ = _public_url_builder(
             [AgentInterface(protocol_binding="http", url="http://127.0.0.1:8080")]
         )
@@ -1802,7 +1831,7 @@ class TestCardBuilderPublicUrl:
         assert _urls(served) == [("http", _PUBLIC_URL)]
 
     @pytest.mark.asyncio
-    async def test_dry_run_shows_bind_and_advertised_address(self):
+    async def test_dry_run_shows_bind_and_advertised_address(self) -> None:
         builder = _make_builder(
             [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
         )
@@ -1815,7 +1844,7 @@ class TestCardBuilderPublicUrl:
         assert f"advertised={_PUBLIC_URL}" in detail
 
     @pytest.mark.asyncio
-    async def test_dry_run_without_public_url_is_unchanged(self):
+    async def test_dry_run_without_public_url_is_unchanged(self) -> None:
         builder = _make_builder(
             [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
         )
@@ -1825,7 +1854,7 @@ class TestCardBuilderPublicUrl:
         assert plan.containers[0]["detail"] == "host=0.0.0.0, port=9999"
 
     @pytest.mark.asyncio
-    async def test_slimrpc_config_gets_the_corrected_card(self):
+    async def test_slimrpc_config_gets_the_corrected_card(self) -> None:
         """SlimRPC serves the card too; it must not show the bind URL."""
         builder, session, _, _ = _public_url_builder(
             [
@@ -1842,7 +1871,7 @@ class TestCardBuilderPublicUrl:
             assert all(url != _BIND_URL for _, url in _urls(config.agent_card))
 
     @pytest.mark.asyncio
-    async def test_ignored_with_a_warning_when_no_http_interface(self):
+    async def test_ignored_with_a_warning_when_no_http_interface(self) -> None:
         builder, session, _, card = _public_url_builder(
             [AgentInterface(protocol_binding="nats", url="nats://my_topic")]
         )
@@ -1855,7 +1884,7 @@ class TestCardBuilderPublicUrl:
         assert session.add.call_args.args[0].agent_card is card
 
     @pytest.mark.asyncio
-    async def test_ignored_with_a_warning_when_http_is_skipped(self):
+    async def test_ignored_with_a_warning_when_http_is_skipped(self) -> None:
         builder, session, _, card = _public_url_builder(
             [
                 AgentInterface(protocol_binding="nats", url="nats://my_topic"),
@@ -1870,7 +1899,7 @@ class TestCardBuilderPublicUrl:
         assert session.add.call_args.args[0].agent_card is card
 
     @pytest.mark.asyncio
-    async def test_ignored_with_a_warning_when_http_is_overridden(self):
+    async def test_ignored_with_a_warning_when_http_is_overridden(self) -> None:
         """An .override() config is served exactly as given."""
         builder, session, _, card = _public_url_builder(
             [AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL)]
@@ -1889,7 +1918,7 @@ class TestCardBuilderPublicUrl:
         session.add.assert_called_once_with(override)
 
     @pytest.mark.asyncio
-    async def test_several_http_interfaces_are_rejected(self):
+    async def test_several_http_interfaces_are_rejected(self) -> None:
         builder = _make_builder(
             [
                 AgentInterface(protocol_binding="jsonrpc", url="http://0.0.0.0:9001"),
@@ -1901,7 +1930,7 @@ class TestCardBuilderPublicUrl:
             await builder.with_public_url(_PUBLIC_URL).dry_run()
 
     @pytest.mark.asyncio
-    async def test_bind_url_still_needs_an_explicit_port(self):
+    async def test_bind_url_still_needs_an_explicit_port(self) -> None:
         """The card URL is still the bind address, so a public-looking URL
         without a port can't stand in for it."""
         builder = _make_builder(
@@ -1930,12 +1959,12 @@ def _recording_session() -> MagicMock:
 class TestCardBuilderSlimTls:
     _ENV = {"SLIM_SHARED_SECRET": "secret" * 6}
 
-    def test_returns_self(self):
+    def test_returns_self(self) -> None:
         builder = _make_builder([])
         assert builder.with_slim_tls() is builder
 
     @pytest.mark.asyncio
-    async def test_https_slim_endpoint_turns_tls_on(self):
+    async def test_https_slim_endpoint_turns_tls_on(self) -> None:
         factory = MagicMock()
         builder = _make_builder(
             [AgentInterface(protocol_binding="slim", url="slim://org/ns/agent")],
@@ -1952,7 +1981,7 @@ class TestCardBuilderSlimTls:
         assert kwargs["tls_insecure"] is False
 
     @pytest.mark.asyncio
-    async def test_explicit_endpoint_is_dialled_over_https(self):
+    async def test_explicit_endpoint_is_dialled_over_https(self) -> None:
         factory = MagicMock()
         builder = _make_builder(
             [
@@ -1972,7 +2001,7 @@ class TestCardBuilderSlimTls:
         assert kwargs["tls_insecure"] is False
 
     @pytest.mark.asyncio
-    async def test_slimrpc_connection_gets_tls(self):
+    async def test_slimrpc_connection_gets_tls(self) -> None:
         from agntcy_app_sdk.semantic.a2a.server.srpc import A2ASlimRpcServerConfig
 
         session = _recording_session()
@@ -1996,7 +2025,7 @@ class TestCardBuilderSlimTls:
         assert config.connection.tls_insecure is False
 
     @pytest.mark.asyncio
-    async def test_http_slim_endpoint_is_refused_with_tls(self):
+    async def test_http_slim_endpoint_is_refused_with_tls(self) -> None:
         """A topic-only URL takes SLIM_ENDPOINT as written; with TLS requested
         an http:// one is an error, not a silent plaintext connection."""
         builder = _make_builder(
@@ -2008,7 +2037,7 @@ class TestCardBuilderSlimTls:
             await builder.dry_run()
 
     @pytest.mark.asyncio
-    async def test_dry_run_shows_tls(self):
+    async def test_dry_run_shows_tls(self) -> None:
         builder = _make_builder(
             [
                 AgentInterface(
@@ -2026,7 +2055,7 @@ class TestCardBuilderSlimTls:
             assert "tls=on" in container["detail"]
 
     @pytest.mark.asyncio
-    async def test_default_stays_plaintext(self):
+    async def test_default_stays_plaintext(self) -> None:
         factory = MagicMock()
         builder = _make_builder(
             [AgentInterface(protocol_binding="slim", url="slim://h:46357/org/ns/a")],
@@ -2044,7 +2073,7 @@ class TestCardBuilderSlimTls:
         assert kwargs["tls_insecure"] is True
 
     @pytest.mark.asyncio
-    async def test_https_interface_url_turns_tls_on(self):
+    async def test_https_interface_url_turns_tls_on(self) -> None:
         """An https:// card URL is the endpoint, scheme included."""
         factory = MagicMock()
         builder = _make_builder(
@@ -2066,11 +2095,11 @@ class TestCardBuilderSlimTls:
         assert kwargs["tls_insecure"] is False
 
     @pytest.mark.asyncio
-    async def test_override_is_used_as_given_when_slim_tls_is_requested(self):
+    async def test_override_is_used_as_given_when_slim_tls_is_requested(self) -> None:
         """with_slim_tls() must not reject or relabel an override."""
         session = _recording_session()
         factory = MagicMock()
-        user_transport = MagicMock(name="UserSlimTransport")
+        user_transport = MagicMock(spec=BaseTransport, name="UserSlimTransport")
         builder = (
             _make_builder(
                 [AgentInterface(protocol_binding="slim", url="slim://org/ns/agent")],
@@ -2100,19 +2129,19 @@ class TestCardBuilderSlimTls:
 class TestInterfaceTransport:
     """Verify InterfaceTransport constants and classmethods."""
 
-    def test_canonical_values(self):
+    def test_canonical_values(self) -> None:
         assert InterfaceTransport.SLIM_RPC == "slimrpc"
         assert InterfaceTransport.SLIM_PATTERNS == "slimpatterns"
         assert InterfaceTransport.NATS_PATTERNS == "natspatterns"
         assert InterfaceTransport.JSONRPC == "jsonrpc"
         assert InterfaceTransport.HTTP == "http"
 
-    def test_alias_values(self):
+    def test_alias_values(self) -> None:
         assert InterfaceTransport.SLIM == "slimpatterns"
         assert InterfaceTransport.NATS == "natspatterns"
         assert InterfaceTransport.SLIM_EXTENDED == "slimpatterns"
 
-    def test_all_types_includes_canonical_and_aliases(self):
+    def test_all_types_includes_canonical_and_aliases(self) -> None:
         labels = InterfaceTransport.all_types()
         # Canonical
         assert "slimrpc" in labels
@@ -2125,7 +2154,7 @@ class TestInterfaceTransport:
         assert "nats" in labels
         assert "slim-extended" in labels
 
-    def test_canonical_types_excludes_aliases(self):
+    def test_canonical_types_excludes_aliases(self) -> None:
         labels = InterfaceTransport.canonical_types()
         assert "slimrpc" in labels
         assert "slimpatterns" in labels
@@ -2137,7 +2166,7 @@ class TestInterfaceTransport:
         assert "nats" not in labels
         assert "slim-extended" not in labels
 
-    def test_label_usable_in_agent_interface(self):
+    def test_label_usable_in_agent_interface(self) -> None:
         """Labels work directly in AgentInterface construction."""
         iface = AgentInterface(
             protocol_binding=InterfaceTransport.SLIM_PATTERNS,
@@ -2146,7 +2175,7 @@ class TestInterfaceTransport:
         result = parse_interface_url(iface)
         assert result["topic"] == "my_topic"
 
-    def test_alias_label_usable_in_agent_interface(self):
+    def test_alias_label_usable_in_agent_interface(self) -> None:
         """Alias labels also work in AgentInterface construction."""
         iface = AgentInterface(
             protocol_binding=InterfaceTransport.SLIM_EXTENDED,
@@ -2155,13 +2184,13 @@ class TestInterfaceTransport:
         result = parse_interface_url(iface)
         assert result["topic"] == "my_topic"
 
-    def test_importable_from_package(self):
+    def test_importable_from_package(self) -> None:
         """InterfaceTransport is importable from the top-level package."""
         from agntcy_app_sdk import InterfaceTransport as TL
 
         assert TL.SLIM_RPC == "slimrpc"
 
-    def test_card_builder_importable_from_package(self):
+    def test_card_builder_importable_from_package(self) -> None:
         """CardBuilder is importable from the top-level package."""
         from agntcy_app_sdk import CardBuilder as CB
 

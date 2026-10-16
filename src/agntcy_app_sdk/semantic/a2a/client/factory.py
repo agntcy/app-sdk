@@ -7,14 +7,16 @@ import asyncio
 import dataclasses
 import datetime
 import warnings
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from a2a.client import A2ACardResolver
 from a2a.client.base_client import BaseClient
 from a2a.client.client import Client
+from a2a.client.client import ClientConfig as A2AClientConfig
 from a2a.client.client_factory import ClientFactory as UpstreamClientFactory
 from a2a.client.interceptors import ClientCallInterceptor
+from a2a.client.transports.base import ClientTransport
 from a2a.types import AgentCard, AgentInterface
 
 from slima2a.client_transport import SRPCTransport
@@ -34,6 +36,26 @@ from agntcy_app_sdk.semantic.a2a.transport_types import normalize_transport
 from agntcy_app_sdk.transport.base import BaseTransport
 
 logger = get_logger(__name__)
+
+
+def _produce_slimrpc(
+    card: AgentCard, url: str, config: A2AClientConfig
+) -> ClientTransport:
+    """``TransportProducer`` for ``slimrpc``, reading the channel factory from
+    the SDK's :class:`ClientConfig` (slima2a's ``create()`` expects its own
+    config class)."""
+    if not isinstance(config, ClientConfig) or config.slimrpc_channel_factory is None:
+        raise ValueError("slimrpc_channel_factory is required when using sRPC")
+    return SRPCTransport(config.slimrpc_channel_factory(url), card)
+
+
+def _produce_patterns(
+    card: AgentCard, url: str, config: A2AClientConfig
+) -> ClientTransport:
+    """``TransportProducer`` for ``slimpatterns`` and ``natspatterns``."""
+    if not isinstance(config, ClientConfig):
+        raise ValueError("Patterns transports need the SDK's ClientConfig")
+    return PatternsClientTransport.create(card, url, config)
 
 
 class A2AClientFactory:
@@ -360,7 +382,7 @@ class A2AClientFactory:
                 slim_kwargs["message_timeout"] = datetime.timedelta(
                     seconds=config.slim_config.message_timeout_seconds,
                 )
-                transport = SLIMTransport.from_config(
+                transport: BaseTransport = SLIMTransport.from_config(
                     config.slim_config.endpoint,
                     name=config.slim_config.name,
                     **slim_kwargs,
@@ -449,7 +471,9 @@ class A2AClientFactory:
         rpc_cfg = config.slimrpc_config
 
         # The Rust→Python callbacks need to know which loop to resume on.
-        slim_bindings.uniffi_set_event_loop(asyncio.get_running_loop())
+        slim_bindings.uniffi_set_event_loop(
+            cast(asyncio.BaseEventLoop, asyncio.get_running_loop())
+        )
 
         # 1) Ensure the global SLIM runtime is initialised and take the
         #    service.  If slimpatterns already did this it is a no-op.
@@ -479,7 +503,7 @@ class A2AClientFactory:
 
         # 4) Build the channel factory from the dedicated app + connection.
         config.slimrpc_channel_factory = _slimrpc_channel_factory(slim_app, conn_id)
-        self._upstream.register("slimrpc", SRPCTransport.create)
+        self._upstream.register("slimrpc", _produce_slimrpc)
         logger.debug("Registered slimrpc transport (deferred from SlimRpcConfig)")
 
     # ------------------------------------------------------------------
@@ -499,17 +523,17 @@ class A2AClientFactory:
 
         # SLIM-RPC (slima2a protobuf-over-SLIM)
         if config.slimrpc_channel_factory is not None:
-            self._upstream.register("slimrpc", SRPCTransport.create)
+            self._upstream.register("slimrpc", _produce_slimrpc)
             logger.debug("Registered slimrpc transport")
 
         # SLIM patterns — register for sync fallback (requires eager transport)
         if config.slim_transport is not None:
-            self._upstream.register("slimpatterns", PatternsClientTransport.create)
+            self._upstream.register("slimpatterns", _produce_patterns)
             logger.debug("Registered slimpatterns transport (eager)")
 
         # NATS patterns — register for sync fallback (requires eager transport)
         if config.nats_transport is not None:
-            self._upstream.register("natspatterns", PatternsClientTransport.create)
+            self._upstream.register("natspatterns", _produce_patterns)
             logger.debug("Registered natspatterns transport (eager)")
 
     def _initialize_tracing_if_enabled(self) -> None:

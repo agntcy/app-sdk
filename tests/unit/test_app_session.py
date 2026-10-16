@@ -9,7 +9,7 @@ pytest_plugins = "pytest_asyncio"
 
 
 @pytest.mark.asyncio
-async def test_app_session():
+async def test_app_session() -> None:
     """
     Unit test for the AgntcyFactory and its components using the fluent API.
     """
@@ -42,3 +42,16 @@ async def test_app_session():
     assert app_session.get_app_container("test_session") is None, (
         "App container was not removed properly."
     )
+
+
+@pytest.mark.asyncio
+async def test_shutdown_signal_before_run_raises() -> None:
+    import signal
+    from unittest.mock import MagicMock
+
+    from agntcy_app_sdk.app_sessions import AppContainer
+
+    container = AppContainer(MagicMock())
+
+    with pytest.raises(RuntimeError, match="before run"):
+        await container._handle_shutdown(signal.SIGINT)

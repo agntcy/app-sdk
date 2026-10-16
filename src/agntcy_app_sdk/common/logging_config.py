@@ -137,4 +137,4 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """Return a structlog logger, optionally bound to *name*."""
     if not _configured:
         configure_logging()
-    return structlog.get_logger(name or "agntcy_app_sdk")
+    return structlog.stdlib.get_logger(name or "agntcy_app_sdk")

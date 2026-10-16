@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Protocol, Type
+from typing import Any, Callable, Dict, Protocol, Type
 
 from agntcy_app_sdk.app_sessions import AppSession
 from agntcy_app_sdk.common.logging_config import get_logger
@@ -273,7 +273,9 @@ class AgntcyFactory:
             self._protocol_registry[proto_name] = factory_class
 
             # Build a closure that captures the class for the accessor
-            def _make_accessor(cls: type):
+            def _make_accessor(
+                cls: Type[BaseClientFactory],
+            ) -> Callable[..., BaseClientFactory]:
                 def accessor(*args: Any, **kwargs: Any) -> BaseClientFactory:
                     return cls(*args, **kwargs)
 

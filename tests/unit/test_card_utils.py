@@ -33,50 +33,52 @@ def _pairs(card: AgentCard) -> list[tuple[str, str]]:
 
 
 class TestWireBinding:
-    def test_known_upstream_bindings_use_upstream_casing(self):
+    def test_known_upstream_bindings_use_upstream_casing(self) -> None:
         assert wire_binding("jsonrpc") == "JSONRPC"
         assert wire_binding("JSONRPC") == "JSONRPC"
         assert wire_binding("grpc") == "GRPC"
         assert wire_binding("http+json") == "HTTP+JSON"
 
-    def test_sdk_transports_are_lower_case(self):
+    def test_sdk_transports_are_lower_case(self) -> None:
         assert wire_binding("SlimRPC") == "slimrpc"
         assert wire_binding("slimpatterns") == "slimpatterns"
 
-    def test_aliases_are_resolved(self):
+    def test_aliases_are_resolved(self) -> None:
         assert wire_binding("slim") == "slimpatterns"
         assert wire_binding("NATS") == "natspatterns"
         assert wire_binding("slim-extended") == "slimpatterns"
 
 
 class TestReaders:
-    def test_preferred_transport_is_first_interface(self):
+    def test_preferred_transport_is_first_interface(self) -> None:
         card = _card(("slimpatterns", "slim://a"), ("JSONRPC", "http://h"))
         assert preferred_transport(card) == "slimpatterns"
 
-    def test_preferred_transport_none_without_interfaces(self):
+    def test_preferred_transport_none_without_interfaces(self) -> None:
         assert preferred_transport(_card()) is None
 
-    def test_get_card_url_is_first_interface_url(self):
+    def test_get_card_url_is_first_interface_url(self) -> None:
         card = _card(("slimpatterns", "slim://a"), ("JSONRPC", "http://h"))
         assert get_card_url(card) == "slim://a"
 
-    def test_get_card_url_none_without_interfaces(self):
+    def test_get_card_url_none_without_interfaces(self) -> None:
         assert get_card_url(_card()) is None
 
-    def test_find_interface_matches_aliases_and_case(self):
+    def test_find_interface_matches_aliases_and_case(self) -> None:
         card = _card(("slimpatterns", "slim://a"), ("JSONRPC", "http://h"))
         found = find_interface(card, "SLIM")
         assert found is not None
         assert found.url == "slim://a"
-        assert find_interface(card, "jsonrpc").url == "http://h"  # type: ignore[union-attr]
+        jsonrpc = find_interface(card, "jsonrpc")
+        assert jsonrpc is not None
+        assert jsonrpc.url == "http://h"
 
-    def test_find_interface_returns_none_when_missing(self):
+    def test_find_interface_returns_none_when_missing(self) -> None:
         assert find_interface(_card(("JSONRPC", "http://h")), "slimrpc") is None
 
 
 class TestCloneCard:
-    def test_clone_is_independent(self):
+    def test_clone_is_independent(self) -> None:
         original = _card(("JSONRPC", "http://h"))
         duplicate = clone_card(original)
         duplicate.supported_interfaces[0].url = "http://changed"
@@ -87,7 +89,7 @@ class TestCloneCard:
 
 
 class TestAddInterface:
-    def test_appends_missing_interface(self):
+    def test_appends_missing_interface(self) -> None:
         card = _card(("JSONRPC", "http://h"))
 
         iface = add_interface(card, "slimpatterns", "slim://a")
@@ -95,7 +97,7 @@ class TestAddInterface:
         assert iface.url == "slim://a"
         assert _pairs(card) == [("JSONRPC", "http://h"), ("slimpatterns", "slim://a")]
 
-    def test_prefer_prepends_new_interface(self):
+    def test_prefer_prepends_new_interface(self) -> None:
         card = _card(("JSONRPC", "http://h"))
 
         add_interface(card, "slimpatterns", "slim://a", prefer=True)
@@ -103,7 +105,7 @@ class TestAddInterface:
         assert _pairs(card) == [("slimpatterns", "slim://a"), ("JSONRPC", "http://h")]
         assert preferred_transport(card) == "slimpatterns"
 
-    def test_existing_interface_is_left_untouched_by_default(self):
+    def test_existing_interface_is_left_untouched_by_default(self) -> None:
         card = _card(("JSONRPC", "http://h"), ("slimpatterns", "slim://orig"))
 
         iface = add_interface(card, "slim", "slim://new")
@@ -114,14 +116,14 @@ class TestAddInterface:
             ("slimpatterns", "slim://orig"),
         ]
 
-    def test_replace_overwrites_existing_url(self):
+    def test_replace_overwrites_existing_url(self) -> None:
         card = _card(("slimpatterns", "slim://orig"))
 
         add_interface(card, "slimpatterns", "slim://new", replace=True)
 
         assert _pairs(card) == [("slimpatterns", "slim://new")]
 
-    def test_prefer_moves_existing_interface_to_front(self):
+    def test_prefer_moves_existing_interface_to_front(self) -> None:
         card = _card(
             ("JSONRPC", "http://h"),
             ("natspatterns", "nats://n"),
@@ -136,7 +138,7 @@ class TestAddInterface:
             ("natspatterns", "nats://n"),
         ]
 
-    def test_prefer_keeps_other_interfaces_intact_after_reorder(self):
+    def test_prefer_keeps_other_interfaces_intact_after_reorder(self) -> None:
         """Regression: protobuf wrappers go stale on reorder; values must survive."""
         card = AgentCard(
             name="agent",
@@ -157,7 +159,7 @@ class TestAddInterface:
         assert (jsonrpc.protocol_binding, jsonrpc.url) == ("JSONRPC", "http://h")
         assert (jsonrpc.protocol_version, jsonrpc.tenant) == ("1.0", "t1")
 
-    def test_new_interface_uses_wire_casing(self):
+    def test_new_interface_uses_wire_casing(self) -> None:
         card = _card()
 
         add_interface(card, "jsonrpc", "http://h")
@@ -165,7 +167,7 @@ class TestAddInterface:
 
         assert _pairs(card) == [("JSONRPC", "http://h"), ("slimpatterns", "slim://a")]
 
-    def test_protocol_version_is_set_on_new_interface(self):
+    def test_protocol_version_is_set_on_new_interface(self) -> None:
         card = _card()
 
         iface = add_interface(card, "jsonrpc", "http://h", protocol_version="1.0")
