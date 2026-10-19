@@ -503,16 +503,59 @@ class TestClientConfig:
         assert replaced.supported_protocol_bindings == ["custom_transport"]
         assert replaced.supported_transports == ["custom_transport"]
 
-    def test_replace_unrelated_field_keeps_bindings_without_warning(self) -> None:
+    def test_replace_adding_transport_rederives_bindings_without_warning(
+        self,
+    ) -> None:
         base = ClientConfig(slim_transport=_make_mock_transport())
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             replaced = dataclasses.replace(base, nats_transport=_make_mock_transport())
 
-        # Bindings were already resolved on `base`, so they are kept as-is.
-        assert replaced.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+        assert replaced.supported_protocol_bindings == [
+            "JSONRPC",
+            "slimpatterns",
+            "natspatterns",
+        ]
         assert replaced.supported_transports == replaced.supported_protocol_bindings
+        assert base.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+
+    def test_replace_on_default_config_adds_slim_config(self) -> None:
+        replaced = dataclasses.replace(
+            ClientConfig(),
+            slim_config=SlimTransportConfig(
+                endpoint="http://localhost:46357", name="default/default/client"
+            ),
+        )
+
+        assert replaced.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+
+    def test_replace_removing_transport_rederives_bindings(self) -> None:
+        base = ClientConfig(
+            slim_transport=_make_mock_transport(),
+            nats_transport=_make_mock_transport(),
+        )
+
+        replaced = dataclasses.replace(base, nats_transport=None)
+
+        assert replaced.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+
+    def test_replace_unrelated_field_keeps_bindings(self) -> None:
+        base = ClientConfig(slim_transport=_make_mock_transport())
+
+        replaced = dataclasses.replace(base, streaming=False)
+
+        assert replaced.supported_protocol_bindings == ["JSONRPC", "slimpatterns"]
+
+    def test_replace_keeps_caller_bindings_when_transports_change(self) -> None:
+        base = ClientConfig(
+            slim_transport=_make_mock_transport(),
+            supported_protocol_bindings=["slimpatterns"],
+        )
+
+        replaced = dataclasses.replace(base, nats_transport=_make_mock_transport())
+
+        assert replaced.supported_protocol_bindings == ["slimpatterns"]
 
 
 # ---------------------------------------------------------------------------
