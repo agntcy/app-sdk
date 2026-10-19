@@ -1733,18 +1733,65 @@ class TestA2AExperimentalClientOperations:
         experimental, mock_transport, _ = _make_experimental()
 
         async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
-            yield _rpc_response(_message_result("ok"), sender="a")
             raise RuntimeError("publish failed")
+            yield  # pragma: no cover - makes this an async generator
 
         mock_transport.gather_stream = MagicMock(side_effect=_gen)
 
-        events: list[StreamResponse] = []
         with pytest.raises(RuntimeError, match="publish failed"):
-            async for event in experimental.broadcast_message_streaming(
+            async for _ in experimental.broadcast_message_streaming(
                 _user_request(), recipients=["a", "b"]
             ):
-                events.append(event)
+                pass
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_transport_failure_after_reply_keeps_it(
+        self,
+    ) -> None:
+        """A session that dies mid-broadcast must not lose the replies so far."""
+        experimental, mock_transport, _ = _make_experimental()
+        cause = RuntimeError("session closed")
+
+        async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
+            yield _rpc_response(_message_result("ok"), sender="a")
+            raise cause
+
+        mock_transport.gather_stream = MagicMock(side_effect=_gen)
+
+        with pytest.raises(A2ABroadcastError) as excinfo:
+            await experimental.broadcast_message(_user_request(), recipients=["a", "b"])
+        error = excinfo.value
+        assert not isinstance(error, TimeoutError)
+        assert error.transport_error is cause
+        assert error.__cause__ is cause
+        assert error.succeeded == ["a"]
+        assert len(error.responses) == 1
+        assert error.missing_recipients == ["b"]
+        assert "transport error: RuntimeError: session closed" in str(error)
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message_streaming_transport_failure_after_reply(
+        self,
+    ) -> None:
+        experimental, mock_transport, _ = _make_experimental()
+        cause = RuntimeError("session closed")
+
+        async def _gen(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
+            yield _rpc_response(_message_result("ok"), sender="a")
+            raise cause
+
+        mock_transport.gather_stream = MagicMock(side_effect=_gen)
+
+        events, error = await _drain(
+            experimental.broadcast_message_streaming(
+                _user_request(), recipients=["a", "b"]
+            )
+        )
         assert [get_stream_response_text(e) for e in events] == ["ok"]
+        assert error is not None and error.transport_error is cause
+        assert error.succeeded == ["a"]
+        assert error.responses == []
+        assert error.missing_recipients == ["b"]
 
     @pytest.mark.asyncio
     async def test_broadcast_message_streaming_early_stop_does_not_raise(self) -> None:
@@ -1791,6 +1838,47 @@ class TestA2AExperimentalClientOperations:
         assert kwargs["group_channel"] == "zoo"
         assert kwargs["participants"] == ["a", "b"]
         assert json.loads(kwargs["init_message"].payload)["method"] == "SendMessage"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [
+            NotImplementedError(),
+            RuntimeError("session closed"),
+            ValueError("participants list must be provided"),
+        ],
+    )
+    async def test_start_groupchat_transport_failure_propagates(
+        self, error: Exception
+    ) -> None:
+        """A failed group chat must not look like one where nobody spoke."""
+        experimental, mock_transport, _ = _make_experimental()
+        mock_transport.start_conversation = AsyncMock(side_effect=error)
+
+        with pytest.raises(type(error)):
+            await experimental.start_groupchat(
+                _user_request(), group_channel="zoo", participants=["a"]
+            )
+
+    @pytest.mark.asyncio
+    async def test_start_groupchat_skips_unreadable_messages(self) -> None:
+        experimental, mock_transport, _ = _make_experimental()
+        not_json = _rpc_response()
+        not_json.payload = b"not json"
+        mock_transport.start_conversation = AsyncMock(
+            return_value=[
+                _rpc_response(_message_result("ok")),
+                _rpc_response(error={"code": -32603, "message": "agent crashed"}),
+                not_json,
+            ]
+        )
+
+        responses = await experimental.start_groupchat(
+            _user_request(), group_channel="zoo", participants=["a", "b"]
+        )
+
+        assert len(responses) == 1
+        assert responses[0].message.parts[0].text == "ok"
 
     @pytest.mark.asyncio
     async def test_start_streaming_groupchat(self) -> None:

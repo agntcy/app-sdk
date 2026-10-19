@@ -17,7 +17,6 @@ start_groupchat) delegate directly to the underlying ``BaseTransport``.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -114,6 +113,9 @@ class A2ABroadcastError(A2AClientError):
             known.
         timed_out: ``True`` when the transport raised a timeout before every
             reply arrived (see :class:`A2ABroadcastTimeoutError`).
+        transport_error: The transport's exception when it failed after at
+            least one final reply had arrived (also the ``__cause__``);
+            otherwise ``None``.
     """
 
     def __init__(
@@ -126,6 +128,7 @@ class A2ABroadcastError(A2AClientError):
         received: int = 0,
         missing_recipients: List[str] | None = None,
         timed_out: bool = False,
+        transport_error: Exception | None = None,
     ) -> None:
         self.failures = list(failures or [])
         self.responses = list(responses or [])
@@ -134,6 +137,7 @@ class A2ABroadcastError(A2AClientError):
         self.received = received
         self.missing_recipients = list(missing_recipients or [])
         self.timed_out = timed_out
+        self.transport_error = transport_error
         super().__init__(self._describe())
 
     @property
@@ -162,6 +166,9 @@ class A2ABroadcastError(A2AClientError):
                 else ""
             )
             parts.append(f"{self.missing} missing{names}")
+        if self.transport_error is not None:
+            err = self.transport_error
+            parts.append(f"transport error: {type(err).__name__}: {err}")
         return "; ".join(parts)
 
 
@@ -231,7 +238,11 @@ class _BroadcastTally:
         return [r for r in self.recipients if r not in self._seen]
 
     def error(
-        self, *, timed_out: bool = False, keep_responses: bool = True
+        self,
+        *,
+        timed_out: bool = False,
+        keep_responses: bool = True,
+        transport_error: Exception | None = None,
     ) -> A2ABroadcastError:
         cls = A2ABroadcastTimeoutError if timed_out else A2ABroadcastError
         return cls(
@@ -242,6 +253,7 @@ class _BroadcastTally:
             received=self.received,
             missing_recipients=self.missing_recipients(),
             timed_out=timed_out,
+            transport_error=transport_error,
         )
 
 
@@ -582,7 +594,11 @@ class A2AExperimentalClient(Client):
           end; this becomes a plain :class:`A2ABroadcastError` with
           ``timed_out=False`` and ``.missing > 0``.
         * **Transport failure** (not connected, no *recipients*, publish
-          failed): the transport's own exception propagates unchanged.
+          failed): the transport's own exception propagates unchanged.  Once
+          at least one final reply has arrived it becomes
+          :class:`A2ABroadcastError` instead, so the replies are not lost;
+          the transport's exception is its ``.transport_error`` and
+          ``__cause__``.
 
         Replies are matched to senders through the ``x-a2a-sender`` header
         that SDK servers stamp on every reply.  A second final from the same
@@ -641,6 +657,10 @@ class A2AExperimentalClient(Client):
             raise
         except TimeoutError as e:
             raise tally.error(timed_out=True) from e
+        except Exception as e:
+            if not tally.received:
+                raise
+            raise tally.error(transport_error=e) from e
         finally:
             # ``break`` does not close an async generator; close it now so the
             # transport releases its sessions instead of at loop shutdown.
@@ -677,7 +697,9 @@ class A2AExperimentalClient(Client):
           senders.
         * A SLIM timeout raises :class:`A2ABroadcastTimeoutError`; a NATS
           timeout ends the stream and raises :class:`A2ABroadcastError`.
-        * A transport failure propagates unchanged.
+        * A transport failure propagates unchanged, or as
+          :class:`A2ABroadcastError` with ``.transport_error`` once at least
+          one final reply has arrived.
         * If the caller stops iterating early (``break``), the stream is
           closed and no error is raised for replies it did not wait for.
 
@@ -747,6 +769,10 @@ class A2AExperimentalClient(Client):
             raise
         except TimeoutError as e:
             raise tally.error(timed_out=True, keep_responses=False) from e
+        except Exception as e:
+            if not tally.received:
+                raise
+            raise tally.error(keep_responses=False, transport_error=e) from e
         finally:
             # ``break`` does not close an async generator; close it now so the
             # transport releases its sessions instead of at loop shutdown.
@@ -764,43 +790,49 @@ class A2AExperimentalClient(Client):
         timeout: float = 60,
         end_message: str = "work-done",
     ) -> List[SendMessageResponse]:
-        """Start a group chat conversation via transport."""
-        msg, context = await self._build_message(_METHOD_SEND, init_message, context)
-        try:
-            member_messages = await self._transport.start_conversation(
-                group_channel=group_channel,
-                participants=participants,
-                init_message=msg,
-                end_message=end_message,
-                timeout=timeout,
-            )
-            groupchat_messages = []
-            for raw_msg in member_messages:
-                try:
-                    resp = json.loads(raw_msg.payload.decode("utf-8"))
-                    smr = self._parse_payload(
-                        resp, raw_msg.status_code, SendMessageResponse()
-                    )
-                    smr = await run_after_interceptors(
-                        self._interceptors,
-                        method=_METHOD_SEND,
-                        result=smr,
-                        agent_card=self._agent_card,
-                        context=context,
-                    )
-                    groupchat_messages.append(smr)
-                except Exception as e:
-                    logger.error(f"Error decoding JSON response: {e}")
-                    continue
+        """Start a group chat conversation via transport.
 
-            return groupchat_messages
-        except (TimeoutError, asyncio.CancelledError):
-            raise
-        except Exception as e:
-            logger.error(
-                f"Error starting group chat A2A request with transport {self._transport.type()}: {e}"
-            )
-            return []
+        Returns the participants' messages once a message containing
+        *end_message* arrives.
+
+        * **Transport failure** (group chat not supported, e.g. NATS; not
+          connected; no *participants*; the session closed; *timeout*
+          reached): the transport's own exception propagates.  The messages
+          received before it are lost, because the transport collects them.
+        * **A message that cannot be read** (not JSON, a JSON-RPC error, an
+          ``after`` interceptor that raises): logged and left out of the
+          result; the other messages are still returned.
+        * **Identity-auth rejection** (status 401 / 403, or a ``"forbidden"`` /
+          ``"unauthorized"`` error): returned as a synthetic agent message
+          saying access was forbidden.
+        """
+        msg, context = await self._build_message(_METHOD_SEND, init_message, context)
+        member_messages = await self._transport.start_conversation(
+            group_channel=group_channel,
+            participants=participants,
+            init_message=msg,
+            end_message=end_message,
+            timeout=timeout,
+        )
+        groupchat_messages = []
+        for raw_msg in member_messages:
+            try:
+                resp = json.loads(raw_msg.payload.decode("utf-8"))
+                smr = self._parse_payload(
+                    resp, raw_msg.status_code, SendMessageResponse()
+                )
+                smr = await run_after_interceptors(
+                    self._interceptors,
+                    method=_METHOD_SEND,
+                    result=smr,
+                    agent_card=self._agent_card,
+                    context=context,
+                )
+                groupchat_messages.append(smr)
+            except Exception as e:
+                logger.error(f"Error decoding group chat message: {e}")
+
+        return groupchat_messages
 
     async def start_streaming_groupchat(
         self,
@@ -816,7 +848,18 @@ class A2AExperimentalClient(Client):
 
         Yields one ``StreamResponse`` per participant message (a superset of
         ``SendMessageResponse``: it can carry a task, a message, or a status
-        / artifact update).
+        / artifact update), until a message containing *end_message*.
+
+        * **Transport failure** (as for :meth:`start_groupchat`): the
+          transport's own exception is raised; messages already yielded stay
+          with the caller.
+        * **A message that cannot be read** (not JSON, a JSON-RPC error, an
+          ``after`` interceptor that raises): its exception is raised and the
+          stream ends.  Unlike :meth:`start_groupchat`, the message is not
+          skipped.
+        * **Identity-auth rejection** (status 401 / 403, or a ``"forbidden"`` /
+          ``"unauthorized"`` error): yielded as a synthetic agent message
+          saying access was forbidden.
         """
         msg, context = await self._build_message(_METHOD_SEND, init_message, context)
 
