@@ -31,6 +31,9 @@ _SlimReceiveError: type[slim_bindings.SlimError] = getattr(
 _SlimSessionError: type[slim_bindings.SlimError] = getattr(
     slim_bindings.SlimError, "SessionError"
 )
+_SlimTimeout: type[slim_bindings.SlimError] = getattr(
+    slim_bindings.SlimError, "Timeout"
+)
 
 # Substrings of SessionError messages that mean the session no longer exists.
 _SESSION_GONE = (
@@ -40,6 +43,10 @@ _SESSION_GONE = (
     "receive channel closed",
     "session not found",
 )
+
+# Consecutive receive errors tolerated on a session, and the pause between them.
+_RECEIVE_RETRIES = 3
+_RECEIVE_BACKOFF = 0.5
 
 """
 SLIM implementation of the BaseTransport interface.
@@ -51,6 +58,57 @@ def _raise_if_past(deadline: float) -> None:
     # reply that is already queued would slip past an expired deadline.
     if asyncio.get_running_loop().time() >= deadline:
         raise TimeoutError
+
+
+def _session_gone(error: Exception) -> bool:
+    return isinstance(error, _SlimSessionError) and any(
+        gone in str(error).lower() for gone in _SESSION_GONE
+    )
+
+
+async def _receive_reply(
+    session: Session, session_id: int, deadline: float, timeout: float
+) -> Message:
+    """The next decodable message on a client group session.
+
+    A payload that cannot be decoded is logged and skipped.
+
+    Raises:
+        TimeoutError: *deadline* passed.
+        slim_bindings.SlimError: the session is gone, or receiving failed
+            more than ``_RECEIVE_RETRIES`` times in a row.
+    """
+    errors = 0
+    while True:
+        _raise_if_past(deadline)
+        try:
+            async with asyncio.timeout_at(deadline):
+                received = await session.get_message_async(
+                    timeout=datetime.timedelta(seconds=timeout)
+                )
+        except TimeoutError:
+            raise
+        except Exception as e:
+            if _session_gone(e):
+                logger.warning(f"Session {session_id} closed while receiving: {e}")
+                raise
+            errors += 1
+            if errors > _RECEIVE_RETRIES:
+                logger.error(
+                    f"Max retries exceeded receiving on session {session_id}: {e}"
+                )
+                raise
+            logger.warning(
+                f"Error receiving message on session {session_id} "
+                f"(attempt {errors}/{_RECEIVE_RETRIES}): {e}"
+            )
+            async with asyncio.timeout_at(deadline):
+                await asyncio.sleep(_RECEIVE_BACKOFF)
+            continue
+        try:
+            return Message.deserialize(received.payload)
+        except Exception as e:
+            logger.error(f"Skipping undecodable message on session {session_id}: {e}")
 
 
 class SLIMTransport(BaseTransport):
@@ -237,6 +295,8 @@ class SLIMTransport(BaseTransport):
             message.headers = {}
         message.headers["x-respond-to-source"] = "true"
 
+        # Read once: SLIM does not allow reading properties of a closed session.
+        session_id = session.session_id()
         try:
             await session.publish_async(message.serialize(), None, None)
             logger.debug(
@@ -250,13 +310,20 @@ class SLIMTransport(BaseTransport):
                 reply = Message.deserialize(reply_raw.payload)
                 logger.debug(f"request_stream: received message type={reply.type}")
                 yield reply
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, _SlimTimeout) as e:
             logger.warning(f"request_stream timed out after {timeout}s")
+            if isinstance(e, TimeoutError):
+                raise
+            raise TimeoutError(f"request_stream timed out after {timeout}s") from e
         except Exception:
             logger.exception("Failed in request_stream")
+            raise
         finally:
-            logger.debug(f"Closing request_stream session: {session.session_id()}")
-            await self._session_manager.close_session(session)
+            logger.debug(f"Closing request_stream session: {session_id}")
+            try:
+                await self._session_manager.close_session(session)
+            except Exception as e:
+                logger.error(f"Failed to close session {session_id}: {e}")
 
     # -----------------------------------------------------------------------------
     # Fan-Out / Publish-Subscribe
@@ -333,11 +400,13 @@ class SLIMTransport(BaseTransport):
         # instead of ``TimeoutError``.
         deadline = asyncio.get_running_loop().time() + timeout
         group_session: Session | None = None
+        session_id: int | None = None
         try:
             async with asyncio.timeout_at(deadline):
                 _, group_session = await self._session_manager.group_broadcast_session(
                     remote_name, invitees
                 )
+                session_id = group_session.session_id()
 
                 await asyncio.sleep(0.5)
 
@@ -361,26 +430,15 @@ class SLIMTransport(BaseTransport):
                 logger.debug(
                     "Published message to topic: %s via session %s, now waiting for responses",
                     topic,
-                    group_session.session_id(),
+                    session_id,
                 )
 
             # wait for responses from all invitees or be interrupted by caller
             messages_received = 0
             while messages_received < limit:
-                try:
-                    _raise_if_past(deadline)
-                    async with asyncio.timeout_at(deadline):
-                        received_msg = await group_session.get_message_async(
-                            timeout=datetime.timedelta(seconds=timeout)
-                        )
-                    reply = Message.deserialize(received_msg.payload)
-                except TimeoutError:
-                    raise
-                except Exception as e:
-                    logger.error(
-                        f"Error receiving message on session {group_session.session_id()}: {e}"
-                    )
-                    continue
+                reply = await _receive_reply(
+                    group_session, session_id, deadline, timeout
+                )
                 messages_received += 1
                 yield reply
         except asyncio.TimeoutError:
@@ -391,9 +449,12 @@ class SLIMTransport(BaseTransport):
         finally:
             if group_session:
                 logger.debug(
-                    f"Closing group session {group_session.session_id()} after gathering responses"
+                    f"Closing group session {session_id} after gathering responses"
                 )
-                await self._session_manager.close_session(group_session)
+                try:
+                    await self._session_manager.close_session(group_session)
+                except Exception as e:
+                    logger.error(f"Failed to close session {session_id}: {e}")
 
     # -----------------------------------------------------------------------------
     # Group Chat / Multi-Party Conversation
@@ -454,6 +515,7 @@ class SLIMTransport(BaseTransport):
         # See gather_stream: the deadline must not be held across ``yield``.
         deadline = asyncio.get_running_loop().time() + timeout
         group_session: Session | None = None
+        session_id: int | None = None
         try:
             async with asyncio.timeout_at(deadline):
                 (
@@ -462,6 +524,7 @@ class SLIMTransport(BaseTransport):
                 ) = await self._session_manager.group_broadcast_session(
                     remote_name, invitees
                 )
+                session_id = group_session.session_id()
 
                 # Give the session a moment to be fully established on the SLIM dataplane- arbitrary delay
                 await asyncio.sleep(0.5)
@@ -471,20 +534,9 @@ class SLIMTransport(BaseTransport):
 
             # Wait for responses from invitees until the end message is received
             while True:
-                try:
-                    _raise_if_past(deadline)
-                    async with asyncio.timeout_at(deadline):
-                        received_msg = await group_session.get_message_async(
-                            timeout=datetime.timedelta(seconds=timeout)
-                        )
-                    deserialized_msg = Message.deserialize(received_msg.payload)
-                except TimeoutError:
-                    raise
-                except Exception as e:
-                    logger.warning(
-                        f"Issue encountered while receiving message on session {group_session.session_id()}: {e}"
-                    )
-                    continue
+                deserialized_msg = await _receive_reply(
+                    group_session, session_id, deadline, timeout
+                )
                 yield deserialized_msg
 
                 # Check for end message to stop collection
@@ -500,9 +552,7 @@ class SLIMTransport(BaseTransport):
                 try:
                     await self._session_manager.close_session(group_session)
                 except Exception as e:
-                    logger.error(
-                        f"Failed to close session {group_session.session_id()}: {e}"
-                    )
+                    logger.error(f"Failed to close session {session_id}: {e}")
 
     # -----------------------------------------------------------------------------
     # Utilities and setup methods
@@ -651,7 +701,7 @@ class SLIMTransport(BaseTransport):
     async def _handle_session_receive(self, session: Session) -> None:
         """Handle message receiving for a specific session."""
         consecutive_errors = 0
-        max_retries = 3
+        max_retries = _RECEIVE_RETRIES
         session_id = session.session_id()
 
         try:
@@ -663,9 +713,7 @@ class SLIMTransport(BaseTransport):
                 except asyncio.CancelledError:
                     raise
                 except _SlimSessionError as e:
-                    msg = str(e).lower()
-
-                    if any(gone in msg for gone in _SESSION_GONE):
+                    if _session_gone(e):
                         logger.debug(
                             f"Session {session_id} closed remotely (likely by moderator), stopping listener"
                         )
@@ -681,7 +729,7 @@ class SLIMTransport(BaseTransport):
                         logger.error(
                             f"Unexpected session error while getting messages: {e}"
                         )
-                        await asyncio.sleep(0.5)  # backoff to avoid spin
+                        await asyncio.sleep(_RECEIVE_BACKOFF)
                 except Exception as e:
                     logger.error(f"Error receiving messages: {e}")
 
@@ -696,7 +744,7 @@ class SLIMTransport(BaseTransport):
                     logger.warning(
                         f"Error receiving message on session {session_id} (attempt {consecutive_errors}/{max_retries}): {e}"
                     )
-                    await asyncio.sleep(0.5)  # backoff to avoid spin
+                    await asyncio.sleep(_RECEIVE_BACKOFF)
         except asyncio.CancelledError:
             logger.debug(f"Session {session_id} handler cancelled")
             raise
