@@ -394,7 +394,7 @@ async for resp in client.broadcast_message_streaming(
 # (err.responses is empty there, err.succeeded names who answered).
 ```
 
-**How a missing reply surfaces depends on the transport.** SLIM raises at the `timeout`, so you get `A2ABroadcastTimeoutError` (a subclass of both `A2ABroadcastError` and `TimeoutError`). NATS ends the stream at the `timeout` without raising, so you get a plain `A2ABroadcastError` with `err.missing > 0`. Replies are matched to recipients through the `x-a2a-sender` header that SDK servers set to their topic, so a recipient that replies twice is counted once. `missing_recipients` is only filled when every reply names one of the `recipients`. A recipient that rejects the caller's identity (HTTP 403 / `"forbidden"`) shows up in `err.failures`, not as a reply. Transport failures, such as not being connected or passing no `recipients`, raise the transport's own exception.
+**How a missing reply surfaces depends on the transport.** SLIM raises at the `timeout`, so you get `A2ABroadcastTimeoutError` (a subclass of both `A2ABroadcastError` and `TimeoutError`). NATS ends the stream at the `timeout` without raising, so you get a plain `A2ABroadcastError` with `err.missing > 0`. Replies are matched to recipients through the `x-a2a-sender` header that SDK servers set to their topic, so a recipient that replies twice is counted once. `missing_recipients` is only filled when every reply names one of the `recipients`. A recipient that rejects the caller's identity (status 401 / 403, or a `"forbidden"` / `"unauthorized"` error) shows up in `err.failures`, not as a reply. Transport failures, such as not being connected or passing no `recipients`, raise the transport's own exception. If the transport fails after at least one final reply has arrived (for example, the SLIM session closes), you get an `A2ABroadcastError` that keeps those replies, with the transport's exception in `err.transport_error`.
 
 </details>
 
@@ -472,6 +472,10 @@ async for message in client.start_streaming_groupchat(
 ):
     print(f"Live: {message}")
 ```
+
+**How group chat errors surface.** Group chat runs over SLIM only; on NATS both methods raise `NotImplementedError`. A transport failure, such as not being connected, passing no `participants`, the session closing, or reaching the `timeout`, raises the transport's own exception from both methods. `start_groupchat` then returns nothing, so the messages received before the failure are lost; `start_streaming_groupchat` has already yielded them. A single message that can't be read (not JSON, a JSON-RPC error from a participant, or an `after` interceptor that raises) is handled differently: `start_groupchat` logs it and leaves it out of the list, while `start_streaming_groupchat` raises its exception and ends the stream. A participant that rejects the caller's identity (status 401 / 403, or a `"forbidden"` / `"unauthorized"` error) shows up in both as a synthetic agent message saying access was forbidden.
+
+**Relayed replies must carry a message.** A participant can receive another agent's reply as its input. A Task reply is relayed through its status message, or else the last agent message in its history. A Task with only artifacts, which is what a2a-sdk's `TaskUpdater.complete()` produces without a `message`, is rejected with `InvalidRequest`, so participants should complete with a message, for example `await updater.complete(message=...)`.
 
 </details>
 
