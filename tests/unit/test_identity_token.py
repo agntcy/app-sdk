@@ -336,6 +336,28 @@ async def test_token_fetched_across_an_invalidation_is_not_cached(
 
 
 @pytest.mark.asyncio
+async def test_caller_after_an_invalidation_does_not_join_the_older_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    older = _jwt(time.time() + 3600)
+    fetch, release, _ = _gated(older)
+    monkeypatch.setattr(auth, "_fetch_access_token", fetch)
+    pending = asyncio.create_task(auth.get_access_token())
+    await asyncio.sleep(0.01)
+
+    auth.invalidate_access_token()
+    fresh = _jwt(time.time() + 3601)
+    fetcher = _Fetcher(fresh)
+    _use(monkeypatch, fetcher)
+
+    assert await auth.get_access_token() == fresh
+    assert len(fetcher.calls) == 1
+    release.set()
+    assert await pending == older
+    assert auth._token_cache[auth._token_key(None)][0] == fresh
+
+
+@pytest.mark.asyncio
 async def test_abandoned_fetch_that_finishes_late_does_not_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

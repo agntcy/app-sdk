@@ -106,12 +106,14 @@ def invalidate_access_token(tool_name: str | None = None) -> None:
 
     Called when a server rejects the token (HTTP 401 / 403), so the next call
     fetches a fresh one instead of reusing a token that was revoked early.
-    A fetch already in progress still answers its callers, but does not cache.
+    A fetch already in progress still answers the callers already waiting on
+    it, but does not cache; later callers start a new fetch.
     """
     key = _token_key(tool_name)
     with _in_flight_lock:
         _epoch[key] = _epoch.get(key, 0) + 1
         _token_cache.pop(key, None)
+        _in_flight.pop(key, None)
 
 
 def _fetch_access_token(tool_name: str | None) -> str | None:
