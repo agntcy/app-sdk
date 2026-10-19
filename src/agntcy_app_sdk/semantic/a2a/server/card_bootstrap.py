@@ -60,6 +60,7 @@ from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.transport_types import (
     CANONICAL_TRANSPORTS as _CANONICAL_TRANSPORTS,
     InterfaceTransport,
+    name_host,
     normalize_transport as _normalize_transport,
 )
 
@@ -146,9 +147,7 @@ def _slim_endpoint_and_name(parsed: ParseResult) -> tuple[str, str]:
     or ``http://localhost:46357``.  A trailing ``/`` is not part of the name.
     An ``https://`` URL keeps that scheme; ``slim://`` has none, so its
     endpoint is ``http://`` until :meth:`CardBuilder.with_slim_tls` rewrites it.
-
-    ``urlparse`` lowercases the host, so the first segment of a port-less
-    name is lowercased.
+    The name keeps its case (SLIM names are case-sensitive).
     """
     p = parsed
     if p.port is not None:
@@ -158,7 +157,7 @@ def _slim_endpoint_and_name(parsed: ParseResult) -> tuple[str, str]:
         name = p.path.strip("/")
     else:
         endpoint = _resolve_slim_endpoint()
-        hostname = p.hostname or ""
+        hostname = name_host(p)
         path = p.path.strip("/")
         name = f"{hostname}/{path}" if path else hostname
     return endpoint, name
@@ -268,7 +267,7 @@ def _parse_nats_patterns(url: str, parsed: ParseResult) -> dict[str, str | int]:
     else:
         # Topic-only: nats://my_topic
         endpoint = _resolve_nats_endpoint()
-        topic = p.hostname or ""
+        topic = name_host(p)
 
     if not topic:
         raise ValueError(f"nats URL must include a topic: {url!r}")

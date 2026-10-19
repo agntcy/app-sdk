@@ -12,6 +12,11 @@ form before matching or dispatch.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from urllib.parse import ParseResult
+
 # Header an experimental (SLIM / NATS patterns) A2A server stamps on every
 # reply with its own identity (the topic it subscribed to, i.e. the name
 # broadcast ``recipients`` refer to), so a broadcast client can tell which
@@ -131,3 +136,12 @@ def normalize_transport(raw: str) -> str:
     """
     key = raw.lower()
     return TRANSPORT_ALIASES.get(key, key)
+
+
+def name_host(parsed: ParseResult) -> str:
+    """The host part of a port-less ``slim://`` / ``nats://`` URL, case kept.
+
+    There the host is the first segment of a SLIM name or NATS subject, and
+    both are case-sensitive; ``ParseResult.hostname`` lowercases it.
+    """
+    return parsed.netloc.rpartition("@")[2].rstrip(":")

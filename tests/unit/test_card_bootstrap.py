@@ -181,13 +181,28 @@ class TestParseSlimTopicOnly:
         assert result["topic"] == "my_topic"
 
     def test_topic_with_underscores(self) -> None:
-        """Topic names like Hello_World_1.0.0 (underscore-separated)."""
+        """Topic names like Hello_World_1.0.0 keep their case."""
         iface = AgentInterface(
             protocol_binding="slimpatterns", url="slim://Hello_World_Agent_1.0.0"
         )
         result = parse_interface_url(iface)
-        assert result["topic"] == "hello_world_agent_1.0.0"
+        assert result["topic"] == "Hello_World_Agent_1.0.0"
         assert result["endpoint"] == "http://localhost:46357"
+
+    @pytest.mark.parametrize("binding", ["slimpatterns", "slimrpc"])
+    def test_name_keeps_case_of_every_segment(self, binding: str) -> None:
+        """SLIM names are case-sensitive, including the first segment."""
+        iface = AgentInterface(protocol_binding=binding, url="slim://Org/NS/Agent")
+        result = parse_interface_url(iface)
+        key = "identity" if binding == "slimrpc" else "topic"
+        assert result[key] == "Org/NS/Agent"
+
+    def test_explicit_endpoint_name_keeps_case(self) -> None:
+        iface = AgentInterface(
+            protocol_binding="slimpatterns", url="slim://Host:46357/Org/NS/Agent"
+        )
+        result = parse_interface_url(iface)
+        assert result["topic"] == "Org/NS/Agent"
 
     def test_three_part_name_is_the_topic(self) -> None:
         """slim://org/ns/agent is the topic org/ns/agent on the default endpoint."""
@@ -310,6 +325,11 @@ class TestParseNatsTopicOnly:
         result = parse_interface_url(iface)
         assert result["topic"] == "my_topic"
         assert result["endpoint"] == "nats://localhost:4222"
+
+    def test_topic_keeps_case(self) -> None:
+        """NATS subjects are case-sensitive."""
+        iface = AgentInterface(protocol_binding="nats", url="nats://Weather_Agent")
+        assert parse_interface_url(iface)["topic"] == "Weather_Agent"
 
     def test_topic_only_with_env(self) -> None:
         """NATS_ENDPOINT env var overrides the default."""

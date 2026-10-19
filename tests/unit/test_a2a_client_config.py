@@ -570,6 +570,18 @@ class TestParseTopicFromUrl:
     def test_nats_scheme(self) -> None:
         assert _parse_topic_from_url("nats://my_topic") == "my_topic"
 
+    @pytest.mark.parametrize(
+        ("url", "topic"),
+        [
+            ("slim://Weather_Agent_1.0.0", "Weather_Agent_1.0.0"),
+            ("slim://Org/NS/Agent", "Org/NS/Agent"),
+            ("nats://Weather_Agent", "Weather_Agent"),
+            ("slim://Host:46357/Org/NS/Agent", "Org/NS/Agent"),
+        ],
+    )
+    def test_topic_keeps_case(self, url: str, topic: str) -> None:
+        assert _parse_topic_from_url(url) == topic
+
     def test_plain_topic(self) -> None:
         assert _parse_topic_from_url("my_topic") == "my_topic"
 

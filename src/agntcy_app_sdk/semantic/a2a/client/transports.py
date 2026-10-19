@@ -41,6 +41,7 @@ from agntcy_app_sdk.semantic.a2a.client.utils import (
     get_identity_auth_error,
     message_translator,
 )
+from agntcy_app_sdk.semantic.a2a.transport_types import name_host
 from agntcy_app_sdk.transport.base import BaseTransport
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ def _parse_topic_from_url(url: str) -> str:
     if parsed.port is not None:
         return parsed.path.lstrip("/")
     # Topic-only: hostname (+ path if slashes present) IS the topic
-    hostname = parsed.hostname or ""
+    hostname = name_host(parsed)
     path = parsed.path.lstrip("/")
     return f"{hostname}/{path}" if path else hostname
 

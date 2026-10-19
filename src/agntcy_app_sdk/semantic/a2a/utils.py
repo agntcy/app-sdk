@@ -12,6 +12,7 @@ from a2a.types import AgentCard
 from agntcy_app_sdk.semantic.a2a.client.transports import _PATTERNS_SCHEMES
 from agntcy_app_sdk.semantic.a2a.transport_types import (
     InterfaceTransport,
+    name_host,
     normalize_transport,
 )
 
@@ -131,6 +132,6 @@ def _extract_topic(url: str, protocol_binding: str) -> str | None:
     if parsed.port is not None:
         return path or None
     # Topic-only: hostname (+ path if slashes present) IS the topic
-    hostname = parsed.hostname or ""
+    hostname = name_host(parsed)
     result = f"{hostname}/{path}" if path else hostname
     return result or None
