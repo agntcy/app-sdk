@@ -56,6 +56,29 @@ def is_identity_auth_enabled() -> bool:
     )
 
 
+def is_plain_http_allowed() -> bool:
+    """Whether clients may send the identity token over plain ``http://``.
+
+    ``IDENTITY_AUTH_ALLOW_HTTP`` defaults to true: this SDK backs demo apps
+    whose agents talk over plain HTTP, and refusing it would break them.  A
+    bearer token sent that way can be read and replayed by anyone on the
+    network, so set ``IDENTITY_AUTH_ALLOW_HTTP=false`` where agents should
+    only be reached over ``https://``.
+    """
+    raw = os.getenv("IDENTITY_AUTH_ALLOW_HTTP", "true").strip().lower()
+    if raw in _FALSE_VALUES:
+        return False
+    if raw not in _TRUE_VALUES:
+        logger.warning(
+            "Unrecognised IDENTITY_AUTH_ALLOW_HTTP=%r; treating it as true", raw
+        )
+    return True
+
+
+_FALSE_VALUES = frozenset({"false", "0", "no", "off", "disabled"})
+_TRUE_VALUES = frozenset({"true", "1", "yes", "on", "enabled"})
+
+
 def _token_expiry(token: str) -> float | None:
     """The ``exp`` claim of a JWT, read without verifying it; ``None`` if absent.
 

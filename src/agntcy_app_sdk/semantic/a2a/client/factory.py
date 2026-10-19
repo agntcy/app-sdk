@@ -10,6 +10,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import httpx
 from a2a.client import A2ACardResolver
@@ -47,6 +48,7 @@ from agntcy_app_sdk.common.auth import (
     get_access_token,
     invalidate_access_token,
     is_identity_auth_enabled,
+    is_plain_http_allowed,
 )
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.common.tracing import A2A_INSTRUMENTOR, instrument_if_ready
@@ -64,6 +66,14 @@ from agntcy_app_sdk.semantic.a2a.transport_types import normalize_transport
 from agntcy_app_sdk.transport.base import BaseTransport
 
 logger = get_logger(__name__)
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _sends_token_in_clear(url: str) -> bool:
+    """True for a plain ``http://`` URL whose host is not the local machine."""
+    parsed = urlparse(url)
+    return parsed.scheme == "http" and parsed.hostname not in _LOCAL_HOSTS
 
 
 def _produce_slimrpc(
@@ -511,7 +521,9 @@ class A2AClientFactory:
             cached token.
 
         Raises:
-            ValueError: no transport matches.
+            ValueError: no transport matches, or identity auth would send the
+                token over plain ``http://`` to a non-local host while
+                ``IDENTITY_AUTH_ALLOW_HTTP`` is false.
         """
         if consumers:
             warnings.warn(
@@ -569,6 +581,26 @@ class A2AClientFactory:
             # (``"JSONRPC"``), so hand it a card holding only the chosen
             # interface with the binding rewritten to the upstream casing.
             selected = self._select_card(card, transport_label_lower, transport_url)
+            if (
+                is_identity_auth_enabled()
+                and _requires_identity_token(card)
+                and _sends_token_in_clear(transport_url)
+            ):
+                # Plain http:// is allowed by default: the SDK's demo apps
+                # run agents over plain HTTP, and refusing it would break
+                # them.  IDENTITY_AUTH_ALLOW_HTTP=false refuses it instead.
+                if not is_plain_http_allowed():
+                    raise ValueError(
+                        f"Identity auth would send the bearer token unencrypted "
+                        f"to {transport_url}, and IDENTITY_AUTH_ALLOW_HTTP is "
+                        f"false. Use https://, or set IDENTITY_AUTH_ALLOW_HTTP="
+                        f"true to allow plain http://."
+                    )
+                logger.debug(
+                    "Sending the identity token over plain http:// to %s "
+                    "(IDENTITY_AUTH_ALLOW_HTTP is true)",
+                    transport_url,
+                )
             return self._create_upstream(
                 card, selected, interceptors, guard_by_card=True
             )

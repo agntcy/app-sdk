@@ -2850,6 +2850,79 @@ class TestIdentityAuthOverJsonRpc:
 
         assert isinstance(client, BaseClient)
 
+    @staticmethod
+    def _patch_logger(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        logger = MagicMock()
+        monkeypatch.setattr("agntcy_app_sdk.semantic.a2a.client.factory.logger", logger)
+        return logger
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("allow", [None, "true"])
+    async def test_plain_http_to_remote_host_is_allowed_by_default(
+        self, monkeypatch: pytest.MonkeyPatch, allow: str | None
+    ) -> None:
+        self._identity(monkeypatch)
+        if allow is None:
+            monkeypatch.delenv("IDENTITY_AUTH_ALLOW_HTTP", raising=False)
+        else:
+            monkeypatch.setenv("IDENTITY_AUTH_ALLOW_HTTP", allow)
+        logger = self._patch_logger(monkeypatch)
+
+        request = await self._send(url="http://agent.example:8080")
+
+        assert request.headers["Authorization"] == "Bearer tok"
+        logger.warning.assert_not_called()
+        logger.debug.assert_any_call(
+            "Sending the identity token over plain http:// to %s "
+            "(IDENTITY_AUTH_ALLOW_HTTP is true)",
+            "http://agent.example:8080",
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", ["false", "0", "no", "FALSE"])
+    async def test_plain_http_to_remote_host_is_refused_when_not_allowed(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        sdk = self._identity(monkeypatch)
+        monkeypatch.setenv("IDENTITY_AUTH_ALLOW_HTTP", value)
+
+        with pytest.raises(ValueError, match="IDENTITY_AUTH_ALLOW_HTTP"):
+            await self._send(url="http://agent.example:8080")
+        sdk.access_token.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://agent.example:8443",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://[::1]:8080",
+        ],
+    )
+    async def test_https_or_local_http_is_never_refused(
+        self, monkeypatch: pytest.MonkeyPatch, url: str
+    ) -> None:
+        self._identity(monkeypatch)
+        monkeypatch.setenv("IDENTITY_AUTH_ALLOW_HTTP", "false")
+
+        request = await self._send(url=url)
+
+        assert request.headers["Authorization"] == "Bearer tok"
+
+    @pytest.mark.asyncio
+    async def test_plain_http_is_not_refused_when_no_token_is_sent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Auth disabled, or a card that does not ask: nothing to protect."""
+        monkeypatch.setenv("IDENTITY_AUTH_ALLOW_HTTP", "false")
+        url = "http://agent.example:8080"
+        self._identity(monkeypatch)
+        await self._send(card=_make_agent_card([_iface("JSONRPC", url)]))
+
+        self._identity(monkeypatch, enabled=False)
+        await self._send(url=url)
+
 
 class TestIdentityAuthOverSlimRpc:
     """With identity auth enabled, slimrpc calls carry the token as metadata."""

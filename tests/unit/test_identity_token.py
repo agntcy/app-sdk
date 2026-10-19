@@ -384,6 +384,18 @@ def test_fetch_failure_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(info.value.__cause__, OSError)
 
 
+@pytest.mark.parametrize(
+    ("value", "allowed"),
+    [("false", False), (" OFF ", False), ("0", False), ("true", True), ("bogus", True)],
+)
+def test_plain_http_flag(
+    monkeypatch: pytest.MonkeyPatch, value: str, allowed: bool
+) -> None:
+    monkeypatch.setenv("IDENTITY_AUTH_ALLOW_HTTP", value)
+
+    assert auth.is_plain_http_allowed() is allowed
+
+
 def test_callers_on_different_event_loops_share_one_fetch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
