@@ -95,7 +95,8 @@ async def main(endpoint: str, name: str) -> None:
         request_handler=request_handler,
         connection=SlimRpcConnectionConfig(
             identity=name,
-            shared_secret="secretsecretsecretsecretsecretsecret",
+            # Hardcoded on purpose: a demo value, not a real secret.
+            shared_secret="my-shared-secret-at-least-32-characters-long",
             endpoint=endpoint,
         ),
     )

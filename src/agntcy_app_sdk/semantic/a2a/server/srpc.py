@@ -4,26 +4,40 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Callable, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 import slim_bindings
 
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.types import AgentCard
+from a2a.types import a2a_pb2
+from google.protobuf import empty_pb2
 
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.common.logging_config import get_logger
+from agntcy_app_sdk.semantic.a2a.card_utils import declare_identity_auth
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
+from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
+    check_identity_token,
+)
 from agntcy_app_sdk.transport.slim.common import (
     get_or_init_slim_service,
     new_client_config,
     split_id,
 )
 
+from identityservice.sdk import IdentityServiceSdk
 from slima2a.handler import CallContextBuilder, SRPCHandler
 from slima2a.types.v1.a2a_pb2_slimrpc import add_A2AServiceServicer_to_server
 
 logger = get_logger(__name__)
+
+_REJECTION_CODES = {
+    401: slim_bindings.RpcCode.UNAUTHENTICATED,
+    403: slim_bindings.RpcCode.PERMISSION_DENIED,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +91,119 @@ class A2ASlimRpcServerConfig:
 
 
 # ---------------------------------------------------------------------------
+# Identity auth
+# ---------------------------------------------------------------------------
+
+
+class _IdentityCheckedSRPCHandler(SRPCHandler):
+    """``SRPCHandler`` that checks the caller's Identity Service token first.
+
+    The SDK's slimrpc client sends the token as call metadata.  slima2a
+    treats metadata as caller-supplied, not as an identity; here it is only
+    a bearer token that the Identity Service verifies on every call.  A
+    rejected call fails with ``UNAUTHENTICATED`` (no or malformed token) or
+    ``PERMISSION_DENIED`` before it reaches the request handler.
+    """
+
+    def __init__(self, *args: Any, identity_sdk: IdentityServiceSdk, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self._identity_sdk = identity_sdk
+
+    async def _check(self, context: slim_bindings.Context) -> None:
+        header = next(
+            (v for k, v in context.metadata().items() if k.lower() == "authorization"),
+            None,
+        )
+        rejection = await check_identity_token(self._identity_sdk, header)
+        if rejection is not None:
+            reason, status = rejection
+            raise slim_bindings.RpcError.Rpc(  # type: ignore[attr-defined]
+                code=_REJECTION_CODES[status], message=reason, details=None
+            )
+
+    async def SendMessage(
+        self, request: a2a_pb2.SendMessageRequest, context: slim_bindings.Context
+    ) -> a2a_pb2.SendMessageResponse:
+        await self._check(context)
+        return await super().SendMessage(request, context)
+
+    async def SendStreamingMessage(
+        self, request: a2a_pb2.SendMessageRequest, context: slim_bindings.Context
+    ) -> AsyncIterable[a2a_pb2.StreamResponse]:
+        await self._check(context)
+        async for event in super().SendStreamingMessage(request, context):
+            yield event
+
+    async def CancelTask(
+        self, request: a2a_pb2.CancelTaskRequest, context: slim_bindings.Context
+    ) -> a2a_pb2.Task:
+        await self._check(context)
+        return await super().CancelTask(request, context)
+
+    async def SubscribeToTask(
+        self, request: a2a_pb2.SubscribeToTaskRequest, context: slim_bindings.Context
+    ) -> AsyncIterable[a2a_pb2.StreamResponse]:
+        await self._check(context)
+        async for event in super().SubscribeToTask(request, context):
+            yield event
+
+    async def GetTask(
+        self, request: a2a_pb2.GetTaskRequest, context: slim_bindings.Context
+    ) -> a2a_pb2.Task:
+        await self._check(context)
+        return await super().GetTask(request, context)
+
+    async def ListTasks(
+        self, request: a2a_pb2.ListTasksRequest, context: slim_bindings.Context
+    ) -> a2a_pb2.ListTasksResponse:
+        await self._check(context)
+        return await super().ListTasks(request, context)
+
+    async def CreateTaskPushNotificationConfig(
+        self,
+        request: a2a_pb2.TaskPushNotificationConfig,
+        context: slim_bindings.Context,
+    ) -> a2a_pb2.TaskPushNotificationConfig:
+        await self._check(context)
+        return cast(
+            a2a_pb2.TaskPushNotificationConfig,
+            await super().CreateTaskPushNotificationConfig(request, context),
+        )
+
+    async def GetTaskPushNotificationConfig(
+        self,
+        request: a2a_pb2.GetTaskPushNotificationConfigRequest,
+        context: slim_bindings.Context,
+    ) -> a2a_pb2.TaskPushNotificationConfig:
+        await self._check(context)
+        return await super().GetTaskPushNotificationConfig(request, context)
+
+    async def ListTaskPushNotificationConfigs(
+        self,
+        request: a2a_pb2.ListTaskPushNotificationConfigsRequest,
+        context: slim_bindings.Context,
+    ) -> a2a_pb2.ListTaskPushNotificationConfigsResponse:
+        await self._check(context)
+        return await super().ListTaskPushNotificationConfigs(request, context)
+
+    async def DeleteTaskPushNotificationConfig(
+        self,
+        request: a2a_pb2.DeleteTaskPushNotificationConfigRequest,
+        context: slim_bindings.Context,
+    ) -> empty_pb2.Empty:
+        await self._check(context)
+        return await super().DeleteTaskPushNotificationConfig(request, context)
+
+    async def GetExtendedAgentCard(
+        self,
+        request: a2a_pb2.GetExtendedAgentCardRequest,
+        context: slim_bindings.Context,
+    ) -> a2a_pb2.AgentCard:
+        await self._check(context)
+        return await super().GetExtendedAgentCard(request, context)
+
+
+# ---------------------------------------------------------------------------
 # Handler
 # ---------------------------------------------------------------------------
 
@@ -123,7 +250,9 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         Steps:
         1. Declare a ``slimrpc`` interface on the agent card (if absent).
         2. Create a SLIM ``App`` + ``Server`` from the user-provided config.
-        3. Import ``slima2a`` and register the A2A servicer.
+        3. Import ``slima2a`` and register the A2A servicer.  With identity
+           auth enabled, the servicer checks each call's token, and setup
+           raises if the Identity Service SDK cannot be built.
         4. Launch ``server.serve_async()`` as a background task.
         """
         # slima2a clients hand the interface URL straight to the channel
@@ -166,6 +295,14 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
 
         name = split_id(identity_str)
 
+        # Built before anything connects, so a server that cannot check
+        # tokens fails here instead of serving unchecked calls.
+        identity_sdk: IdentityServiceSdk | None = None
+        if is_identity_auth_enabled():
+            identity_sdk = IdentityServiceSdk()
+            declare_identity_auth(self._config.agent_card)
+            logger.info("Identity auth enabled for slimrpc calls to '%s'", identity_str)
+
         # Ensure the global SLIM runtime is initialised and grab the service.
         # We deliberately do NOT use ``get_or_create_slim_instance`` here: it
         # subscribes a pub/sub App under ``name``, and SLIM 2.x would route
@@ -199,10 +336,19 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         )
 
         # --- Register the A2A servicer (from slima2a) ---
-        servicer = SRPCHandler(
-            agent_card=self._config.agent_card,
-            request_handler=self._config.request_handler,
-            context_builder=self._config.context_builder,
+        servicer = (
+            SRPCHandler(
+                agent_card=self._config.agent_card,
+                request_handler=self._config.request_handler,
+                context_builder=self._config.context_builder,
+            )
+            if identity_sdk is None
+            else _IdentityCheckedSRPCHandler(
+                agent_card=self._config.agent_card,
+                request_handler=self._config.request_handler,
+                context_builder=self._config.context_builder,
+                identity_sdk=identity_sdk,
+            )
         )
         add_A2AServiceServicer_to_server(servicer, self._slim_rpc_server)
 

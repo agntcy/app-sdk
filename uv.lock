@@ -82,7 +82,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.10.1" },
     { name = "nats-py", specifier = ">=2.10.0,<3" },
     { name = "slim-bindings", specifier = "~=2.2" },
-    { name = "slima2a", specifier = "==0.7.0" },
+    { name = "slima2a", specifier = "==0.8.0" },
     { name = "structlog", specifier = ">=24.1.0" },
     { name = "uvicorn", specifier = ">=0.29.0" },
 ]
@@ -3556,15 +3556,15 @@ wheels = [
 
 [[package]]
 name = "slima2a"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "a2a-sdk", extra = ["sqlite", "telemetry"] },
     { name = "slim-bindings" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/83/766d11a2ecd06a703867e77065d0df3c3dba2db6c62000478cf66e4ccf0c/slima2a-0.7.0.tar.gz", hash = "sha256:3db15521ee6ece846e4c42412ca63c81955d0c292c0a0654c9337ccceb34aee6", size = 180954, upload-time = "2026-08-07T11:30:53.993Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/9a/0ca32b9d5d1fd8132ca7b2fd2f26ba1b70462cd2e0bdf63eebc91e74752c/slima2a-0.8.0.tar.gz", hash = "sha256:b6048dc8f01141d5c6fd805512d8b19b0f1c68eb795a68fece71ada097f714fb", size = 194053, upload-time = "2026-10-13T14:17:09.278Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1f/d7/ed621c7162a1c32fc5f3f7ff5f5dea3b44496a67cafc11c27900961fa4ab/slima2a-0.7.0-py3-none-any.whl", hash = "sha256:108c3f8bd75493c604d882a893aaf3e27aa8f5ace6bf1bfc53cf64a334123473", size = 27350, upload-time = "2026-08-07T11:30:52.91Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/93/b17df2e23d169cb9bffd53aeb94ae1e3eba1799ea3de5e67711192b28647/slima2a-0.8.0-py3-none-any.whl", hash = "sha256:998fae532daf115bcd71fa921768f34fa1274a4054f195d0e0421b3a11d4c2f6", size = 31245, upload-time = "2026-10-13T14:17:08.36Z" },
 ]
 
 [[package]]

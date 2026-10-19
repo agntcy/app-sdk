@@ -11,24 +11,35 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import slim_bindings
-from a2a.types import AgentCard
+from a2a.helpers import new_text_message
+from a2a.types import AgentCard, Role, SendMessageRequest
+from agntcy.identity.service.v1alpha1.auth_service_pb2 import ExtAuthzRequest
+from slima2a.handler import SRPCHandler
+from slima2a.types.v1.a2a_pb2_slimrpc import A2AServiceServicer
 
+from agntcy_app_sdk.semantic.a2a.card_utils import IDENTITY_AUTH_SCHEME
 from agntcy_app_sdk.semantic.a2a.client.config import (
     ClientConfig,
     SlimRpcConfig,
     SlimTransportConfig,
 )
 from agntcy_app_sdk.semantic.a2a.client.factory import A2AClientFactory
+from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
+    _AUTHORIZE_TIMEOUT,
+)
 from agntcy_app_sdk.semantic.a2a.server.srpc import (
     A2ASlimRpcServerConfig,
     A2ASRPCServerHandler,
     SlimRpcConnectionConfig,
+    _IdentityCheckedSRPCHandler,
 )
 from agntcy_app_sdk.transport.slim import common
 from agntcy_app_sdk.transport.slim.common import new_client_config
 from agntcy_app_sdk.transport.slim.transport import SLIMTransport
 
 pytest_plugins = "pytest_asyncio"
+
+_SRPC = "agntcy_app_sdk.semantic.a2a.server.srpc"
 
 # Test-only placeholder, not a credential.
 _TEST_SECRET = "x" * 32
@@ -93,6 +104,172 @@ class TestSlimRpcServerHonorsTlsInsecure:
 
     def test_default_stays_plaintext(self) -> None:
         assert SlimRpcConnectionConfig("org/ns/a", _TEST_SECRET).tls_insecure is True
+
+
+class TestSlimRpcServerIdentityAuth:
+    """With identity auth enabled, the slimrpc server checks every call's token."""
+
+    @staticmethod
+    def _enable(monkeypatch: pytest.MonkeyPatch, enabled: bool = True) -> None:
+        if enabled:
+            monkeypatch.setenv("IDENTITY_AUTH_ENABLED", "true")
+            monkeypatch.setenv("IDENTITY_SERVICE_API_KEY", "unit-test-placeholder")
+        else:
+            monkeypatch.delenv("IDENTITY_AUTH_ENABLED", raising=False)
+
+    @staticmethod
+    async def _registered_servicer(handler: A2ASRPCServerHandler) -> Any:
+        """Run ``setup()`` against mocks; return the servicer it registered."""
+        service = MagicMock()
+        service.connect_async = AsyncMock(return_value=1)
+        server = MagicMock()
+        server.serve_async = AsyncMock()
+        server.shutdown_async = AsyncMock()
+        with (
+            patch(f"{_SRPC}.get_or_init_slim_service", return_value=service),
+            patch(f"{_SRPC}.new_client_config"),
+            patch(
+                f"{_SRPC}.slim_bindings.Server.new_with_connection", return_value=server
+            ),
+            patch(f"{_SRPC}.add_A2AServiceServicer_to_server") as register,
+        ):
+            await handler.setup()
+            await handler.teardown()
+        return register.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_enabled_checks_tokens_and_declares_the_scheme(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._enable(monkeypatch)
+        sdk = MagicMock()
+        monkeypatch.setattr(f"{_SRPC}.IdentityServiceSdk", lambda: sdk)
+        handler = TestSlimRpcServerHonorsTlsInsecure._handler()
+
+        servicer = await self._registered_servicer(handler)
+
+        assert isinstance(servicer, _IdentityCheckedSRPCHandler)
+        assert servicer._identity_sdk is sdk
+        assert IDENTITY_AUTH_SCHEME in handler.agent_card.security_schemes
+
+    @pytest.mark.asyncio
+    async def test_disabled_registers_the_plain_handler(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._enable(monkeypatch, enabled=False)
+        handler = TestSlimRpcServerHonorsTlsInsecure._handler()
+
+        servicer = await self._registered_servicer(handler)
+
+        assert type(servicer) is SRPCHandler
+        assert IDENTITY_AUTH_SCHEME not in handler.agent_card.security_schemes
+
+    @pytest.mark.asyncio
+    async def test_setup_fails_when_identity_sdk_cannot_be_built(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._enable(monkeypatch)
+        monkeypatch.setattr(
+            f"{_SRPC}.IdentityServiceSdk", MagicMock(side_effect=KeyError("ROOT_CA"))
+        )
+        handler = TestSlimRpcServerHonorsTlsInsecure._handler()
+        builder = _stop_at_connect()
+
+        with (
+            patch(f"{_SRPC}.get_or_init_slim_service", return_value=MagicMock()),
+            patch(f"{_SRPC}.new_client_config", builder),
+        ):
+            with pytest.raises(KeyError):
+                await handler.setup()
+
+        builder.assert_not_called()
+        assert IDENTITY_AUTH_SCHEME not in handler.agent_card.security_schemes
+
+    @staticmethod
+    def _servicer(sdk: MagicMock) -> tuple[_IdentityCheckedSRPCHandler, MagicMock]:
+        request_handler = MagicMock()
+        request_handler.on_message_send = AsyncMock(
+            return_value=new_text_message("Hello", role=Role.ROLE_AGENT)
+        )
+        servicer = _IdentityCheckedSRPCHandler(
+            agent_card=AgentCard(name="agent", version="1.0.0"),
+            request_handler=request_handler,
+            identity_sdk=sdk,
+        )
+        return servicer, request_handler
+
+    @staticmethod
+    def _context(metadata: dict[str, str]) -> MagicMock:
+        context = MagicMock()
+        context.metadata.return_value = metadata
+        context.session_id.return_value = "s"
+        return context
+
+    @staticmethod
+    def _request() -> SendMessageRequest:
+        return SendMessageRequest(message=new_text_message("Hi", role=Role.ROLE_USER))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", ["Authorization", "authorization"])
+    async def test_valid_token_reaches_the_agent(self, key: str) -> None:
+        sdk = MagicMock()
+        servicer, request_handler = self._servicer(sdk)
+
+        reply = await servicer.SendMessage(
+            self._request(), self._context({key: "Bearer good"})
+        )
+
+        assert reply.message.parts[0].text == "Hello"
+        request_handler.on_message_send.assert_awaited_once()
+        sdk.get_auth_service.return_value.ExtAuthz.assert_called_once_with(
+            ExtAuthzRequest(access_token="good"), timeout=_AUTHORIZE_TIMEOUT
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("metadata", "code_name"),
+        [
+            ({}, "UNAUTHENTICATED"),
+            ({"Authorization": "Basic abc"}, "UNAUTHENTICATED"),
+            ({"Authorization": "Bearer bad"}, "PERMISSION_DENIED"),
+        ],
+    )
+    async def test_rejected_call_does_not_reach_the_agent(
+        self, metadata: dict[str, str], code_name: str
+    ) -> None:
+        sdk = MagicMock()
+        sdk.get_auth_service.return_value.ExtAuthz.side_effect = RuntimeError("denied")
+        servicer, request_handler = self._servicer(sdk)
+
+        with pytest.raises(slim_bindings.RpcError) as excinfo:
+            await servicer.SendMessage(self._request(), self._context(metadata))
+
+        error: Any = excinfo.value
+        assert error.code == getattr(slim_bindings.RpcCode, code_name)
+        assert "denied" not in error.message
+        request_handler.on_message_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejected_stream_yields_nothing(self) -> None:
+        servicer, request_handler = self._servicer(MagicMock())
+
+        with pytest.raises(slim_bindings.RpcError) as excinfo:
+            _ = [
+                e
+                async for e in servicer.SendStreamingMessage(
+                    self._request(), self._context({})
+                )
+            ]
+
+        error: Any = excinfo.value
+        assert error.code == slim_bindings.RpcCode.UNAUTHENTICATED
+        request_handler.on_message_send_stream.assert_not_called()
+
+    def test_every_rpc_is_checked(self) -> None:
+        rpcs = [n for n in vars(A2AServiceServicer) if not n.startswith("_")]
+        assert rpcs
+        for name in rpcs:
+            assert name in vars(_IdentityCheckedSRPCHandler), name
 
 
 class TestSlimRpcClientHonorsTlsInsecure:

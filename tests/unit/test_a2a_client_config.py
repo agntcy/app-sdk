@@ -2851,6 +2851,172 @@ class TestIdentityAuthOverJsonRpc:
         assert isinstance(client, BaseClient)
 
 
+class TestIdentityAuthOverSlimRpc:
+    """With identity auth enabled, slimrpc calls carry the token as metadata."""
+
+    @staticmethod
+    def _channel(*replies: bytes | Exception) -> MagicMock:
+        """A SLIM channel whose unary calls answer with *replies* in turn."""
+        channel = MagicMock()
+        channel.call_unary_async = AsyncMock(side_effect=list(replies))
+        return channel
+
+    @staticmethod
+    def _reply() -> bytes:
+        return SendMessageResponse(
+            message=new_text_message("Hello", role=Role.ROLE_AGENT)
+        ).SerializeToString()
+
+    @staticmethod
+    def _rejection(code: Any) -> Exception:
+        import slim_bindings
+
+        rpc_error: Any = slim_bindings.RpcError
+        error: Exception = rpc_error.Rpc(code=code, message="denied", details=None)
+        return error
+
+    @staticmethod
+    async def _client(channel: MagicMock, *, requires_token: bool = True) -> Client:
+        card = _make_agent_card([_iface("slimrpc", "org/ns/agent")])
+        if requires_token:
+            declare_identity_auth(card)
+        return await A2AClientFactory(
+            ClientConfig(slimrpc_channel_factory=lambda _url: channel, streaming=False)
+        ).create(card)
+
+    @staticmethod
+    def _sent_metadata(channel: MagicMock, call: int = 0) -> Any:
+        """``metadata``, the last positional argument of the stub's call."""
+        return channel.call_unary_async.call_args_list[call].args[-1]
+
+    @pytest.mark.asyncio
+    async def test_token_is_sent_as_metadata(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        TestIdentityAuthOverJsonRpc._identity(monkeypatch)
+        channel = self._channel(self._reply())
+        client = await self._client(channel)
+
+        _ = [e async for e in client.send_message(_user_request())]
+
+        assert self._sent_metadata(channel) == {"Authorization": "Bearer tok"}
+
+    @pytest.mark.asyncio
+    async def test_token_is_sent_to_a_card_without_the_scheme(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        TestIdentityAuthOverJsonRpc._identity(monkeypatch)
+        channel = self._channel(self._reply())
+        client = await self._client(channel, requires_token=False)
+
+        _ = [e async for e in client.send_message(_user_request())]
+
+        assert self._sent_metadata(channel) == {"Authorization": "Bearer tok"}
+
+    @pytest.mark.asyncio
+    async def test_rejection_drops_the_token_for_a_card_without_the_scheme(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import slim_bindings
+
+        sdk = TestIdentityAuthOverJsonRpc._identity(monkeypatch)
+        monkeypatch.setattr(auth, "_token_cache", {})
+        sdk.access_token.return_value = TestIdentityAuthOverJsonRpc._cacheable_token(
+            "tok"
+        )
+        rejection = self._rejection(slim_bindings.RpcCode.UNAUTHENTICATED)
+        channel = self._channel(rejection, self._reply())
+        client = await self._client(channel, requires_token=False)
+
+        with pytest.raises(slim_bindings.RpcError):
+            _ = [e async for e in client.send_message(_user_request())]
+        _ = [e async for e in client.send_message(_user_request())]
+
+        assert sdk.access_token.call_count == 2
+
+    def test_overridden_rpcs_are_traced_and_close_once(self) -> None:
+        from agntcy_app_sdk.semantic.a2a.client.factory import (
+            _SRPC_TRACED_METHODS,
+            _MetadataSRPCTransport,
+        )
+
+        for name in _SRPC_TRACED_METHODS:
+            assert hasattr(_MetadataSRPCTransport.__dict__[name], "__wrapped__"), name
+        assert "close" not in _MetadataSRPCTransport.__dict__
+        assert not hasattr(SRPCTransport.__dict__["close"].__wrapped__, "__wrapped__")
+
+    @pytest.mark.asyncio
+    async def test_caller_service_parameters_are_sent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        TestIdentityAuthOverJsonRpc._identity(monkeypatch, enabled=False)
+        channel = self._channel(self._reply())
+        client = await self._client(channel)
+        context = ClientCallContext(service_parameters={"X-Trace": "1"})
+
+        _ = [e async for e in client.send_message(_user_request(), context=context)]
+
+        assert self._sent_metadata(channel) == {"X-Trace": "1"}
+
+    @pytest.mark.asyncio
+    async def test_other_calls_send_metadata_too(self) -> None:
+        from agntcy_app_sdk.semantic.a2a.client.factory import _MetadataSRPCTransport
+
+        channel = self._channel(Task(id="t").SerializeToString())
+        transport = _MetadataSRPCTransport(channel, _make_agent_card())
+        context = ClientCallContext(service_parameters={"Authorization": "Bearer x"})
+
+        task = await transport.get_task(GetTaskRequest(id="t"), context=context)
+
+        assert task.id == "t"
+        assert self._sent_metadata(channel) == {"Authorization": "Bearer x"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("code_name", ["UNAUTHENTICATED", "PERMISSION_DENIED"])
+    async def test_rejected_token_is_dropped(
+        self, monkeypatch: pytest.MonkeyPatch, code_name: str
+    ) -> None:
+        import slim_bindings
+
+        sdk = TestIdentityAuthOverJsonRpc._identity(monkeypatch)
+        monkeypatch.setattr(auth, "_token_cache", {})
+        old = TestIdentityAuthOverJsonRpc._cacheable_token("old")
+        new = TestIdentityAuthOverJsonRpc._cacheable_token("new")
+        sdk.access_token.side_effect = [old, new]
+        rejection = self._rejection(getattr(slim_bindings.RpcCode, code_name))
+        channel = self._channel(rejection, self._reply())
+        client = await self._client(channel)
+
+        with pytest.raises(slim_bindings.RpcError):
+            _ = [e async for e in client.send_message(_user_request())]
+        _ = [e async for e in client.send_message(_user_request())]
+
+        assert self._sent_metadata(channel, 0) == {"Authorization": f"Bearer {old}"}
+        assert self._sent_metadata(channel, 1) == {"Authorization": f"Bearer {new}"}
+
+    @pytest.mark.asyncio
+    async def test_other_errors_keep_the_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import slim_bindings
+
+        sdk = TestIdentityAuthOverJsonRpc._identity(monkeypatch)
+        monkeypatch.setattr(auth, "_token_cache", {})
+        sdk.access_token.return_value = TestIdentityAuthOverJsonRpc._cacheable_token(
+            "tok"
+        )
+        channel = self._channel(
+            self._rejection(slim_bindings.RpcCode.INTERNAL), self._reply()
+        )
+        client = await self._client(channel)
+
+        with pytest.raises(slim_bindings.RpcError):
+            _ = [e async for e in client.send_message(_user_request())]
+        _ = [e async for e in client.send_message(_user_request())]
+
+        assert sdk.access_token.call_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Interceptors — experimental operations
 # ---------------------------------------------------------------------------

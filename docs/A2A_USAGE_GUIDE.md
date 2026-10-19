@@ -90,6 +90,8 @@ SlimRPC is the recommended path for agents communicating over SLIM. It uses the 
 
 ### Server: `weather_agent_srpc.py`
 
+Server and client must use the same SLIM shared secret (at least 32 characters). Both examples hardcode the same demo value on purpose.
+
 ```python
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -169,7 +171,8 @@ async def main():
         request_handler=request_handler,
         connection=SlimRpcConnectionConfig(
             identity="default/default/weather-agent",
-            shared_secret="my-shared-secret",
+            # Hardcoded on purpose: a demo value, not a real secret.
+            shared_secret="my-shared-secret-at-least-32-characters-long",
             endpoint="http://localhost:46357",
         ),
     )
@@ -207,6 +210,9 @@ async def main():
         group="default",
         name="weather_client",
         slim_url="http://localhost:46357",
+        # Hardcoded on purpose: a demo value, not a real secret. Must match
+        # the server's shared_secret.
+        secret="my-shared-secret-at-least-32-characters-long",
     )
 
     # 2. Build a ClientConfig with slimrpc enabled.
@@ -220,7 +226,9 @@ async def main():
         # nats_config=NatsTransportConfig(...),   # for NATS patterns
     )
 
-    # 3. Create client — transport negotiation happens inside create()
+    # 3. Create client — transport negotiation happens inside create().
+    # With IDENTITY_AUTH_ENABLED, every slimrpc call carries this agent's
+    # identity token, whatever the card declares (see Identity TBAC below).
     card = minimal_agent_card("default/default/weather-agent", ["slimrpc"])
     client = await factory.a2a(config).create(card)
 

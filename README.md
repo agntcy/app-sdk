@@ -188,6 +188,7 @@ config = A2ASlimRpcServerConfig(
     ),
     connection=SlimRpcConnectionConfig(
         identity="default/default/my_agent",
+        # Hardcoded on purpose: a demo value, not a real secret.
         shared_secret="my-shared-secret-at-least-32-characters-long",
         endpoint="http://localhost:46357",
     ),
@@ -222,11 +223,13 @@ config = ClientConfig(
         group="default",
         name="my_client",
         slim_url="http://localhost:46357",
+        # Hardcoded on purpose: a demo value, not a real secret.
         secret="my-shared-secret-at-least-32-characters-long",
     ),
     slim_config=SlimTransportConfig(
         endpoint="http://localhost:46357",
         name="default/default/my_client",
+        # Hardcoded on purpose: a demo value, not a real secret.
         shared_secret_identity="my-shared-secret-at-least-32-characters-long",
     ),
     nats_config=NatsTransportConfig(
@@ -269,12 +272,17 @@ from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 service, slim_app, local_name, conn_id = await setup_slim_client(
     namespace="default", group="default", name="my_client",
     slim_url="http://localhost:46357",
+    # Hardcoded on purpose: a demo value, not a real secret. Must match the
+    # server's shared_secret.
+    secret="my-shared-secret-at-least-32-characters-long",
 )
 
 # Enable slimrpc on the SDK's ClientConfig and let the factory negotiate
 config = ClientConfig(
     slimrpc_channel_factory=slimrpc_channel_factory(slim_app, conn_id),
 )
+# With IDENTITY_AUTH_ENABLED, every slimrpc call carries this agent's
+# identity token, whatever the card declares: only call peers you trust.
 card = minimal_agent_card("default/default/my_agent", ["slimrpc"])
 client = await AgntcyFactory().a2a(config).create(card)
 
