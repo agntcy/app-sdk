@@ -428,6 +428,9 @@ class CardBuilder:
         interface, ``.skip("jsonrpc")``, or an ``.override("jsonrpc", ...)``
         config, which is served as given), and rejected when several HTTP
         interfaces would be served, since one URL cannot describe all of them.
+
+        An ``extended_agent_card`` on the request handler is served as given;
+        set its URLs yourself.
         """
         if not url.startswith(("http://", "https://")):
             raise ValueError(
