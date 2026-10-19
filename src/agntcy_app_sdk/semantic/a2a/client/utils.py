@@ -41,6 +41,18 @@ def message_translator(
     return message
 
 
+AUTH_REJECTION_STATUSES = frozenset({401, 403})
+
+
+def is_auth_rejection(payload: dict[str, Any], status_code: int | None) -> bool:
+    """An identity-auth rejection: status 401 / 403, or the Identity Service
+    middleware's ``{"error": "forbidden" | "unauthorized"}`` body."""
+    return (
+        payload.get("error") in ("forbidden", "unauthorized")
+        or status_code in AUTH_REJECTION_STATUSES
+    )
+
+
 def get_identity_auth_error() -> dict[str, Any]:
     """
     Generate a standard identity authentication error response.

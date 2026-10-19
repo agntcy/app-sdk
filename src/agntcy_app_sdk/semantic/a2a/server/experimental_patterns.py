@@ -24,6 +24,8 @@ The JSON-RPC envelope handling mirrors what a2a-sdk's own JSON-RPC route
 dispatcher does for HTTP.
 """
 
+import asyncio
+import concurrent.futures
 import json
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any, Optional
@@ -47,14 +49,10 @@ from a2a.types import (
     GetExtendedAgentCardRequest,
     GetTaskPushNotificationConfigRequest,
     GetTaskRequest,
-    HTTPAuthSecurityScheme,
     ListTaskPushNotificationConfigsRequest,
     ListTasksRequest,
-    SecurityRequirement,
-    SecurityScheme,
     SendMessageRequest,
     SendMessageResponse,
-    StringList,
     SubscribeToTaskRequest,
     Task,
     TaskPushNotificationConfig,
@@ -66,7 +64,11 @@ from google.protobuf.json_format import MessageToDict, ParseDict
 from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.common.tracing import A2A_INSTRUMENTOR, instrument_if_ready
-from agntcy_app_sdk.semantic.a2a.card_utils import add_interface, clone_card
+from agntcy_app_sdk.semantic.a2a.card_utils import (
+    add_interface,
+    clone_card,
+    declare_identity_auth,
+)
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
 from agntcy_app_sdk.semantic.a2a.transport_types import (
@@ -76,9 +78,72 @@ from agntcy_app_sdk.semantic.a2a.transport_types import (
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 
+from agntcy.identity.service.v1alpha1.auth_service_pb2 import ExtAuthzRequest
 from identityservice.sdk import IdentityServiceSdk
 
 logger = get_logger(__name__)
+
+_AUTHORIZE_TIMEOUT = 10.0
+"""Seconds to wait for the Identity Service to verify a token before the
+request is rejected."""
+
+_AUTHORIZE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="identity-authorize"
+)
+"""Token checks run here, not in the loop's default executor, so a stalled
+Identity Service cannot starve unrelated ``to_thread`` or DNS work."""
+
+
+def _authorize(sdk: IdentityServiceSdk, token: str) -> None:
+    """Verify *token*; raises if the Identity Service rejects it.
+
+    ``IdentityServiceSdk.authorize()`` sets no gRPC deadline, so a hung call
+    would never return its worker thread.
+    """
+    sdk.get_auth_service().ExtAuthz(
+        ExtAuthzRequest(access_token=token), timeout=_AUTHORIZE_TIMEOUT
+    )
+
+
+async def check_identity_token(
+    sdk: IdentityServiceSdk | None, auth_header: str | None
+) -> tuple[str, int] | None:
+    """Check an ``Authorization`` header with the Identity Service.
+
+    Returns ``None`` if the token is accepted, else ``(reason, status)``:
+    401 for a missing or malformed header, 403 for a token that is not
+    accepted, including when the Identity Service cannot be asked.  The
+    reason is generic; the details are logged here.
+
+    The check is a blocking gRPC call, so it runs in a dedicated worker
+    thread with a gRPC deadline.  An Identity Service that does not answer
+    within ``_AUTHORIZE_TIMEOUT`` seconds rejects the request.
+    """
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return "Missing or malformed Authorization header", 401
+
+    token = auth_header.split("Bearer ", 1)[1]
+    if not token:
+        return "Empty bearer token", 401
+
+    if sdk is None:
+        logger.error("Identity auth is enabled but no Identity Service is set up")
+        return "Authentication failed", 403
+    try:
+        loop = asyncio.get_running_loop()
+        # One second past the gRPC deadline, so the deadline normally fires first.
+        async with asyncio.timeout(_AUTHORIZE_TIMEOUT + 1):
+            await loop.run_in_executor(_AUTHORIZE_EXECUTOR, _authorize, sdk, token)
+        return None
+    except TimeoutError:
+        logger.warning(
+            "Identity Service did not verify the token within %.0f s",
+            _AUTHORIZE_TIMEOUT,
+        )
+    except Exception as e:
+        logger.warning("Token verification failed: %s", e)
+    return "Authentication failed", 403
+
 
 # Maps BaseTransport.type() -> (interface protocol_binding, URI scheme)
 _TRANSPORT_NAME_MAP: dict[str, tuple[str, str]] = {
@@ -346,61 +411,47 @@ class A2AExperimentalServer:
 
         if is_identity_auth_enabled():
             logger.debug("Identity auth enabled — configuring direct auth guard")
-            try:
-                self._configure_identity_auth()
-            except Exception as e:
-                logger.warning(f"Failed to configure identity auth: {e}")
+            self._configure_identity_auth()
 
         instrument_if_ready("A2A server", A2A_INSTRUMENTOR)
 
     def _configure_identity_auth(self) -> None:
-        """Configure identity authentication for the server."""
+        """Configure identity authentication for the server.
+
+        Raises if the Identity Service SDK cannot be set up, so a server that
+        cannot check tokens does not start, and its card is left unchanged.
+        """
         assert self._server is not None  # Guarded by setup()
 
-        # Stamp agent card security schemes (needed for client discovery)
-        AUTH_SCHEME = "IdentityServiceAuthScheme"
-        card = self._server.agent_card
-        card.security_schemes[AUTH_SCHEME].CopyFrom(
-            SecurityScheme(
-                http_auth_security_scheme=HTTPAuthSecurityScheme(
-                    scheme="bearer",
-                    bearer_format="JWT",
-                )
-            )
-        )
-        del card.security_requirements[:]
-        card.security_requirements.append(
-            SecurityRequirement(schemes={AUTH_SCHEME: StringList(list=["*"])})
-        )
-
         # Direct SDK instead of ASGI middleware
-        self._identity_sdk = IdentityServiceSdk()
+        identity_sdk = IdentityServiceSdk()
+
+        # Advertise the scheme on the card (needed for client discovery)
+        declare_identity_auth(self._server.agent_card)
+        self._identity_sdk = identity_sdk
         self._auth_enabled = True
 
-    def _authenticate(self, message: Message) -> tuple[bool, str, User]:
-        """Direct auth gate. Returns (success, error_reason, user)."""
+    async def _authenticate(
+        self, message: Message
+    ) -> tuple[bool, str, User, int | None]:
+        """Direct auth gate. Returns (success, error_reason, user, status).
+
+        *status* is ``None`` on success; otherwise see
+        :func:`check_identity_token`.
+        """
         _unauthenticated = UnauthenticatedUser()
 
         if not self._auth_enabled:
-            return True, "", _unauthenticated
+            return True, "", _unauthenticated, None
 
         auth_header = message.headers.get("Authorization") or message.headers.get(
             "authorization"
         )
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return False, "Missing or malformed Authorization header", _unauthenticated
-
-        token = auth_header.split("Bearer ", 1)[1]
-        if not token:
-            return False, "Empty bearer token", _unauthenticated
-
-        if self._identity_sdk is None:
-            return False, "Identity service is not configured", _unauthenticated
-        try:
-            self._identity_sdk.authorize(access_token=token)
-            return True, "", IdentityServiceUser()
-        except Exception as e:
-            return False, f"Authentication failed: {e}", _unauthenticated
+        rejection = await check_identity_token(self._identity_sdk, auth_header)
+        if rejection is not None:
+            reason, status = rejection
+            return False, reason, _unauthenticated, status
+        return True, "", IdentityServiceUser(), None
 
     # ------------------------------------------------------------------
     # JSON-RPC helpers
@@ -526,20 +577,22 @@ class A2AExperimentalServer:
 
         request_id: str | int | None = None
 
-        def _reply(payload: bytes) -> Message:
+        def _reply(payload: bytes, status_code: int | None = None) -> Message:
             return Message(
                 type="A2AResponse",
                 payload=payload,
                 reply_to=message.reply_to,
                 headers=self._reply_headers(),
+                status_code=status_code,
             )
 
         try:
             # ---- Auth guard ------------------------------------------------
-            auth_ok, auth_reason, user = self._authenticate(message)
+            auth_ok, auth_reason, user, auth_status = await self._authenticate(message)
             if not auth_ok:
                 return _reply(
-                    self._build_error_payload(None, InternalError(data=auth_reason))
+                    self._build_error_payload(None, InternalError(data=auth_reason)),
+                    status_code=auth_status,
                 )
 
             # ---- Relay preservation ----------------------------------------
@@ -766,7 +819,7 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
     # -- Lifecycle --------------------------------------------------------
 
     async def setup(self) -> None:
-        """Full lifecycle: transport.setup() -> set_callback() -> subscribe() -> directory -> protocol.setup()."""
+        """Full lifecycle: protocol.setup() -> transport.setup() -> set_callback() -> subscribe()."""
         if self._transport is None:
             raise ValueError("Transport must be set before running A2A handler.")
 
@@ -787,20 +840,14 @@ class A2AExperimentalServerHandler(BaseA2AServerHandler):
                 "no interface declared on the agent card."
             )
 
-        # Transport setup
-        await self._transport.setup()
-
-        # Bind server and create the protocol bridge
+        # Auth must be configured before the callback can receive a message,
+        # so a server that cannot check tokens never serves one.
         self._protocol.bind_server(self._managed_object)
-
-        # Set callback for incoming messages
-        self._transport.set_callback(self._protocol.handle_message)
-
-        # Subscribe to topic
-        await self._transport.subscribe(self._topic)
-
-        # Protocol-level setup (auth, tracing, etc.)
         await self._protocol.setup()
+
+        await self._transport.setup()
+        self._transport.set_callback(self._protocol.handle_message)
+        await self._transport.subscribe(self._topic)
 
         logger.debug(f"A2A experimental handler started on topic: {self._topic}")
 

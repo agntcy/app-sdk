@@ -47,10 +47,12 @@ from a2a.types import (
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.message import Message as ProtoMessage
 
+from agntcy_app_sdk.common.auth import invalidate_access_token
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.client.utils import (
     create_rpc_error,
     get_identity_auth_error,
+    is_auth_rejection,
     message_translator,
     run_after_interceptors,
     run_before_interceptors,
@@ -362,8 +364,8 @@ class A2AExperimentalClient(Client):
 
     @staticmethod
     def _is_forbidden(payload: dict[str, Any], status_code: int | None) -> bool:
-        """An identity-auth rejection (HTTP 403 / ``"forbidden"``)."""
-        return payload.get("error") == "forbidden" or status_code == 403
+        """An identity-auth rejection (status 401 / 403, ``"forbidden"``)."""
+        return is_auth_rejection(payload, status_code)
 
     @staticmethod
     def _parse_payload(
@@ -375,11 +377,13 @@ class A2AExperimentalClient(Client):
     ) -> ProtoMessage:
         """Parse a raw transport payload (JSON-RPC response) into *proto*.
 
-        Identity-auth rejections become a synthetic agent message when
-        *forbidden_as_message* is set, and raise ``A2AClientError``
-        otherwise; JSON-RPC errors raise the matching ``A2AError``.
+        Identity-auth rejections drop the cached access token, then become a
+        synthetic agent message when *forbidden_as_message* is set, and raise
+        ``A2AClientError`` otherwise; JSON-RPC errors raise the matching
+        ``A2AError``.
         """
         if A2AExperimentalClient._is_forbidden(payload, status_code):
+            invalidate_access_token()
             if not forbidden_as_message:
                 raise A2AClientError("Access forbidden: identity auth failed")
             logger.warning("Received forbidden error in A2A response: %s", payload)
@@ -404,8 +408,9 @@ class A2AExperimentalClient(Client):
         heading is chosen from the payload itself, not from the exception
         type:
 
-        * an identity-auth rejection (HTTP 403 / ``"forbidden"``) is a
-          failure, not an answer: ``Broadcast recipient ... refused access``;
+        * an identity-auth rejection (status 401 / 403, or a ``"forbidden"`` /
+          ``"unauthorized"`` error) is a failure, not an answer:
+          ``Broadcast recipient ... refused access``;
         * a JSON-RPC reply carrying an ``error`` member is the *recipient's*
           failure: ``Broadcast recipient ... replied with an error``;
         * anything else that fails (not JSON, not an object, a ``result``

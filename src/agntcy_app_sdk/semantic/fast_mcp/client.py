@@ -10,6 +10,7 @@ from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
 from agntcy_app_sdk.common.auth import (
     get_access_token,
+    invalidate_access_token,
     is_identity_auth_enabled,
 )
 
@@ -81,6 +82,8 @@ class MCPClient:
             if not self.topic:
                 raise ValueError("Topic must be provided to send MCP messages")
             response = await self.transport.request(self.topic, message)
+            if response.status_code in (401, 403) and method == "tools/call":
+                invalidate_access_token(tool_name=(params or {}).get("name"))
             data = json.loads(response.payload.decode("utf-8"))
             if "error" in data:
                 raise RuntimeError(f"[MCP Error] {method} failed: {data['error']}")

@@ -1808,8 +1808,8 @@ class TestCardBuilderPublicUrl:
         assert _urls(card) == [("JSONRPC", _BIND_URL)]
 
     @pytest.mark.asyncio
-    async def test_without_public_url_the_card_is_served_as_is(self) -> None:
-        """Default behavior is unchanged: same object, no copy."""
+    async def test_without_public_url_an_equal_copy_is_served(self) -> None:
+        """The served card is a copy, so handler edits stay off the caller's card."""
         builder, session, _, card = _public_url_builder(
             [AgentInterface(protocol_binding="JSONRPC", url=_BIND_URL)]
         )
@@ -1817,7 +1817,30 @@ class TestCardBuilderPublicUrl:
         await builder.start()
 
         served = session.add.call_args.args[0].agent_card
-        assert served is card
+        assert served == card
+        assert served is not card
+
+    @pytest.mark.asyncio
+    async def test_handlers_share_one_copy_and_its_edits_stay_off_the_card(
+        self,
+    ) -> None:
+        from agntcy_app_sdk.semantic.a2a.card_utils import declare_identity_auth
+
+        builder, session, _, card = _public_url_builder(
+            [
+                AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/agent"),
+                AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL),
+            ]
+        )
+
+        with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
+            await builder.start()
+
+        served = [call.args[0].agent_card for call in session.add.call_args_list]
+        assert len(served) == 2 and served[0] is served[1]
+        declare_identity_auth(served[0])
+        assert not card.security_requirements
+        assert not card.security_schemes
 
     @pytest.mark.asyncio
     async def test_only_the_http_interface_changes_and_order_is_kept(self) -> None:
@@ -1901,7 +1924,7 @@ class TestCardBuilderPublicUrl:
 
         log.warning.assert_called_once()
         assert "ignored" in log.warning.call_args.args[0]
-        assert session.add.call_args.args[0].agent_card is card
+        assert session.add.call_args.args[0].agent_card == card
 
     @pytest.mark.asyncio
     async def test_ignored_with_a_warning_when_http_is_skipped(self) -> None:
@@ -1916,7 +1939,7 @@ class TestCardBuilderPublicUrl:
             await builder.skip("jsonrpc").with_public_url(_PUBLIC_URL).start()
 
         log.warning.assert_called_once()
-        assert session.add.call_args.args[0].agent_card is card
+        assert session.add.call_args.args[0].agent_card == card
 
     @pytest.mark.asyncio
     async def test_ignored_with_a_warning_when_http_is_overridden(self) -> None:

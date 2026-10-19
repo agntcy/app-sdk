@@ -7,11 +7,23 @@ a2a-sdk 1.x models transports as the ordered ``AgentCard.supported_interfaces``
 list; these helpers are the SDK's thin API over it.
 """
 
-from a2a.types import AgentCard, AgentInterface
+from unittest.mock import MagicMock
+
+import pytest
+from a2a.types import (
+    AgentCard,
+    AgentInterface,
+    HTTPAuthSecurityScheme,
+    SecurityRequirement,
+    SecurityScheme,
+    StringList,
+)
 
 from agntcy_app_sdk.semantic.a2a.card_utils import (
+    IDENTITY_AUTH_SCHEME,
     add_interface,
     clone_card,
+    declare_identity_auth,
     find_interface,
     get_card_url,
     preferred_transport,
@@ -86,6 +98,100 @@ class TestCloneCard:
 
         assert original.supported_interfaces[0].url == "http://h"
         assert original.name == "agent"
+
+
+class TestDeclareIdentityAuth:
+    @pytest.fixture
+    def logger(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        mock = MagicMock()
+        monkeypatch.setattr("agntcy_app_sdk.semantic.a2a.card_utils.logger", mock)
+        return mock
+
+    def test_author_requirements_are_replaced_with_a_warning(
+        self, logger: MagicMock
+    ) -> None:
+        card = _card()
+        card.security_requirements.append(
+            SecurityRequirement(schemes={"oauth": StringList(list=["read"])})
+        )
+
+        declare_identity_auth(card)
+
+        assert [list(r.schemes) for r in card.security_requirements] == [
+            [IDENTITY_AUTH_SCHEME]
+        ]
+        logger.warning.assert_called_once()
+        assert "oauth" in logger.warning.call_args.args
+
+    def test_schemes_of_dropped_requirements_are_removed(
+        self, logger: MagicMock
+    ) -> None:
+        card = _card()
+        card.security_schemes["oauth"].CopyFrom(
+            SecurityScheme(
+                http_auth_security_scheme=HTTPAuthSecurityScheme(scheme="basic")
+            )
+        )
+        card.security_schemes["unused"].CopyFrom(
+            SecurityScheme(
+                http_auth_security_scheme=HTTPAuthSecurityScheme(scheme="basic")
+            )
+        )
+        card.security_requirements.append(
+            SecurityRequirement(schemes={"oauth": StringList(list=["read"])})
+        )
+
+        declare_identity_auth(card)
+
+        assert sorted(card.security_schemes) == sorted([IDENTITY_AUTH_SCHEME, "unused"])
+
+    def test_skill_requirements_on_removed_schemes_are_dropped(
+        self, logger: MagicMock
+    ) -> None:
+        card = _card()
+        card.security_requirements.append(
+            SecurityRequirement(schemes={"oauth": StringList(list=["read"])})
+        )
+        skill = card.skills.add(id="weather", name="weather")
+        skill.security_requirements.append(
+            SecurityRequirement(schemes={"oauth": StringList(list=["write"])})
+        )
+        skill.security_requirements.append(
+            SecurityRequirement(schemes={IDENTITY_AUTH_SCHEME: StringList(list=["*"])})
+        )
+
+        declare_identity_auth(card)
+
+        assert [list(r.schemes) for r in card.skills[0].security_requirements] == [
+            [IDENTITY_AUTH_SCHEME]
+        ]
+        assert logger.warning.call_count == 2
+        assert "weather" in logger.warning.call_args.args
+
+    def test_rescoped_identity_requirement_is_named_in_the_warning(
+        self, logger: MagicMock
+    ) -> None:
+        card = _card()
+        card.security_requirements.append(
+            SecurityRequirement(
+                schemes={IDENTITY_AUTH_SCHEME: StringList(list=["read"])}
+            )
+        )
+
+        declare_identity_auth(card)
+
+        assert (
+            "a differently scoped identity requirement" in logger.warning.call_args.args
+        )
+
+    def test_no_warning_without_author_requirements(self, logger: MagicMock) -> None:
+        card = _card()
+
+        declare_identity_auth(card)
+        declare_identity_auth(card)
+
+        assert len(card.security_requirements) == 1
+        logger.warning.assert_not_called()
 
 
 class TestAddInterface:

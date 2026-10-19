@@ -10,6 +10,7 @@ Written against the a2a-sdk 1.x API: protobuf types, ``supported_interfaces``
 """
 
 import asyncio
+import base64
 import dataclasses
 import json
 import warnings
@@ -18,7 +19,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
+from a2a.client.base_client import BaseClient
 from a2a.client.client import Client, ClientCallContext
 from a2a.client.client import ClientConfig as A2AClientConfig
 from a2a.client.errors import A2AClientError
@@ -41,6 +44,8 @@ from a2a.types import (
 from a2a.utils.errors import InternalError, TaskNotFoundError
 from slima2a.client_transport import SRPCTransport
 
+from agntcy_app_sdk.common import auth
+from agntcy_app_sdk.semantic.a2a.card_utils import declare_identity_auth
 from agntcy_app_sdk.semantic.a2a.client.config import (
     ClientConfig,
     NatsTransportConfig,
@@ -829,6 +834,35 @@ class TestPatternsClientTransport:
         assert events[1].status_update.status.state == TaskState.TASK_STATE_COMPLETED
         sent = mock_transport.request_stream.call_args.args[1]
         assert json.loads(sent.payload)["method"] == "SendStreamingMessage"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [401, 403])
+    async def test_send_message_streaming_auth_rejection_drops_the_token(
+        self, status: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rejection yields the forbidden message, drops the token, and ends."""
+        invalidate = MagicMock()
+        monkeypatch.setattr(
+            "agntcy_app_sdk.semantic.a2a.client.transports.invalidate_access_token",
+            invalidate,
+        )
+        mock_transport = _make_mock_transport()
+        mock_transport.request_stream = MagicMock(
+            side_effect=_async_gen(
+                _rpc_response(
+                    error={"code": -32603, "message": "Authentication failed"},
+                    status_code=status,
+                ),
+                _rpc_response(_status_result("TASK_STATE_COMPLETED", "done")),
+            )
+        )
+        pct = PatternsClientTransport(mock_transport, _make_agent_card(), "test_topic")
+
+        events = [e async for e in pct.send_message_streaming(_user_request())]
+
+        assert len(events) == 1
+        assert "Access Forbidden" in events[0].message.parts[0].text
+        invalidate.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_send_message_streaming_falls_back_to_unary(self) -> None:
@@ -2577,6 +2611,244 @@ class TestFactoryInterceptorIntegration:
         events = [e async for e in client.send_message(_user_request())]
 
         assert get_stream_response_text(events[0]) == "plain"
+
+
+class TestIdentityAuthOverJsonRpc:
+    """With identity auth enabled, the HTTP JSON-RPC client sends a token."""
+
+    @staticmethod
+    def _identity(
+        monkeypatch: pytest.MonkeyPatch, *, enabled: bool = True, token: str = "tok"
+    ) -> MagicMock:
+        if enabled:
+            monkeypatch.setenv("IDENTITY_AUTH_ENABLED", "true")
+            monkeypatch.setenv("IDENTITY_SERVICE_API_KEY", "unit-test-placeholder")
+        else:
+            monkeypatch.delenv("IDENTITY_AUTH_ENABLED", raising=False)
+        sdk = MagicMock()
+        sdk.access_token.return_value = token
+        monkeypatch.setattr(
+            auth,
+            "_fetch_access_token",
+            lambda tool_name: sdk.access_token(tool_name=tool_name),
+        )
+        return sdk
+
+    @staticmethod
+    async def _send(
+        *,
+        interceptors: list[ClientCallInterceptor] | None = None,
+        context: ClientCallContext | None = None,
+        url: str = "http://localhost:8080",
+        card: AgentCard | None = None,
+    ) -> httpx.Request:
+        """Send one message over JSON-RPC; return the HTTP request that went out.
+
+        Without *card*, the server's card requires the Identity Service scheme.
+        """
+        if card is None:
+            card = _make_agent_card([_iface("JSONRPC", url)])
+            declare_identity_auth(card)
+        sent: list[httpx.Request] = []
+
+        def reply(request: httpx.Request) -> httpx.Response:
+            sent.append(request)
+            rpc_id = json.loads(request.content)["id"]
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": rpc_id, "result": _message_result()},
+            )
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(reply))
+        client = await A2AClientFactory(
+            ClientConfig(httpx_client=http, streaming=False)
+        ).create(card, interceptors=interceptors)
+        _ = [e async for e in client.send_message(_user_request(), context=context)]
+        await http.aclose()
+        return sent[0]
+
+    @pytest.mark.asyncio
+    async def test_bearer_token_is_sent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._identity(monkeypatch)
+
+        request = await self._send()
+
+        assert request.headers["Authorization"] == "Bearer tok"
+
+    @pytest.mark.asyncio
+    async def test_no_token_to_a_server_that_does_not_ask(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdk = self._identity(monkeypatch)
+
+        request = await self._send(
+            card=_make_agent_card([_iface("JSONRPC", "http://localhost:8080")])
+        )
+
+        assert "Authorization" not in request.headers
+        sdk.access_token.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_token_when_the_scheme_is_defined_but_not_required(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdk = self._identity(monkeypatch)
+        card = _make_agent_card([_iface("JSONRPC", "http://localhost:8080")])
+        declare_identity_auth(card)
+        del card.security_requirements[:]
+
+        request = await self._send(card=card)
+
+        assert "Authorization" not in request.headers
+        sdk.access_token.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_token_when_auth_disabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdk = self._identity(monkeypatch, enabled=False)
+
+        request = await self._send()
+
+        assert "Authorization" not in request.headers
+        sdk.access_token.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_caller_authorization_wins(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdk = self._identity(monkeypatch)
+        interceptor = _RecordingInterceptor(headers={"Authorization": "Bearer mine"})
+
+        request = await self._send(interceptors=[interceptor])
+
+        assert request.headers["Authorization"] == "Bearer mine"
+        sdk.access_token.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_caller_context_is_not_modified(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A reused context must not keep a token, or it would go stale."""
+        self._identity(monkeypatch)
+        context = ClientCallContext(service_parameters={"X-Trace": "1"})
+
+        request = await self._send(context=context)
+
+        assert request.headers["Authorization"] == "Bearer tok"
+        assert request.headers["X-Trace"] == "1"
+        assert context.service_parameters == {"X-Trace": "1"}
+
+    @pytest.mark.asyncio
+    async def test_token_failure_sends_without_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdk = self._identity(monkeypatch)
+        sdk.access_token.side_effect = RuntimeError("identity service down")
+
+        request = await self._send()
+
+        assert "Authorization" not in request.headers
+
+    @staticmethod
+    def _cacheable_token(name: str) -> str:
+        """An unsigned JWT with a future ``exp``, so the client caches it."""
+
+        def part(data: dict[str, Any]) -> str:
+            return base64.urlsafe_b64encode(json.dumps(data).encode()).decode()
+
+        return f"{part({'alg': 'none'})}.{part({'sub': name, 'exp': 4102444800})}."
+
+    @staticmethod
+    async def _client_replying(
+        statuses: list[int], *, streaming: bool = False
+    ) -> tuple[Client, list[httpx.Request], httpx.AsyncClient]:
+        """A JSON-RPC client whose server answers with *statuses* in turn."""
+        card = _make_agent_card([_iface("JSONRPC", "http://localhost:8080")])
+        card.capabilities.streaming = streaming
+        declare_identity_auth(card)
+        sent: list[httpx.Request] = []
+
+        def reply(request: httpx.Request) -> httpx.Response:
+            sent.append(request)
+            status = statuses[len(sent) - 1]
+            if status != 200:
+                return httpx.Response(status, json={"error": "unauthorized"})
+            rpc_id = json.loads(request.content)["id"]
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": rpc_id, "result": _message_result()},
+            )
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(reply))
+        client = await A2AClientFactory(
+            ClientConfig(httpx_client=http, streaming=streaming)
+        ).create(card)
+        return client, sent, http
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [401, 403])
+    async def test_rejected_token_is_dropped(
+        self, monkeypatch: pytest.MonkeyPatch, status: int
+    ) -> None:
+        """After a 401 / 403 the next request fetches a fresh token."""
+        sdk = self._identity(monkeypatch)
+        monkeypatch.setattr(auth, "_token_cache", {})
+        old, new = self._cacheable_token("old"), self._cacheable_token("new")
+        sdk.access_token.side_effect = [old, new]
+        client, sent, http = await self._client_replying([status, 200])
+
+        with pytest.raises(A2AClientError) as excinfo:
+            _ = [e async for e in client.send_message(_user_request())]
+        _ = [e async for e in client.send_message(_user_request())]
+        await http.aclose()
+
+        assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
+        assert sent[0].headers["Authorization"] == f"Bearer {old}"
+        assert sent[1].headers["Authorization"] == f"Bearer {new}"
+        assert sdk.access_token.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_rejected_token_is_dropped_when_streaming(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdk = self._identity(monkeypatch)
+        monkeypatch.setattr(auth, "_token_cache", {})
+        sdk.access_token.return_value = self._cacheable_token("tok")
+        client, _, http = await self._client_replying([401], streaming=True)
+
+        with pytest.raises(A2AClientError):
+            _ = [e async for e in client.send_message(_user_request())]
+        await http.aclose()
+
+        assert auth._token_cache == {}
+
+    @pytest.mark.asyncio
+    async def test_other_errors_keep_the_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sdk = self._identity(monkeypatch)
+        monkeypatch.setattr(auth, "_token_cache", {})
+        sdk.access_token.return_value = self._cacheable_token("tok")
+        client, _, http = await self._client_replying([500, 200])
+
+        with pytest.raises(A2AClientError):
+            _ = [e async for e in client.send_message(_user_request())]
+        _ = [e async for e in client.send_message(_user_request())]
+        await http.aclose()
+
+        assert sdk.access_token.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_not_wrapped_when_the_card_does_not_ask(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._identity(monkeypatch)
+        card = _make_agent_card([_iface("JSONRPC", "http://localhost:8080")])
+
+        client = await A2AClientFactory(ClientConfig()).create(card)
+
+        assert isinstance(client, BaseClient)
 
 
 # ---------------------------------------------------------------------------

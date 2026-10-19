@@ -461,10 +461,15 @@ class CardBuilder:
         """Return the card to serve and the index of the interface whose URL
         was replaced by :meth:`with_public_url` (``None`` if untouched).
 
-        Without a public URL this is the caller's card, unchanged.
+        The served card is a copy shared by every handler built here, so the
+        handlers' edits (declared interfaces, identity auth) do not reach the
+        caller's card.
         """
+        from agntcy_app_sdk.semantic.a2a.card_utils import clone_card
+
+        served = clone_card(self._agent_card)
         if self._public_url is None:
-            return self._agent_card, None
+            return served, None
 
         http_indexes: list[int] = []
         for i, interface in enumerate(interfaces):
@@ -480,7 +485,7 @@ class CardBuilder:
                 "is served (none declared on the card, or it was skipped).",
                 self._public_url,
             )
-            return self._agent_card, None
+            return served, None
 
         if len(http_indexes) > 1:
             raise ValueError(
@@ -498,11 +503,8 @@ class CardBuilder:
                 self._public_url,
                 transport_type,
             )
-            return self._agent_card, None
+            return served, None
 
-        from agntcy_app_sdk.semantic.a2a.card_utils import clone_card
-
-        served = clone_card(self._agent_card)
         served.supported_interfaces[index].url = self._public_url
         return served, index
 
