@@ -300,6 +300,10 @@ class A2AClientFactory:
 
         # Several interfaces may share the negotiated binding (e.g. a legacy
         # 0.3 and a 1.0 JSON-RPC endpoint); pick among them as upstream does.
+        # _find_best_interface is private upstream; on an a2a-sdk upgrade the
+        # test_same_binding_prefers_protocol_version_1_0 and
+        # test_protocol_version_does_not_override_binding_preference tests
+        # fail if it was renamed or changed.
         wanted = normalize_transport(transport_protocol)
         candidates = [
             iface
