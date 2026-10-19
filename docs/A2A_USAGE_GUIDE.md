@@ -480,6 +480,7 @@ if __name__ == "__main__":
 - **URL formats:** Each interface URL supports two styles:
   - **Topic-only:** `slim://my_topic` or `slim://org/ns/agent` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`). A path without a port is part of the SLIM name, not a host.
   - **Explicit endpoint:** `slim://host:46357/my_topic` or `slim://host:46357/org/ns/agent` — endpoint extracted from the URL. A port is what marks the dataplane address.
+- **Relayed replies (SLIM / NATS patterns):** a patterns server also accepts another agent's JSON-RPC success response as its input, as group chat does when it passes a reply to the next participant, and turns it into a `SendMessage` request. A Message reply is relayed as it is. A Task reply is relayed through its status message, or else the last agent message in its history. A Task with only artifacts, which is what a2a-sdk's `TaskUpdater.complete()` produces without a `message`, is rejected with `InvalidRequest`; an agent whose replies are relayed should complete with a message, for example `await updater.complete(message=...)`. The upstream `taskId` moves to `metadata["relayed_from"]`.
 - **SLIM TLS:** a SLIM connection uses TLS when its endpoint is `https://`. That is an `https://` interface URL, `SLIM_ENDPOINT=https://...` for a topic-only URL, or `.with_slim_tls()` for a `slim://host:port/...` URL. Otherwise it is plaintext. The dataplane must present a certificate this host trusts. `.override()` configs are used as given.
 
 ### Running

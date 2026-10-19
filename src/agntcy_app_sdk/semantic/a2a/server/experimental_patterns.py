@@ -96,6 +96,47 @@ def _default_topic(agent_card: AgentCard) -> str:
     return f"{agent_card.name}_{agent_card.version}".replace(" ", "_")
 
 
+def _task_reply_message(task: dict[str, Any]) -> dict[str, Any] | None:
+    """The agent's reply carried by a JSON ``Task``, or ``None``.
+
+    The status message, else the last agent message in the history.
+    """
+    status = task.get("status")
+    if isinstance(status, dict) and isinstance(status.get("message"), dict):
+        message: dict[str, Any] = status["message"]
+        return message
+    history = task.get("history")
+    if isinstance(history, list):
+        for entry in reversed(history):
+            if isinstance(entry, dict) and entry.get("role") == "ROLE_AGENT":
+                return entry
+    return None
+
+
+def _without_upstream_task(msg: dict[str, Any]) -> dict[str, Any]:
+    """Move an upstream ``taskId`` into ``metadata["relayed_from"]``.
+
+    That task exists only on the upstream agent: left in ``taskId``, the
+    next agent looks it up and fails with "Task ... not found".
+    """
+    if "taskId" not in msg:
+        return msg
+    origin = {"task_id": msg["taskId"]}
+    if "contextId" in msg:
+        origin["context_id"] = msg["contextId"]
+    metadata = msg.get("metadata")
+    relayed = {k: v for k, v in msg.items() if k != "taskId"}
+    relayed["metadata"] = {
+        **(metadata if isinstance(metadata, dict) else {}),
+        "relayed_from": origin,
+    }
+    return relayed
+
+
+class _UnrelayableTaskError(ValueError):
+    """A relayed ``Task`` reply that carries no agent message."""
+
+
 # JSON-RPC method name -> proto request type.  Method names follow the A2A
 # v1.0 JSON-RPC binding (the gRPC service method names).
 _A2A_METHOD_TO_MODEL: dict[str, type] = {
@@ -385,9 +426,18 @@ class A2AExperimentalServer:
         """Re-wrap a relayed JSON-RPC *response* as a ``SendMessage`` request.
 
         Relay scenario: an upstream agent forwards the JSON-RPC success
-        response it received (whose result carries a ``Message``) as the
-        input for the next agent.  If *body* is such a response, return an
-        equivalent ``SendMessage`` request; otherwise return *body* as-is.
+        response it received as the input for the next agent.  If *body* is
+        such a response, return an equivalent ``SendMessage`` request;
+        otherwise return *body* as-is.
+
+        The relayed message is the result's ``Message``, or for a ``Task``
+        result its status message, else the last agent message in its
+        history.  An upstream ``taskId`` moves to
+        ``metadata["relayed_from"]`` (see :func:`_without_upstream_task`).
+
+        Raises:
+            _UnrelayableTaskError: A ``Task`` result with no agent message
+                (artifacts only).
         """
         try:
             envelope = json.loads(body)
@@ -409,6 +459,14 @@ class A2AExperimentalServer:
         # message dict is also accepted.
         if isinstance(result.get("message"), dict):
             msg = result["message"]
+        elif isinstance(result.get("task"), dict):
+            task_msg = _task_reply_message(result["task"])
+            if task_msg is None:
+                raise _UnrelayableTaskError(
+                    "Relaying a Task with no agent message is not supported; "
+                    "relay a reply that carries a message."
+                )
+            msg = task_msg
         elif "messageId" in result and "parts" in result:
             msg = result
         else:
@@ -418,7 +476,7 @@ class A2AExperimentalServer:
             "jsonrpc": "2.0",
             "id": str(uuid4()),
             "method": "SendMessage",
-            "params": {"message": msg},
+            "params": {"message": _without_upstream_task(msg)},
         }
         return json.dumps(request).encode("utf-8")
 
@@ -485,7 +543,12 @@ class A2AExperimentalServer:
                 )
 
             # ---- Relay preservation ----------------------------------------
-            body = self._unwrap_relay(message.payload)
+            try:
+                body = self._unwrap_relay(message.payload)
+            except _UnrelayableTaskError as e:
+                return _reply(
+                    self._build_error_payload(None, InvalidRequestError(data=str(e)))
+                )
 
             # ---- Parse JSON ------------------------------------------------
             try:

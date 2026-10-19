@@ -749,6 +749,100 @@ class TestPatternsBridgeProtocol:
         assert "error" not in reply
         assert reply["result"]["message"]["parts"][0]["text"] == "Hello from agent"
 
+    @staticmethod
+    def _agent_message(text: str, **ids: str) -> dict[str, Any]:
+        return {
+            "messageId": f"m-{text}",
+            "role": "ROLE_AGENT",
+            "parts": [{"text": text}],
+            **ids,
+        }
+
+    @staticmethod
+    def _relayed_task(task: dict[str, Any]) -> bytes:
+        return json.dumps(
+            {"jsonrpc": "2.0", "id": "upstream", "result": {"task": task}}
+        ).encode()
+
+    @pytest.mark.asyncio
+    async def test_relayed_task_forwards_status_message(self) -> None:
+        server, _ = _loopback(streaming=False)
+        task = {
+            "id": "t-up",
+            "contextId": "c-up",
+            "status": {
+                "state": "TASK_STATE_COMPLETED",
+                "message": self._agent_message("status", taskId="t-up"),
+            },
+            "history": [self._agent_message("older", taskId="t-up")],
+        }
+
+        reply = await self._call(server, self._relayed_task(task))
+
+        assert "error" not in reply
+        assert reply["result"]["message"]["parts"][0]["text"] == "Hello from agent"
+
+    def test_relayed_task_without_status_message_uses_last_agent_message(
+        self,
+    ) -> None:
+        task = {
+            "id": "t-up",
+            "status": {"state": "TASK_STATE_COMPLETED"},
+            "history": [
+                self._agent_message("first"),
+                self._agent_message("last", taskId="t-up", contextId="c-up"),
+                {"messageId": "m-user", "role": "ROLE_USER", "parts": [{"text": "q"}]},
+            ],
+        }
+
+        request = json.loads(
+            A2AExperimentalServer._unwrap_relay(self._relayed_task(task))
+        )
+
+        assert request["method"] == "SendMessage"
+        assert request["params"]["message"] == {
+            "messageId": "m-last",
+            "role": "ROLE_AGENT",
+            "parts": [{"text": "last"}],
+            "contextId": "c-up",
+            "metadata": {"relayed_from": {"task_id": "t-up", "context_id": "c-up"}},
+        }
+
+    @pytest.mark.asyncio
+    async def test_relayed_task_with_artifacts_only_is_not_relayed(self) -> None:
+        server, _ = _loopback(streaming=False)
+        task = {
+            "id": "t-up",
+            "status": {"state": "TASK_STATE_COMPLETED"},
+            "artifacts": [{"artifactId": "a1", "parts": [{"text": "file"}]}],
+        }
+
+        reply = await self._call(server, self._relayed_task(task))
+
+        assert reply["error"]["code"] == -32600
+        assert "Task with no agent message" in reply["error"]["data"]
+
+    @pytest.mark.asyncio
+    async def test_relayed_message_with_upstream_task_id_moves_it_to_metadata(
+        self,
+    ) -> None:
+        server, _ = _loopback(streaming=False)
+        msg = self._agent_message("hi", taskId="t-up")
+        msg["metadata"] = {"trace": "keep"}
+        relayed = json.dumps(
+            {"jsonrpc": "2.0", "id": "upstream", "result": {"message": msg}}
+        ).encode()
+
+        request = json.loads(A2AExperimentalServer._unwrap_relay(relayed))
+        reply = await self._call(server, relayed)
+
+        assert "taskId" not in request["params"]["message"]
+        assert request["params"]["message"]["metadata"] == {
+            "trace": "keep",
+            "relayed_from": {"task_id": "t-up"},
+        }
+        assert "error" not in reply
+
     @pytest.mark.asyncio
     async def test_streaming_publishes_intermediates_then_final(self) -> None:
         server, _ = _loopback(streaming=True)
