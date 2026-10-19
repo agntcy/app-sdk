@@ -34,7 +34,7 @@ from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, VERSION_HEADER
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.message import Message as ProtoMessage
 
-from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+from agntcy_app_sdk.common.auth import get_access_token, is_identity_auth_enabled
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.client.utils import (
     create_rpc_error,
@@ -173,7 +173,7 @@ class PatternsClientTransport(ClientTransport):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_headers(context: ClientCallContext | None) -> dict[str, str]:
+    async def _build_headers(context: ClientCallContext | None) -> dict[str, str]:
         """Build transport message headers for a call.
 
         Starts from ``context.service_parameters`` (where interceptors put
@@ -190,9 +190,7 @@ class PatternsClientTransport(ClientTransport):
             k.lower() == "authorization" for k in headers
         ):
             try:
-                from identityservice.sdk import IdentityServiceSdk
-
-                access_token = IdentityServiceSdk().access_token()
+                access_token = await get_access_token()
                 if access_token:
                     headers["Authorization"] = f"Bearer {access_token}"
             except Exception as e:
@@ -228,7 +226,7 @@ class PatternsClientTransport(ClientTransport):
                 self._topic,
                 message_translator(
                     request=self._rpc_payload(method, request),
-                    headers=self._build_headers(context),
+                    headers=await self._build_headers(context),
                 ),
             )
             payload = json.loads(response.payload.decode("utf-8"))
@@ -288,7 +286,7 @@ class PatternsClientTransport(ClientTransport):
         """
         transport_msg = message_translator(
             request=self._rpc_payload("SendStreamingMessage", request),
-            headers=self._build_headers(context),
+            headers=await self._build_headers(context),
         )
 
         stream = self._transport.request_stream(self._topic, transport_msg)

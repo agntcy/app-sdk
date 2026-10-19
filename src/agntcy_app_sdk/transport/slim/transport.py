@@ -3,10 +3,10 @@
 
 from typing import Optional, Callable, List, AsyncIterator, Any, Awaitable
 import asyncio
+import copy
 import datetime
 import warnings
 import slim_bindings
-from identityservice.sdk import IdentityServiceSdk
 from slim_bindings import Name, Session, MessageContext
 
 from .common import (
@@ -20,7 +20,7 @@ from agntcy_app_sdk.transport.base import BaseTransport, accepts_publish_fn
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 
-from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+from agntcy_app_sdk.common.auth import add_identity_header
 
 logger = get_logger(__name__)
 
@@ -388,6 +388,10 @@ class SLIMTransport(BaseTransport):
         # convert recipients to Name objects
         invitees = [self.build_name(recipient) for recipient in recipients]
 
+        # Headers below go on a copy, not on the caller's message.
+        message = copy.copy(message)
+        message.headers = dict(message.headers or {})
+
         limit: float = float("inf") if message_limit is None else message_limit
 
         logger.debug(
@@ -411,17 +415,8 @@ class SLIMTransport(BaseTransport):
                 await asyncio.sleep(0.5)
 
                 # Signal to the receiver that we expect a direct response from each invitee
-                if not message.headers:
-                    message.headers = {}
                 message.headers["x-respond-to-source"] = "true"
-
-                if is_identity_auth_enabled():
-                    try:
-                        access_token = IdentityServiceSdk().access_token()
-                        if access_token:
-                            message.headers["Authorization"] = f"Bearer {access_token}"
-                    except Exception as e:
-                        logger.error(f"Failed to get access token for agent: {e}")
+                await add_identity_header(message.headers)
 
                 logger.debug("Publishing message to topic: %s", topic)
 
@@ -507,11 +502,14 @@ class SLIMTransport(BaseTransport):
         # Convert recipients to Name objects
         invitees = [self.build_name(recipient) for recipient in participants]
 
-        if not init_message.headers:
-            init_message.headers = {}
+        # Headers below go on a copy, not on the caller's message.
+        init_message = copy.copy(init_message)
+        init_message.headers = dict(init_message.headers or {})
 
         # Signal to the receiver that they should respond to the group
         init_message.headers["x-respond-to-group"] = "true"
+        await add_identity_header(init_message.headers)
+
         # See gather_stream: the deadline must not be held across ``yield``.
         deadline = asyncio.get_running_loop().time() + timeout
         group_session: Session | None = None

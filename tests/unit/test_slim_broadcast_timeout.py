@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import slim_bindings
 
+from agntcy_app_sdk.common import auth
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.slim import transport as slim_transport
 from agntcy_app_sdk.transport.slim.transport import SLIMTransport, _SlimSessionError
@@ -248,6 +249,64 @@ class TestReceiveErrors:
 
         assert [m.payload for m in replies] == [b"done"]
         assert session.get_message_async.await_count == 3
+
+
+class TestGroupChatIdentityToken:
+    @staticmethod
+    def _identity(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+        monkeypatch.setenv("IDENTITY_AUTH_ENABLED", "true")
+        monkeypatch.setenv("IDENTITY_SERVICE_API_KEY", "unit-test-placeholder")
+        get_token = AsyncMock(return_value="tok")
+        monkeypatch.setattr(auth, "get_access_token", get_token)
+        return get_token
+
+    @staticmethod
+    async def _published_headers(init_message: Message) -> dict[str, str]:
+        session = _replying_session()
+        session.get_message_async = AsyncMock(return_value=_reply(b"done"))
+        stream = _transport(_session_manager(session)).start_streaming_conversation(
+            "org/ns/chat", ["org/ns/a"], init_message, end_message="done", timeout=5
+        )
+        _ = [m async for m in stream]
+        published = Message.deserialize(session.publish_async.await_args.args[0])
+        return published.headers or {}
+
+    @pytest.mark.asyncio
+    async def test_init_message_carries_the_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._identity(monkeypatch)
+
+        headers = await self._published_headers(Message(type="req", payload=b"hi"))
+
+        assert headers["Authorization"] == "Bearer tok"
+
+    @pytest.mark.asyncio
+    async def test_caller_authorization_is_kept(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        get_token = self._identity(monkeypatch)
+        message = Message(
+            type="req", payload=b"hi", headers={"authorization": "Bearer mine"}
+        )
+
+        headers = await self._published_headers(message)
+
+        assert headers["authorization"] == "Bearer mine"
+        assert "Authorization" not in headers
+        get_token.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_caller_message_is_not_changed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._identity(monkeypatch)
+        message = Message(type="req", payload=b"hi", headers={"x": "1"})
+
+        headers = await self._published_headers(message)
+
+        assert headers["Authorization"] == "Bearer tok"
+        assert message.headers == {"x": "1"}
 
 
 class TestRequestStreamErrors:

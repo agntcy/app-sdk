@@ -8,8 +8,10 @@ from typing import Any, Dict, Optional, Self
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.message import Message
 from agntcy_app_sdk.transport.base import BaseTransport
-from identityservice.sdk import IdentityServiceSdk
-from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+from agntcy_app_sdk.common.auth import (
+    get_access_token,
+    is_identity_auth_enabled,
+)
 
 logger = get_logger(__name__)
 
@@ -98,7 +100,7 @@ class MCPClient:
 
         if is_identity_auth_enabled():
             try:
-                access_token = IdentityServiceSdk().access_token(tool_name=name)
+                access_token = await get_access_token(tool_name=name)
                 if access_token:
                     headers["Authorization"] = f"Bearer {access_token}"
             except Exception as e:

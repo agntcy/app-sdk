@@ -388,7 +388,7 @@ async def test_gather_stream_single_recipient_skips_invite() -> None:
     msg = Message(type="request", payload=b"test")
     results: list[Message] = []
     with patch(
-        "agntcy_app_sdk.transport.nats.transport.is_identity_auth_enabled",
+        "agntcy_app_sdk.common.auth.is_identity_auth_enabled",
         return_value=False,
     ):
         async for resp in transport.gather_stream(
@@ -406,6 +406,51 @@ async def test_gather_stream_single_recipient_skips_invite() -> None:
     # There should be exactly 1 subscribe call (for the reply topic)
     # and no invite-related publishes
     assert nc.subscribe.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_gather_stream_keeps_caller_authorization_and_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nc = _make_nc_mock()
+    transport = _make_transport(nc)
+    captured_cb: Callable[[Msg], Awaitable[None]] | None = None
+    published: list[Message] = []
+
+    async def fake_subscribe(
+        topic: str, cb: Callable[[Msg], Awaitable[None]] | None = None
+    ) -> AsyncMock:
+        nonlocal captured_cb
+        captured_cb = cb
+        return AsyncMock()
+
+    async def fake_publish(topic: str, data: bytes) -> None:
+        published.append(Message.deserialize(data))
+        if captured_cb is not None:
+            await captured_cb(_make_nats_msg(Message(type="response", payload=b"ok")))
+
+    nc.subscribe = AsyncMock(side_effect=fake_subscribe)
+    nc.publish = AsyncMock(side_effect=fake_publish)
+    monkeypatch.setenv("IDENTITY_AUTH_ENABLED", "true")
+    monkeypatch.setenv("IDENTITY_SERVICE_API_KEY", "unit-test-placeholder")
+    get_token = AsyncMock(return_value="tok")
+    monkeypatch.setattr("agntcy_app_sdk.common.auth.get_access_token", get_token)
+    msg = Message(
+        type="request", payload=b"test", headers={"authorization": "Bearer mine"}
+    )
+
+    _ = [
+        r
+        async for r in transport.gather_stream(
+            "topic", msg, ["single_recipient"], timeout=5, message_limit=1
+        )
+    ]
+
+    assert published[0].headers["authorization"] == "Bearer mine"
+    assert "Authorization" not in published[0].headers
+    assert msg.headers == {"authorization": "Bearer mine"}
+    assert msg.reply_to is None
+    get_token.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +506,7 @@ async def test_gather_stream_multi_recipient_uses_invite() -> None:
     msg = Message(type="request", payload=b"test")
     results: list[Message] = []
     with patch(
-        "agntcy_app_sdk.transport.nats.transport.is_identity_auth_enabled",
+        "agntcy_app_sdk.common.auth.is_identity_auth_enabled",
         return_value=False,
     ):
         async for resp in transport.gather_stream(
@@ -542,7 +587,7 @@ async def test_gather_stream_sends_teardown_when_caller_stops_early() -> None:
     published = _wire_invite_protocol(nc)
 
     with patch(
-        "agntcy_app_sdk.transport.nats.transport.is_identity_auth_enabled",
+        "agntcy_app_sdk.common.auth.is_identity_auth_enabled",
         return_value=False,
     ):
         stream = transport.gather_stream(
@@ -566,7 +611,7 @@ async def test_gather_stream_sends_teardown_when_publish_fails() -> None:
     published = _wire_invite_protocol(nc, fail_on_request=True)
 
     with patch(
-        "agntcy_app_sdk.transport.nats.transport.is_identity_auth_enabled",
+        "agntcy_app_sdk.common.auth.is_identity_auth_enabled",
         return_value=False,
     ):
         with pytest.raises(ConnectionError, match="publish failed"):
