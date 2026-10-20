@@ -615,7 +615,7 @@ Every SLIM peer authenticates with a shared secret of at least 32 characters, an
 2. The `SLIM_SHARED_SECRET` environment variable.
 3. A public placeholder, with a warning in the log. It only suits demos and local tests: any peer with the default can join your sessions.
 
-`CardBuilder` stops at step 2: it raises `ValueError` instead of using the placeholder. In production, set `SLIM_SHARED_SECRET` from a secret manager to a random value, for example `python -c "import secrets; print(secrets.token_urlsafe(48))"`, and never commit it.
+`CardBuilder` follows the same order. In production, set `SLIM_SHARED_SECRET` from a secret manager to a random value, for example `python -c "import secrets; print(secrets.token_urlsafe(48))"`, and never commit it.
 
 ### Manual Session Builder
 

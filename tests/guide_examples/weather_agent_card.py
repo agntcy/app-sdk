@@ -142,8 +142,8 @@ async def main(transport_type: str, slim_endpoint: str, nats_endpoint: str) -> N
 
 
 if __name__ == "__main__":
-    # Set SLIM_SHARED_SECRET if not already set — add_a2a_card() requires it
-    # for SLIM transports.
+    # Demo only: set the secret explicitly so client and server match.
+    # Without it the SDK falls back to this same placeholder and warns.
     if "SLIM_SHARED_SECRET" not in os.environ:
         os.environ["SLIM_SHARED_SECRET"] = (
             "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"

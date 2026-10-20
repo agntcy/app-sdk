@@ -18,6 +18,7 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
     parse_interface_url,
 )
 from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.transport.slim import common as slim_common
 
 pytest_plugins = "pytest_asyncio"
 
@@ -415,40 +416,62 @@ class TestCardBuilderValidation:
             await builder.start()
 
     @pytest.mark.asyncio
-    async def test_raises_on_missing_slim_shared_secret(self) -> None:
-        """slimrpc interface declared but SLIM_SHARED_SECRET not set."""
+    async def test_missing_slim_shared_secret_is_left_to_the_server(self) -> None:
+        """slimrpc interface, no secret: the RPC server resolves it, so
+        CardBuilder passes ``None`` and does not warn itself."""
+        session = MagicMock()
+        session.add.return_value.with_session_id.return_value = MagicMock()
+        session.start_all_sessions = AsyncMock()
         builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     protocol_binding="slimrpc",
                     url="slim://org/ns/agent",
                 )
-            ]
+            ],
+            session=session,
         )
 
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("SLIM_SHARED_SECRET", None)
-            with pytest.raises(ValueError, match="SLIM shared secret required"):
-                await builder.start()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(slim_common, "logger") as log,
+        ):
+            await builder.start()
+
+        config = session.add.call_args[0][0]
+        assert config.connection.shared_secret is None
+        assert not log.warning.called
 
     @pytest.mark.asyncio
-    async def test_raises_on_missing_slim_shared_secret_for_slim_transport(
+    async def test_missing_slim_shared_secret_is_left_to_the_transport(
         self,
     ) -> None:
-        """slim interface declared but SLIM_SHARED_SECRET not set."""
+        """slim interface, no secret: SLIMTransport resolves it, so
+        CardBuilder passes ``None`` and does not warn itself."""
+        factory = MagicMock()
+        factory.create_transport.return_value = MagicMock()
+        session = MagicMock()
+        session.start_all_sessions = AsyncMock()
         builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     protocol_binding="slim",
                     url="slim://my_topic",
                 )
-            ]
+            ],
+            session=session,
+            factory=factory,
         )
 
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("SLIM_SHARED_SECRET", None)
-            with pytest.raises(ValueError, match="SLIM shared secret required"):
-                await builder.start()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(slim_common, "logger") as log,
+        ):
+            await builder.start()
+
+        call_kwargs = factory.create_transport.call_args.kwargs
+        assert call_kwargs["shared_secret_identity"] is None
+        assert not log.warning.called
 
     @pytest.mark.asyncio
     async def test_with_shared_secret_bypasses_env_var(self) -> None:
@@ -687,7 +710,8 @@ class TestCardBuilderBuildsContainers:
         assert isinstance(config, A2ASlimRpcServerConfig)
         assert config.connection.identity == "org/ns/agent"
         assert config.connection.endpoint == "http://host:46357"
-        assert config.connection.shared_secret == "secret" * 6
+        # Resolved from SLIM_SHARED_SECRET by the RPC server at setup.
+        assert config.connection.shared_secret is None
 
         mock_builder.with_session_id.assert_called_once_with("slimrpc-0")
         session.start_all_sessions.assert_awaited_once_with(keep_alive=False)
@@ -882,7 +906,7 @@ class TestCardBuilderBuildsContainers:
             "SLIM",
             endpoint="http://slim:46357",
             name="my_topic",
-            shared_secret_identity="secret" * 6,
+            shared_secret_identity=None,
             tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
@@ -923,7 +947,7 @@ class TestCardBuilderBuildsContainers:
             "SLIM",
             endpoint="http://host:46357",
             name="my_topic",
-            shared_secret_identity="secret" * 6,
+            shared_secret_identity=None,
             tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
@@ -1347,7 +1371,7 @@ class TestCardBuilderAliasedBuilds:
             "SLIM",
             endpoint="http://localhost:46357",
             name="my_topic",
-            shared_secret_identity="secret" * 6,
+            shared_secret_identity=None,
             tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")

@@ -54,7 +54,9 @@ class SlimRpcConnectionConfig:
     """
 
     identity: str
-    shared_secret: str
+    shared_secret: str | None = None
+    """``None`` uses the ``SLIM_SHARED_SECRET`` env var, else the public
+    placeholder (demos only)."""
     endpoint: str = "http://localhost:46357"
     tls_insecure: bool = True
     """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3

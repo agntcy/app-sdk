@@ -106,6 +106,47 @@ class TestSlimRpcServerHonorsTlsInsecure:
         assert SlimRpcConnectionConfig("org/ns/a", _TEST_SECRET).tls_insecure is True
 
 
+class TestSlimRpcServerResolvesSharedSecret:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("env", "expected", "warnings"),
+        [("e" * 32, "e" * 32, 0), (None, common.PLACEHOLDER_SHARED_SECRET, 1)],
+        ids=["env-var", "placeholder"],
+    )
+    async def test_none_secret_is_resolved_once(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        env: str | None,
+        expected: str,
+        warnings: int,
+    ) -> None:
+        if env is None:
+            monkeypatch.delenv(common.SLIM_SHARED_SECRET_ENV, raising=False)
+        else:
+            monkeypatch.setenv(common.SLIM_SHARED_SECRET_ENV, env)
+        handler = A2ASRPCServerHandler(
+            A2ASlimRpcServerConfig(
+                agent_card=AgentCard(name="agent", version="1.0.0"),
+                request_handler=MagicMock(),
+                connection=SlimRpcConnectionConfig(identity="org/ns/agent"),
+            )
+        )
+        service = MagicMock()
+        service.connect_async = AsyncMock(return_value=1)
+        service.create_app_with_secret.side_effect = _Stop
+
+        with (
+            patch(f"{_SRPC}.get_or_init_slim_service", return_value=service),
+            patch(f"{_SRPC}.new_client_config", MagicMock()),
+            patch.object(common, "logger") as log,
+        ):
+            with pytest.raises(_Stop):
+                await handler.setup()
+
+        assert service.create_app_with_secret.call_args.args[1] == expected
+        assert log.warning.call_count == warnings
+
+
 class TestSlimRpcServerIdentityAuth:
     """With identity auth enabled, the slimrpc server checks every call's token."""
 

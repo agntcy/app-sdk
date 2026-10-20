@@ -214,7 +214,7 @@ async def test_dry_run() -> None:
     factory = AgntcyFactory(enable_tracing=True)
     agent_card = make_agent_card("dry_run_topic")
 
-    # Patch SLIM_SHARED_SECRET so CardBuilder doesn't raise for SLIM
+    # Patch SLIM_SHARED_SECRET so CardBuilder doesn't fall back to the placeholder
     env_patch = {"SLIM_SHARED_SECRET": "test-secret-for-dry-run-only"}
     with patch.dict("os.environ", env_patch):
         session = factory.create_app_session(max_sessions=10)

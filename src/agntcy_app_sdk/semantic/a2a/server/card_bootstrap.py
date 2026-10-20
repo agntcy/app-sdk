@@ -379,8 +379,8 @@ class CardBuilder:
         """Provide the SLIM shared secret directly.
 
         If not called, the builder falls back to the ``SLIM_SHARED_SECRET``
-        environment variable.  A :class:`ValueError` is raised at start
-        time if neither is available and a SLIM-based transport is declared.
+        environment variable, else to the public placeholder with a warning
+        (see :func:`~agntcy_app_sdk.transport.slim.common.resolve_shared_secret`).
         """
         self._shared_secret = secret
         return self
@@ -560,7 +560,6 @@ class CardBuilder:
             A2ASlimRpcServerConfig,
             SlimRpcConnectionConfig,
         )
-        from agntcy_app_sdk.transport.slim.common import SLIM_SHARED_SECRET_ENV
 
         session = self._session
         agent_card = self._agent_card
@@ -630,17 +629,6 @@ class CardBuilder:
                 override = self._overrides.get("slimrpc")
                 session_id = f"slimrpc-{i}"
 
-                if override is None:
-                    shared_secret = self._shared_secret or os.environ.get(
-                        SLIM_SHARED_SECRET_ENV
-                    )
-                    if not shared_secret:
-                        raise ValueError(
-                            "SLIM shared secret required for slimrpc interface. "
-                            "Use .with_shared_secret() or set SLIM_SHARED_SECRET "
-                            "env var."
-                        )
-
                 log = logger.bind(transport=transport_type, session_id=session_id)
                 log.info("Serving interface", **parsed)
 
@@ -664,13 +652,12 @@ class CardBuilder:
                 if override is not None:
                     session.add(override).with_session_id(session_id).build()
                 else:
-                    assert shared_secret is not None
                     config = A2ASlimRpcServerConfig(
                         agent_card=served_card,
                         request_handler=request_handler,
                         connection=SlimRpcConnectionConfig(
                             identity=str(parsed["identity"]),
-                            shared_secret=shared_secret,
+                            shared_secret=self._shared_secret,
                             endpoint=str(parsed["endpoint"]),
                             tls_insecure=tls_insecure,
                         ),
@@ -684,17 +671,6 @@ class CardBuilder:
                 # name — in SLIM, the transport name IS the routing address
                 # that clients send to.
                 routable_name = str(parsed["topic"])
-
-                if override is None:
-                    shared_secret = self._shared_secret or os.environ.get(
-                        SLIM_SHARED_SECRET_ENV
-                    )
-                    if not shared_secret:
-                        raise ValueError(
-                            "SLIM shared secret required for slim interface. "
-                            "Use .with_shared_secret() or set SLIM_SHARED_SECRET "
-                            "env var."
-                        )
 
                 log = logger.bind(transport=transport_type, session_id=session_id)
                 log.info("Serving interface", **parsed)
@@ -725,7 +701,7 @@ class CardBuilder:
                         "SLIM",
                         endpoint=str(parsed["endpoint"]),
                         name=routable_name,
-                        shared_secret_identity=shared_secret,
+                        shared_secret_identity=self._shared_secret,
                         tls_insecure=tls_insecure,
                     )
                 (
