@@ -33,6 +33,7 @@ from agntcy_app_sdk.semantic.a2a.server.srpc import (
     A2ASlimRpcServerConfig,
     SlimRpcConnectionConfig,
 )
+from agntcy_app_sdk.transport.slim.common import resolve_shared_secret
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -93,7 +94,7 @@ def _build_a2a_slimrpc_config(
         request_handler=request_handler,
         connection=SlimRpcConnectionConfig(
             identity=name,
-            shared_secret="secretsecretsecretsecretsecretsecret",
+            shared_secret=resolve_shared_secret(),
             endpoint=endpoint,
         ),
     )

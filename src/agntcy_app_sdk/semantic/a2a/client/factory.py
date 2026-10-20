@@ -908,6 +908,7 @@ class A2AClientFactory:
         from agntcy_app_sdk.transport.slim.common import (
             get_or_init_slim_service,
             new_client_config,
+            resolve_shared_secret,
         )
         from slima2a.client_transport import (
             slimrpc_channel_factory as _slimrpc_channel_factory,
@@ -940,7 +941,9 @@ class A2AClientFactory:
         rpc_app_name = slim_bindings.Name(
             rpc_cfg.namespace, rpc_cfg.group, rpc_cfg.name + "-rpc"
         )
-        slim_app = service.create_app_with_secret(rpc_app_name, rpc_cfg.secret)
+        slim_app = service.create_app_with_secret(
+            rpc_app_name, resolve_shared_secret(rpc_cfg.secret)
+        )
 
         # Subscribe the new app on the dedicated connection so that
         # RPC session handshakes can find this participant.

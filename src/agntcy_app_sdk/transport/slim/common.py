@@ -9,6 +9,7 @@ import weakref
 import click
 import datetime
 import json
+import os
 from typing import Any, cast
 
 import slim_bindings
@@ -18,6 +19,26 @@ from agntcy_app_sdk.common.logging_config import get_logger
 logger = get_logger(__name__)
 
 PLACEHOLDER_SHARED_SECRET = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+SLIM_SHARED_SECRET_ENV = "SLIM_SHARED_SECRET"
+
+
+def resolve_shared_secret(secret: str | None = None) -> str:
+    """The SLIM shared secret to use: *secret*, else ``SLIM_SHARED_SECRET``.
+
+    Falls back to the public :data:`PLACEHOLDER_SHARED_SECRET`, which only
+    suits demos and local tests: any peer with the default can join your
+    sessions.  Read at call time, so an env var set after import applies.
+    """
+    resolved = secret or os.environ.get(SLIM_SHARED_SECRET_ENV)
+    if not resolved or resolved == PLACEHOLDER_SHARED_SECRET:
+        logger.warning(
+            "Using the placeholder SLIM shared secret; any peer with the "
+            "default can join your sessions. Pass shared_secret_identity, "
+            "SlimRpcConfig.secret or CardBuilder .with_shared_secret(), or set "
+            "the SLIM_SHARED_SECRET env var."
+        )
+        return PLACEHOLDER_SHARED_SECRET
+    return resolved
 
 
 # Split an ID into its components
@@ -353,19 +374,11 @@ async def _get_or_create_slim_instance(
             local_name=str(local),
             aud=audience,
         )
-    elif shared_secret:
-        if shared_secret == PLACEHOLDER_SHARED_SECRET:
-            logger.warning(
-                "Using the placeholder SLIM shared secret; any peer with the "
-                "default can join your sessions. Set shared_secret_identity, "
-                "or .with_shared_secret() / SLIM_SHARED_SECRET with CardBuilder."
-            )
+    else:
         provider, verifier = shared_secret_identity(
             identity=str(local),
-            secret=shared_secret,
+            secret=resolve_shared_secret(shared_secret),
         )
-    else:
-        raise ValueError("Either JWT or bundle must be provided, or a shared secret.")
 
     slim_app = slim_service.create_app(local, provider, verifier)
 

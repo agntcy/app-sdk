@@ -11,7 +11,6 @@ from a2a.client.client import ClientConfig as A2AClientConfig
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.card_utils import wire_binding
-from agntcy_app_sdk.transport.slim.common import PLACEHOLDER_SHARED_SECRET
 
 if TYPE_CHECKING:
     from agntcy_app_sdk.transport.base import BaseTransport
@@ -43,8 +42,9 @@ class SlimRpcConfig:
     slim_url: str = "http://localhost:46357"
     """SLIM dataplane endpoint."""
 
-    secret: str = "secretsecretsecretsecretsecretsecret"
-    """Shared secret for SLIM authentication."""
+    secret: str | None = None
+    """Shared secret for SLIM authentication.  ``None`` uses the
+    ``SLIM_SHARED_SECRET`` env var, else the public placeholder (demos only)."""
 
     tls_insecure: bool = True
     """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3
@@ -74,8 +74,10 @@ class SlimTransportConfig:
 
     # -- Security / auth -----------------------------------------------------
 
-    shared_secret_identity: str = PLACEHOLDER_SHARED_SECRET
-    """MLS shared secret.  Must be ≥ 32 characters for SLIM v0.7+."""
+    shared_secret_identity: str | None = None
+    """MLS shared secret.  Must be ≥ 32 characters for SLIM v0.7+.  ``None``
+    uses the ``SLIM_SHARED_SECRET`` env var, else the public placeholder
+    (demos only)."""
 
     tls_insecure: bool = True
     """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3

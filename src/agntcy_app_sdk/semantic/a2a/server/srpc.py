@@ -25,6 +25,7 @@ from agntcy_app_sdk.semantic.a2a.server.experimental_patterns import (
 from agntcy_app_sdk.transport.slim.common import (
     get_or_init_slim_service,
     new_client_config,
+    resolve_shared_secret,
     split_id,
 )
 
@@ -290,7 +291,7 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
         #   - Pass the *original* name as the RPC Server's base_name so
         #     the subscription patterns match what the client expects.
         identity_str: str = self._config.connection.identity
-        shared_secret: str = self._config.connection.shared_secret
+        shared_secret = resolve_shared_secret(self._config.connection.shared_secret)
         endpoint = self._config.connection.endpoint
 
         name = split_id(identity_str)

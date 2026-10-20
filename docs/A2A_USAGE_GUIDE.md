@@ -90,7 +90,7 @@ SlimRPC is the recommended path for agents communicating over SLIM. It uses the 
 
 ### Server: `weather_agent_srpc.py`
 
-Server and client must use the same SLIM shared secret (at least 32 characters). Both examples hardcode the same demo value on purpose.
+Server and client must use the same SLIM shared secret (at least 32 characters). Both examples hardcode the same demo value on purpose. When you omit the secret, the SDK uses the `SLIM_SHARED_SECRET` environment variable, else a public placeholder and logs a warning; in production, set `SLIM_SHARED_SECRET` to a random value from a secret manager.
 
 ```python
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -484,7 +484,7 @@ if __name__ == "__main__":
   - `.with_public_url(url)` — advertise a reachable URL for the `JSONRPC` interface. The card's `JSONRPC` URL (e.g. `http://0.0.0.0:9000`) is where the server binds, which clients usually cannot reach; the served card carries `url` instead
   - `.with_slim_tls()` — connect the `slim` and `slimrpc` interfaces over TLS: explicit endpoints are dialled as `https://host:port`, and an `http://` `SLIM_ENDPOINT` is refused instead of connecting in plaintext
   - `.dry_run()` — returns a `ServeCardPlan` describing what _would_ be started, without starting anything
-- **`SLIM_SHARED_SECRET`:** Required environment variable for any SLIM-based transport. Set it before calling `start()`.
+- **`SLIM_SHARED_SECRET`:** `CardBuilder` needs a SLIM shared secret for any SLIM-based interface: `.with_shared_secret()`, else this environment variable. Set it before calling `start()`; unlike the transports, `CardBuilder` raises `ValueError` instead of falling back to the placeholder.
 - **URL formats:** Each interface URL supports two styles:
   - **Topic-only:** `slim://my_topic` or `slim://org/ns/agent` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`). A path without a port is part of the SLIM name, not a host.
   - **Explicit endpoint:** `slim://host:46357/my_topic` or `slim://host:46357/org/ns/agent` — endpoint extracted from the URL. A port is what marks the dataplane address.

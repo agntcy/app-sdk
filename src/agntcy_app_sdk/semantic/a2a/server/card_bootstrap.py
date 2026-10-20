@@ -560,6 +560,7 @@ class CardBuilder:
             A2ASlimRpcServerConfig,
             SlimRpcConnectionConfig,
         )
+        from agntcy_app_sdk.transport.slim.common import SLIM_SHARED_SECRET_ENV
 
         session = self._session
         agent_card = self._agent_card
@@ -631,7 +632,7 @@ class CardBuilder:
 
                 if override is None:
                     shared_secret = self._shared_secret or os.environ.get(
-                        "SLIM_SHARED_SECRET"
+                        SLIM_SHARED_SECRET_ENV
                     )
                     if not shared_secret:
                         raise ValueError(
@@ -686,7 +687,7 @@ class CardBuilder:
 
                 if override is None:
                     shared_secret = self._shared_secret or os.environ.get(
-                        "SLIM_SHARED_SECRET"
+                        SLIM_SHARED_SECRET_ENV
                     )
                     if not shared_secret:
                         raise ValueError(

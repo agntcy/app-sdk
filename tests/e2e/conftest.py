@@ -762,8 +762,9 @@ def run_a2a_slimrpc_server() -> Iterator[RunA2ASlimRpcServer]:
         ]
         if streaming:
             extra_args.append("--streaming")
-        # The dedicated SlimRPC test server hardcodes this placeholder.
-        # Read it from the server config so the probe uses the same value.
+        # The dedicated SlimRPC test server resolves its secret from
+        # SLIM_SHARED_SECRET (else the placeholder), and the subprocess
+        # inherits this environment, so the probe resolves the same value.
         from tests.server.a2a_slimrpc_server import _build_a2a_slimrpc_config
 
         secret = _build_a2a_slimrpc_config(

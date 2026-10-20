@@ -607,6 +607,16 @@ await (
 
 The `JSONRPC` URL in the card (`http://0.0.0.0:9000` above) is the address the server **binds** to, and it is also what the served card advertises. Clients usually cannot reach `0.0.0.0` or an in-container address, so call `.with_public_url("https://agent.example.com")` to bind to the card's URL while advertising the public one. Your own card object is not modified.
 
+### SLIM shared secret
+
+Every SLIM peer authenticates with a shared secret of at least 32 characters, and server and client must use the same value. The SDK picks it in this order:
+
+1. The value you pass: `shared_secret_identity` on `SLIMTransport` / `SlimTransportConfig`, `secret` on `SlimRpcConfig`, `shared_secret` on `SlimRpcConnectionConfig`, or `CardBuilder.with_shared_secret()`.
+2. The `SLIM_SHARED_SECRET` environment variable.
+3. A public placeholder, with a warning in the log. It only suits demos and local tests: any peer with the default can join your sessions.
+
+`CardBuilder` stops at step 2: it raises `ValueError` instead of using the placeholder. In production, set `SLIM_SHARED_SECRET` from a secret manager to a random value, for example `python -c "import secrets; print(secrets.token_urlsafe(48))"`, and never commit it.
+
 ### Manual Session Builder
 
 The `AppSession` builder chains configuration into a single readable expression for fine-grained single-transport control. The SDK auto-detects the handler type from the target you pass to `add()`:

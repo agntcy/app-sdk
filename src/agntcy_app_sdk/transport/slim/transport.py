@@ -10,7 +10,6 @@ import slim_bindings
 from slim_bindings import Name, Session, MessageContext
 
 from .common import (
-    PLACEHOLDER_SHARED_SECRET,
     get_or_create_slim_instance,
     split_id,
 )
@@ -128,7 +127,7 @@ class SLIMTransport(BaseTransport):
         endpoint: Optional[str] = None,
         message_timeout: datetime.timedelta = datetime.timedelta(seconds=60),
         message_retries: int = 2,
-        shared_secret_identity: str = PLACEHOLDER_SHARED_SECRET,
+        shared_secret_identity: str | None = None,
         tls_insecure: bool = True,
         jwt: str | None = None,
         bundle: str | None = None,
