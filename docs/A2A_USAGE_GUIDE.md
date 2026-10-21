@@ -384,17 +384,14 @@ async def main():
     await (
         session.add_a2a_card(agent_card, request_handler)
         .with_factory(factory)
+        # Demo only: without SLIM_SHARED_SECRET, server and client both use
+        # the public placeholder. Never call this in production.
+        .allow_placeholder_secret()
         .start(keep_alive=True)
     )
 
 if __name__ == "__main__":
     import asyncio
-    import os
-
-    # Demo only: set the secret explicitly so client and server match.
-    # Without it the SDK falls back to this same placeholder and warns.
-    if "SLIM_SHARED_SECRET" not in os.environ:
-        os.environ["SLIM_SHARED_SECRET"] = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
 
     asyncio.run(main())
 ```
@@ -485,7 +482,7 @@ if __name__ == "__main__":
   - `.with_public_url(url)` — advertise a reachable URL for the `JSONRPC` interface. The card's `JSONRPC` URL (e.g. `http://0.0.0.0:9000`) is where the server binds, which clients usually cannot reach; the served card carries `url` instead
   - `.with_slim_tls()` — connect the `slim` and `slimrpc` interfaces over TLS: explicit endpoints are dialled as `https://host:port`, and an `http://` `SLIM_ENDPOINT` is refused instead of connecting in plaintext
   - `.dry_run()` — returns a `ServeCardPlan` describing what _would_ be started, without starting anything
-- **`SLIM_SHARED_SECRET`:** For SLIM-based interfaces, `CardBuilder` uses `.with_shared_secret()`, else this environment variable, else the public placeholder with a warning in the log. Set it before calling `start()`, and always set it in production.
+- **`SLIM_SHARED_SECRET`:** For SLIM-based interfaces, `CardBuilder` uses `.with_shared_secret()`, else this environment variable. Set it before calling `start()`. If neither is set, or the value is the public placeholder, `start()` and `dry_run()` raise `ValueError`, unless you call `.allow_placeholder_secret()`, which is for local demos only.
 - **URL formats:** Each interface URL supports two styles:
   - **Topic-only:** `slim://my_topic` or `slim://org/ns/agent` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`). A path without a port is part of the SLIM name, not a host.
   - **Explicit endpoint:** `slim://host:46357/my_topic` or `slim://host:46357/org/ns/agent` — endpoint extracted from the URL. A port is what marks the dataplane address.

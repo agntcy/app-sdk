@@ -416,9 +416,43 @@ class TestCardBuilderValidation:
             await builder.start()
 
     @pytest.mark.asyncio
-    async def test_missing_slim_shared_secret_is_left_to_the_server(self) -> None:
-        """slimrpc interface, no secret: the RPC server resolves it, so
-        CardBuilder passes ``None`` and does not warn itself."""
+    @pytest.mark.parametrize(
+        ("binding", "url"),
+        [("slimrpc", "slim://org/ns/agent"), ("slim", "slim://my_topic")],
+    )
+    @pytest.mark.parametrize(
+        "env",
+        [{}, {"SLIM_SHARED_SECRET": slim_common.PLACEHOLDER_SHARED_SECRET}],
+        ids=["unset", "placeholder"],
+    )
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["start", "dry_run"])
+    async def test_missing_slim_shared_secret_raises(
+        self, binding: str, url: str, env: dict[str, str], dry_run: bool
+    ) -> None:
+        """Without a real secret a SLIM interface fails before anything starts,
+        so a production deploy with an unset secret does not fall back to the
+        public placeholder."""
+        factory = MagicMock()
+        session = MagicMock()
+        session.start_all_sessions = AsyncMock()
+        builder = _make_builder(
+            interfaces=[AgentInterface(protocol_binding=binding, url=url)],
+            session=session,
+            factory=factory,
+        )
+
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValueError, match="SLIM shared secret required"):
+                await (builder.dry_run() if dry_run else builder.start())
+
+        session.add.assert_not_called()
+        factory.create_transport.assert_not_called()
+        session.start_all_sessions.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allowed_placeholder_is_left_to_the_server(self) -> None:
+        """slimrpc interface, no secret, placeholder allowed: the RPC server
+        resolves it, so CardBuilder passes ``None`` and does not warn itself."""
         session = MagicMock()
         session.add.return_value.with_session_id.return_value = MagicMock()
         session.start_all_sessions = AsyncMock()
@@ -430,7 +464,7 @@ class TestCardBuilderValidation:
                 )
             ],
             session=session,
-        )
+        ).allow_placeholder_secret()
 
         with (
             patch.dict(os.environ, {}, clear=True),
@@ -443,11 +477,11 @@ class TestCardBuilderValidation:
         assert not log.warning.called
 
     @pytest.mark.asyncio
-    async def test_missing_slim_shared_secret_is_left_to_the_transport(
+    async def test_allowed_placeholder_is_left_to_the_transport(
         self,
     ) -> None:
-        """slim interface, no secret: SLIMTransport resolves it, so
-        CardBuilder passes ``None`` and does not warn itself."""
+        """slim interface, no secret, placeholder allowed: SLIMTransport
+        resolves it, so CardBuilder passes ``None`` and does not warn itself."""
         factory = MagicMock()
         factory.create_transport.return_value = MagicMock()
         session = MagicMock()
@@ -461,7 +495,7 @@ class TestCardBuilderValidation:
             ],
             session=session,
             factory=factory,
-        )
+        ).allow_placeholder_secret()
 
         with (
             patch.dict(os.environ, {}, clear=True),

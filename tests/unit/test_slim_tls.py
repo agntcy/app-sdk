@@ -411,8 +411,10 @@ class TestSharedConnectionKeepsItsTlsSetting:
             patch.object(common, "global_connection_id", None),
             patch.object(common, "global_slim_insecure", None),
             patch.object(common, "global_slim_endpoint", None),
+            patch.object(common, "global_slim_auth", None),
             patch.object(common, "get_or_init_slim_service", return_value=service),
             patch.object(common, "shared_secret_identity", return_value=(None, None)),
+            patch.object(common, "jwt_identity", return_value=(None, None)),
             patch.object(common, "new_client_config", builder),
         )
 
@@ -572,6 +574,115 @@ class TestSharedConnectionKeepsItsEndpoint:
         assert isinstance(results[1], ValueError)
         assert "same endpoint" in str(results[1])
         service.connect_async.assert_awaited_once()
+
+
+class TestSharedConnectionKeepsItsCredentials:
+    """A second transport asking for other credentials than the open
+    connection is refused, so it cannot run as the first one's identity
+    (for example the public placeholder) without noticing."""
+
+    @staticmethod
+    async def _open(
+        **auth: Any,
+    ) -> tuple[slim_bindings.Service, slim_bindings.App, int]:
+        return await common.get_or_create_slim_instance(
+            MagicMock(),
+            "https://slim.example:443",
+            slim_insecure_client=False,
+            **auth,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            ({}, {"shared_secret": _TEST_SECRET}),
+            ({"shared_secret": _TEST_SECRET}, {"shared_secret": "y" * 32}),
+            ({"shared_secret": _TEST_SECRET}, {"jwt": "t.jwt", "bundle": "b.json"}),
+            ({"jwt": "t.jwt", "bundle": "b.json"}, {}),
+        ],
+        ids=[
+            "placeholder-then-secret",
+            "two-secrets",
+            "secret-then-jwt",
+            "jwt-then-placeholder",
+        ],
+    )
+    async def test_different_credentials_are_refused(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        first: dict[str, str],
+        second: dict[str, str],
+    ) -> None:
+        from contextlib import ExitStack
+
+        monkeypatch.delenv(common.SLIM_SHARED_SECRET_ENV, raising=False)
+        builder = MagicMock(return_value="cfg")
+        service, patches = TestSharedConnectionKeepsItsTlsSetting._patched(builder)
+
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            await self._open(**first)
+
+            with pytest.raises(ValueError, match="same credentials") as exc:
+                await self._open(**second)
+
+        assert _TEST_SECRET not in str(exc.value)
+        service.connect_async.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_env_secret_matches_the_same_value_passed_explicitly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from contextlib import ExitStack
+
+        monkeypatch.setenv(common.SLIM_SHARED_SECRET_ENV, _TEST_SECRET)
+        builder = MagicMock(return_value="cfg")
+        service, patches = TestSharedConnectionKeepsItsTlsSetting._patched(builder)
+
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            first = await self._open()
+            second = await self._open(shared_secret=_TEST_SECRET)
+
+        assert first == second
+        service.connect_async.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_every_placeholder_transport_warns(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each transport on the placeholder logs it, not only the first."""
+        from contextlib import ExitStack
+
+        monkeypatch.delenv(common.SLIM_SHARED_SECRET_ENV, raising=False)
+        builder = MagicMock(return_value="cfg")
+        _, patches = TestSharedConnectionKeepsItsTlsSetting._patched(builder)
+
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            log = stack.enter_context(patch.object(common, "logger"))
+            await self._open()
+            await self._open()
+
+        assert log.warning.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_secret_is_not_kept_in_plaintext(self) -> None:
+        from contextlib import ExitStack
+
+        builder = MagicMock(return_value="cfg")
+        _, patches = TestSharedConnectionKeepsItsTlsSetting._patched(builder)
+
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            await self._open(shared_secret=_TEST_SECRET)
+            assert common.global_slim_auth is not None
+            assert _TEST_SECRET not in repr(common.global_slim_auth)
 
 
 class TestSchemeDisagreement:

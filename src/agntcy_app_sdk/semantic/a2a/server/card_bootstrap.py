@@ -335,6 +335,7 @@ class CardBuilder:
         ] = {}
         self._skips: set[str] = set()  # canonical transport_types to skip
         self._shared_secret: str | None = None
+        self._allow_placeholder_secret = False
         self._public_url: str | None = None
         self._slim_tls = False
 
@@ -379,10 +380,24 @@ class CardBuilder:
         """Provide the SLIM shared secret directly.
 
         If not called, the builder falls back to the ``SLIM_SHARED_SECRET``
-        environment variable, else to the public placeholder with a warning
-        (see :func:`~agntcy_app_sdk.transport.slim.common.resolve_shared_secret`).
+        environment variable.  If neither is set, or the value is the public
+        placeholder, :meth:`dry_run` and :meth:`start` raise
+        :class:`ValueError` for SLIM-based interfaces unless
+        :meth:`allow_placeholder_secret` was called.
         """
         self._shared_secret = secret
+        return self
+
+    def allow_placeholder_secret(self) -> CardBuilder:
+        """Let SLIM interfaces start with the public placeholder secret.
+
+        For local demos and tests only: any peer that knows the placeholder
+        can join the agent's sessions.  Without this call a missing secret
+        is an error, so an unset ``SLIM_SHARED_SECRET`` in production fails
+        at start instead of silently using the placeholder.  The placeholder
+        is still logged as a warning when it is used.
+        """
+        self._allow_placeholder_secret = True
         return self
 
     def with_slim_tls(self) -> CardBuilder:
@@ -454,6 +469,24 @@ class CardBuilder:
                 "or the default). Set SLIM_ENDPOINT to an https:// URL."
             )
         return endpoint, not is_https
+
+    def _require_slim_secret(self, transport_type: str) -> None:
+        """Refuse a missing or placeholder secret unless the caller allowed it."""
+        from agntcy_app_sdk.transport.slim.common import (
+            PLACEHOLDER_SHARED_SECRET,
+            SLIM_SHARED_SECRET_ENV,
+        )
+
+        if self._allow_placeholder_secret:
+            return
+        secret = self._shared_secret or os.environ.get(SLIM_SHARED_SECRET_ENV)
+        if not secret or secret == PLACEHOLDER_SHARED_SECRET:
+            raise ValueError(
+                f"SLIM shared secret required for {transport_type} interface. "
+                "Use .with_shared_secret() or set the SLIM_SHARED_SECRET env "
+                "var; for a local demo, call .allow_placeholder_secret() to "
+                "use the public placeholder."
+            )
 
     def _served_card(
         self, interfaces: list[AgentInterface]
@@ -618,6 +651,7 @@ class CardBuilder:
                 else None
             )
             if transport_type in ("slimrpc", "slimpatterns") and slim_override is None:
+                self._require_slim_secret(transport_type)
                 slim_endpoint, tls_insecure = self._slim_connection(
                     interface, str(parsed["endpoint"])
                 )

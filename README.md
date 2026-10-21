@@ -599,6 +599,7 @@ await (
 | -------------------------------- | ------------------------------------------------------------------------ |
 | `.with_factory(factory)`         | Reuse an existing `AgntcyFactory` (auto-created if omitted)              |
 | `.with_shared_secret(secret)`    | Provide SLIM shared secret directly (falls back to `SLIM_SHARED_SECRET`) |
+| `.allow_placeholder_secret()`    | Local demos only: start SLIM interfaces with the public placeholder      |
 | `.skip(transport_type)`          | Exclude a specific transport from being started                          |
 | `.override(transport_type, obj)` | Supply a pre-built transport or config for an interface                  |
 | `.with_public_url(url)`          | Advertise a reachable URL for the `JSONRPC` interface (see below)        |
@@ -615,7 +616,9 @@ Every SLIM peer authenticates with a shared secret of at least 32 characters, an
 2. The `SLIM_SHARED_SECRET` environment variable.
 3. A public placeholder, with a warning in the log. It only suits demos and local tests: any peer with the default can join your sessions.
 
-`CardBuilder` follows the same order. In production, set `SLIM_SHARED_SECRET` from a secret manager to a random value, for example `python -c "import secrets; print(secrets.token_urlsafe(48))"`, and never commit it.
+`CardBuilder` stops before step 3: if neither a secret nor `SLIM_SHARED_SECRET` is set, or the value is the placeholder, `start()` and `dry_run()` raise `ValueError`. Call `.allow_placeholder_secret()` to run a local demo with the placeholder.
+
+All `SLIMTransport`s in one process share one SLIM connection, so they must use the same credentials; a transport asking for a different secret or JWT than the open connection raises `ValueError`. In production, set `SLIM_SHARED_SECRET` from a secret manager to a random value, for example `python -c "import secrets; print(secrets.token_urlsafe(48))"`, and never commit it.
 
 ### Manual Session Builder
 

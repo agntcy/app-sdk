@@ -603,6 +603,7 @@ def _reset_slim_globals() -> None:
     slim_common.global_connection_id = None
     slim_common.global_slim_insecure = None
     slim_common.global_slim_endpoint = None
+    slim_common.global_slim_auth = None
 
 
 # ---------------------------------------------------------------------------

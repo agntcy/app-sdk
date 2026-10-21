@@ -168,6 +168,8 @@ async def main(
     await (
         session.add_a2a_card(agent_card, request_handler)
         .with_factory(factory)
+        # Test server: runs with the placeholder when SLIM_SHARED_SECRET is unset.
+        .allow_placeholder_secret()
         .start(keep_alive=block)
     )
 
