@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import copy
 import warnings
 
 import nats
-from identityservice.sdk import IdentityServiceSdk
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
 from nats.aio.subscription import Subscription
 
-from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+from agntcy_app_sdk.common.auth import add_identity_header
 from agntcy_app_sdk.transport.base import BaseTransport, accepts_publish_fn
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.common.tracing import (
@@ -200,6 +200,10 @@ class NatsTransport(BaseTransport):
                 "recipients list must be provided for NATS COLLECT_ALL mode."
             )
 
+        # reply_to and headers below go on a copy, not on the caller's message.
+        message = copy.copy(message)
+        message.headers = dict(message.headers or {})
+
         # -----------------------------------------------------------------
         # Single-recipient: skip invite protocol (backward compat)
         # -----------------------------------------------------------------
@@ -207,14 +211,7 @@ class NatsTransport(BaseTransport):
             publish_topic = self.santize_topic(topic)
             reply_topic = uuid4().hex
             message.reply_to = reply_topic
-
-            if is_identity_auth_enabled():
-                try:
-                    access_token = IdentityServiceSdk().access_token()
-                    if access_token:
-                        message.headers["Authorization"] = f"Bearer {access_token}"
-                except Exception as e:
-                    logger.error(f"Failed to get access token for agent: {e}")
+            await add_identity_header(message.headers)
 
             logger.debug(
                 f"Publishing to: {publish_topic} and receiving from: {reply_topic}"
@@ -259,14 +256,7 @@ class NatsTransport(BaseTransport):
         reply_topic = uuid4().hex
         ack_topic = uuid4().hex
         message.reply_to = reply_topic
-
-        if is_identity_auth_enabled():
-            try:
-                access_token = IdentityServiceSdk().access_token()
-                if access_token:
-                    message.headers["Authorization"] = f"Bearer {access_token}"
-            except Exception as e:
-                logger.error(f"Failed to get access token for agent: {e}")
+        await add_identity_header(message.headers)
 
         logger.debug(
             f"Invite protocol: ephemeral={ephemeral_topic}, "

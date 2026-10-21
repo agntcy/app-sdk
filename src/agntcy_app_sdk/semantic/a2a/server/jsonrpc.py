@@ -8,9 +8,15 @@ from typing import Optional
 
 import uvicorn
 from a2a.types import AgentCard
+from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
+from identityservice.auth.starlette import IdentityServiceMiddleware
 
+from agntcy_app_sdk.common.auth import is_identity_auth_enabled
 from agntcy_app_sdk.common.logging_config import get_logger
-from agntcy_app_sdk.semantic.a2a.card_utils import find_interface
+from agntcy_app_sdk.semantic.a2a.card_utils import (
+    declare_identity_auth,
+    find_interface,
+)
 from agntcy_app_sdk.semantic.a2a.server.base import BaseA2AServerHandler
 from agntcy_app_sdk.semantic.a2a.server.config import A2AServerConfig
 
@@ -39,6 +45,12 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
       that URL is **appended** (never prepended, so the author's preference
       order and any patterns transport stay preferred);
     * otherwise a warning is logged and the card is left as is.
+
+    With identity auth enabled (``IDENTITY_AUTH_ENABLED`` and
+    ``IDENTITY_SERVICE_API_KEY``), every request except the agent card at
+    ``/.well-known/agent-card.json`` needs an Identity Service bearer token:
+    a missing or malformed ``Authorization`` header gets HTTP 401, a token
+    that fails verification HTTP 403.  The card then advertises the scheme.
 
     Construction::
 
@@ -81,13 +93,28 @@ class A2AJsonRpcServerHandler(BaseA2AServerHandler):
         Steps:
         1. Declare the JSONRPC interface from ``public_url`` if the card has
            none (otherwise warn).
-        2. Build the ASGI application from the a2a-sdk route factories.
+        2. Build the ASGI application from the a2a-sdk route factories, with
+           identity auth enforced if enabled.
         3. Create a ``uvicorn.Server`` and launch it as a background task.
         4. Push to directory if available.
         """
         self._declare_jsonrpc_interface()
 
         app = self._server.build_app()
+        if is_identity_auth_enabled():
+            logger.info("Identity auth enabled for the JSON-RPC A2A server")
+            logger.warning(
+                "The Identity Service middleware verifies each request's token "
+                "with a blocking call on the event loop and no deadline: while "
+                "it waits, nothing else on this event loop runs (other servers "
+                "and clients in this process included), and an Identity "
+                "Service that never answers stalls them indefinitely."
+            )
+            declare_identity_auth(self.agent_card)
+            app.add_middleware(
+                IdentityServiceMiddleware,
+                public_paths=[AGENT_CARD_WELL_KNOWN_PATH],
+            )
         config = uvicorn.Config(
             app=app,
             host=self._host,

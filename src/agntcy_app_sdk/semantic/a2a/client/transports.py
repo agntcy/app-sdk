@@ -34,13 +34,19 @@ from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, VERSION_HEADER
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.message import Message as ProtoMessage
 
-from agntcy_app_sdk.common.auth import is_identity_auth_enabled
+from agntcy_app_sdk.common.auth import (
+    get_access_token,
+    invalidate_access_token,
+    is_identity_auth_enabled,
+)
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.client.utils import (
     create_rpc_error,
     get_identity_auth_error,
+    is_auth_rejection,
     message_translator,
 )
+from agntcy_app_sdk.semantic.a2a.transport_types import name_host
 from agntcy_app_sdk.transport.base import BaseTransport
 
 if TYPE_CHECKING:
@@ -73,7 +79,7 @@ def _parse_topic_from_url(url: str) -> str:
     if parsed.port is not None:
         return parsed.path.lstrip("/")
     # Topic-only: hostname (+ path if slashes present) IS the topic
-    hostname = parsed.hostname or ""
+    hostname = name_host(parsed)
     path = parsed.path.lstrip("/")
     return f"{hostname}/{path}" if path else hostname
 
@@ -172,7 +178,7 @@ class PatternsClientTransport(ClientTransport):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_headers(context: ClientCallContext | None) -> dict[str, str]:
+    async def _build_headers(context: ClientCallContext | None) -> dict[str, str]:
         """Build transport message headers for a call.
 
         Starts from ``context.service_parameters`` (where interceptors put
@@ -189,9 +195,7 @@ class PatternsClientTransport(ClientTransport):
             k.lower() == "authorization" for k in headers
         ):
             try:
-                from identityservice.sdk import IdentityServiceSdk
-
-                access_token = IdentityServiceSdk().access_token()
+                access_token = await get_access_token()
                 if access_token:
                     headers["Authorization"] = f"Bearer {access_token}"
             except Exception as e:
@@ -218,16 +222,17 @@ class PatternsClientTransport(ClientTransport):
         """Send one JSON-RPC call and return its ``result``.
 
         Raises the matching ``A2AError`` for JSON-RPC error responses.  An
-        identity-auth rejection (HTTP 403 / ``"forbidden"``) is returned as a
-        synthetic agent message when *forbidden_as_message* is set (message
-        sends), and raised as ``A2AClientError`` otherwise.
+        identity-auth rejection (status 401 / 403, ``"forbidden"``) drops the
+        cached access token, then is returned as a synthetic agent message
+        when *forbidden_as_message* is set (message sends), and raised as
+        ``A2AClientError`` otherwise.
         """
         try:
             response = await self._transport.request(
                 self._topic,
                 message_translator(
                     request=self._rpc_payload(method, request),
-                    headers=self._build_headers(context),
+                    headers=await self._build_headers(context),
                 ),
             )
             payload = json.loads(response.payload.decode("utf-8"))
@@ -239,11 +244,11 @@ class PatternsClientTransport(ClientTransport):
             )
             raise
 
-        # Handle Identity-Middleware auth errors
-        if payload.get("error") == "forbidden" or response.status_code == 403:
+        if is_auth_rejection(payload, response.status_code):
             logger.error(
                 "Received forbidden error in A2A response due to identity auth"
             )
+            invalidate_access_token()
             if forbidden_as_message:
                 return get_identity_auth_error()["result"]
             raise A2AClientError("Access forbidden: identity auth failed")
@@ -282,18 +287,30 @@ class PatternsClientTransport(ClientTransport):
         Each intermediate ``A2AStatusUpdate`` message and the final
         ``A2AResponse`` are parsed and yielded as ``StreamResponse``.
 
+        An identity-auth rejection drops the cached access token and is
+        yielded as a synthetic agent message, as ``send_message()`` returns
+        it, then the stream ends.
+
         Falls back to a single ``send_message()`` if the transport
         does not implement ``request_stream()``.
         """
         transport_msg = message_translator(
             request=self._rpc_payload("SendStreamingMessage", request),
-            headers=self._build_headers(context),
+            headers=await self._build_headers(context),
         )
 
         stream = self._transport.request_stream(self._topic, transport_msg)
         try:
             async for response in stream:
                 response_payload = json.loads(response.payload.decode("utf-8"))
+
+                if is_auth_rejection(response_payload, response.status_code):
+                    logger.error(
+                        "Received forbidden error in A2A response due to identity auth"
+                    )
+                    invalidate_access_token()
+                    yield _parse(get_identity_auth_error()["result"], StreamResponse())
+                    break
 
                 # Handle JSON-RPC error responses
                 if "error" in response_payload:

@@ -48,6 +48,16 @@ class TestWithInterfaceType:
         )
         assert get_agent_identifier(card, "natspatterns") == "my_topic"
 
+    def test_match_slim_three_part_name_keeps_case(self) -> None:
+        card = _make_card(
+            interfaces=[
+                AgentInterface(
+                    protocol_binding="slimpatterns", url="slim://Org/NS/Agent"
+                ),
+            ],
+        )
+        assert get_agent_identifier(card, "slimpatterns") == "Org/NS/Agent"
+
     def test_match_slim_explicit_endpoint(self) -> None:
         card = _make_card(
             interfaces=[
@@ -134,8 +144,7 @@ class TestWithoutInterfaceType:
                 ),
             ],
         )
-        # urlparse lowercases the hostname portion
-        assert get_agent_identifier(card) == "weather_agent_1.0.0"
+        assert get_agent_identifier(card) == "Weather_Agent_1.0.0"
 
     def test_no_interfaces_returns_none(self) -> None:
         card = _make_card()

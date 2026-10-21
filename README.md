@@ -188,6 +188,7 @@ config = A2ASlimRpcServerConfig(
     ),
     connection=SlimRpcConnectionConfig(
         identity="default/default/my_agent",
+        # Hardcoded on purpose: a demo value, not a real secret.
         shared_secret="my-shared-secret-at-least-32-characters-long",
         endpoint="http://localhost:46357",
     ),
@@ -222,11 +223,13 @@ config = ClientConfig(
         group="default",
         name="my_client",
         slim_url="http://localhost:46357",
+        # Hardcoded on purpose: a demo value, not a real secret.
         secret="my-shared-secret-at-least-32-characters-long",
     ),
     slim_config=SlimTransportConfig(
         endpoint="http://localhost:46357",
         name="default/default/my_client",
+        # Hardcoded on purpose: a demo value, not a real secret.
         shared_secret_identity="my-shared-secret-at-least-32-characters-long",
     ),
     nats_config=NatsTransportConfig(
@@ -269,12 +272,17 @@ from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 service, slim_app, local_name, conn_id = await setup_slim_client(
     namespace="default", group="default", name="my_client",
     slim_url="http://localhost:46357",
+    # Hardcoded on purpose: a demo value, not a real secret. Must match the
+    # server's shared_secret.
+    secret="my-shared-secret-at-least-32-characters-long",
 )
 
 # Enable slimrpc on the SDK's ClientConfig and let the factory negotiate
 config = ClientConfig(
     slimrpc_channel_factory=slimrpc_channel_factory(slim_app, conn_id),
 )
+# With IDENTITY_AUTH_ENABLED, every slimrpc call carries this agent's
+# identity token, whatever the card declares: only call peers you trust.
 card = minimal_agent_card("default/default/my_agent", ["slimrpc"])
 client = await AgntcyFactory().a2a(config).create(card)
 
@@ -386,7 +394,7 @@ async for resp in client.broadcast_message_streaming(
 # (err.responses is empty there, err.succeeded names who answered).
 ```
 
-**How a missing reply surfaces depends on the transport.** SLIM raises at the `timeout`, so you get `A2ABroadcastTimeoutError` (a subclass of both `A2ABroadcastError` and `TimeoutError`). NATS ends the stream at the `timeout` without raising, so you get a plain `A2ABroadcastError` with `err.missing > 0`. Replies are matched to recipients through the `x-a2a-sender` header that SDK servers set to their topic, so a recipient that replies twice is counted once. `missing_recipients` is only filled when every reply names one of the `recipients`. A recipient that rejects the caller's identity (HTTP 403 / `"forbidden"`) shows up in `err.failures`, not as a reply. Transport failures, such as not being connected or passing no `recipients`, raise the transport's own exception.
+**How a missing reply surfaces depends on the transport.** SLIM raises at the `timeout`, so you get `A2ABroadcastTimeoutError` (a subclass of both `A2ABroadcastError` and `TimeoutError`). NATS ends the stream at the `timeout` without raising, so you get a plain `A2ABroadcastError` with `err.missing > 0`. Replies are matched to recipients through the `x-a2a-sender` header that SDK servers set to their topic, so a recipient that replies twice is counted once. `missing_recipients` is only filled when every reply names one of the `recipients`. A recipient that rejects the caller's identity (status 401 / 403, or a `"forbidden"` / `"unauthorized"` error) shows up in `err.failures`, not as a reply. Transport failures, such as not being connected or passing no `recipients`, raise the transport's own exception. If the transport fails after at least one final reply has arrived (for example, the SLIM session closes), you get an `A2ABroadcastError` that keeps those replies, with the transport's exception in `err.transport_error`.
 
 </details>
 
@@ -464,6 +472,10 @@ async for message in client.start_streaming_groupchat(
 ):
     print(f"Live: {message}")
 ```
+
+**How group chat errors surface.** Group chat runs over SLIM only; on NATS both methods raise `NotImplementedError`. A transport failure, such as not being connected, passing no `participants`, the session closing, or reaching the `timeout`, raises the transport's own exception from both methods. `start_groupchat` then returns nothing, so the messages received before the failure are lost; `start_streaming_groupchat` has already yielded them. A single message that can't be read (not JSON, a JSON-RPC error from a participant, or an `after` interceptor that raises) is handled differently: `start_groupchat` logs it and leaves it out of the list, while `start_streaming_groupchat` raises its exception and ends the stream. A participant that rejects the caller's identity (status 401 / 403, or a `"forbidden"` / `"unauthorized"` error) shows up in both as a synthetic agent message saying access was forbidden.
+
+**Relayed replies must carry a message.** A participant can receive another agent's reply as its input. A Task reply is relayed through its status message, or else the last agent message in its history. A Task with only artifacts, which is what a2a-sdk's `TaskUpdater.complete()` produces without a `message`, is rejected with `InvalidRequest`, so participants should complete with a message, for example `await updater.complete(message=...)`.
 
 </details>
 
@@ -587,6 +599,7 @@ await (
 | -------------------------------- | ------------------------------------------------------------------------ |
 | `.with_factory(factory)`         | Reuse an existing `AgntcyFactory` (auto-created if omitted)              |
 | `.with_shared_secret(secret)`    | Provide SLIM shared secret directly (falls back to `SLIM_SHARED_SECRET`) |
+| `.allow_placeholder_secret()`    | Local demos only: start SLIM interfaces with the public placeholder      |
 | `.skip(transport_type)`          | Exclude a specific transport from being started                          |
 | `.override(transport_type, obj)` | Supply a pre-built transport or config for an interface                  |
 | `.with_public_url(url)`          | Advertise a reachable URL for the `JSONRPC` interface (see below)        |
@@ -594,6 +607,18 @@ await (
 | `.start(keep_alive=False)`       | Build all containers and start sessions                                  |
 
 The `JSONRPC` URL in the card (`http://0.0.0.0:9000` above) is the address the server **binds** to, and it is also what the served card advertises. Clients usually cannot reach `0.0.0.0` or an in-container address, so call `.with_public_url("https://agent.example.com")` to bind to the card's URL while advertising the public one. Your own card object is not modified.
+
+### SLIM shared secret
+
+Every SLIM peer authenticates with a shared secret of at least 32 characters, and server and client must use the same value. The SDK picks it in this order:
+
+1. The value you pass: `shared_secret_identity` on `SLIMTransport` / `SlimTransportConfig`, `secret` on `SlimRpcConfig`, `shared_secret` on `SlimRpcConnectionConfig`, or `CardBuilder.with_shared_secret()`.
+2. The `SLIM_SHARED_SECRET` environment variable.
+3. A public placeholder, with a warning in the log. It only suits demos and local tests: any peer with the default can join your sessions.
+
+`CardBuilder` stops before step 3: if neither a secret nor `SLIM_SHARED_SECRET` is set, or the value is the placeholder, `start()` and `dry_run()` raise `ValueError`. Call `.allow_placeholder_secret()` to run a local demo with the placeholder.
+
+All `SLIMTransport`s in one process share one SLIM connection, so they must use the same credentials; a transport asking for a different secret or JWT than the open connection raises `ValueError`. In production, set `SLIM_SHARED_SECRET` from a secret manager to a random value, for example `python -c "import secrets; print(secrets.token_urlsafe(48))"`, and never commit it.
 
 ### Manual Session Builder
 

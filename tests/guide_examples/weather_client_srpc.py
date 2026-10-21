@@ -32,6 +32,9 @@ async def main(endpoint: str, agent_name: str) -> None:
         group="default",
         name="weather_client",
         slim_url=endpoint,
+        # Hardcoded on purpose: a demo value, not a real secret. Must match
+        # the server's shared_secret.
+        secret="my-shared-secret-at-least-32-characters-long",
     )
 
     # 2. Build a ClientConfig with slimrpc enabled

@@ -11,7 +11,6 @@ from a2a.client.client import ClientConfig as A2AClientConfig
 
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.card_utils import wire_binding
-from agntcy_app_sdk.transport.slim.common import PLACEHOLDER_SHARED_SECRET
 
 if TYPE_CHECKING:
     from agntcy_app_sdk.transport.base import BaseTransport
@@ -43,8 +42,9 @@ class SlimRpcConfig:
     slim_url: str = "http://localhost:46357"
     """SLIM dataplane endpoint."""
 
-    secret: str = "secretsecretsecretsecretsecretsecret"
-    """Shared secret for SLIM authentication."""
+    secret: str | None = None
+    """Shared secret for SLIM authentication.  ``None`` uses the
+    ``SLIM_SHARED_SECRET`` env var, else the public placeholder (demos only)."""
 
     tls_insecure: bool = True
     """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3
@@ -74,8 +74,10 @@ class SlimTransportConfig:
 
     # -- Security / auth -----------------------------------------------------
 
-    shared_secret_identity: str = PLACEHOLDER_SHARED_SECRET
-    """MLS shared secret.  Must be ≥ 32 characters for SLIM v0.7+."""
+    shared_secret_identity: str | None = None
+    """MLS shared secret.  Must be ≥ 32 characters for SLIM v0.7+.  ``None``
+    uses the ``SLIM_SHARED_SECRET`` env var, else the public placeholder
+    (demos only)."""
 
     tls_insecure: bool = True
     """Connect to the SLIM dataplane in plaintext.  Set ``False`` for TLS 1.3
@@ -138,6 +140,10 @@ class _ResolvedBindings(list[str]):
     ``supported_transports`` mirror) from values the caller passed.
     Copying the list (``list(...)``, slicing, ``.copy()``) drops the marker.
     """
+
+    derived_from: tuple[bool, bool, bool] | None = None
+    """Transports configured when the list was auto-derived; ``None`` when
+    the caller supplied it.  A copy whose transports differ re-derives."""
 
 
 @dataclasses.dataclass
@@ -251,7 +257,19 @@ class ClientConfig(A2AClientConfig):
                 self.supported_protocol_bindings = list(self.supported_transports)
             warnings.warn(message, DeprecationWarning, stacklevel=3)
 
+        configured = self._configured_transports()
+        current = self.supported_protocol_bindings
+        derived_from = (
+            current.derived_from if isinstance(current, _ResolvedBindings) else None
+        )
+        if derived_from is not None and derived_from != configured:
+            # Auto-derived for other transports (e.g. dataclasses.replace
+            # added one): derive again instead of keeping a stale list.
+            self.supported_protocol_bindings = []
+            derived_from = None
+
         if not self.supported_protocol_bindings:
+            derived_from = configured
             bindings: list[str] = ["JSONRPC"]
             if self.slim_config is not None or self.slim_transport is not None:
                 bindings.append("slimpatterns")
@@ -270,11 +288,19 @@ class ClientConfig(A2AClientConfig):
 
         # Mark the result as resolved (see _ResolvedBindings) and keep the
         # deprecated mirror in sync for code that still reads it.
-        self.supported_protocol_bindings = _ResolvedBindings(
-            self.supported_protocol_bindings
-        )
-        self.supported_transports = _ResolvedBindings(self.supported_protocol_bindings)
+        resolved = _ResolvedBindings(self.supported_protocol_bindings)
+        resolved.derived_from = derived_from
+        self.supported_protocol_bindings = resolved
+        self.supported_transports = _ResolvedBindings(resolved)
         self.__dict__["_post_init_done"] = True
+
+    def _configured_transports(self) -> tuple[bool, bool, bool]:
+        """Which pub/sub and RPC transports are configured (slim, nats, slimrpc)."""
+        return (
+            self.slim_config is not None or self.slim_transport is not None,
+            self.nats_config is not None or self.nats_transport is not None,
+            self.slimrpc_config is not None or self.slimrpc_channel_factory is not None,
+        )
 
     def __setattr__(self, name: str, value: Any) -> None:
         # The factory reads supported_protocol_bindings, so a plain assignment

@@ -18,6 +18,7 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import (
     parse_interface_url,
 )
 from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.transport.slim import common as slim_common
 
 pytest_plugins = "pytest_asyncio"
 
@@ -181,13 +182,28 @@ class TestParseSlimTopicOnly:
         assert result["topic"] == "my_topic"
 
     def test_topic_with_underscores(self) -> None:
-        """Topic names like Hello_World_1.0.0 (underscore-separated)."""
+        """Topic names like Hello_World_1.0.0 keep their case."""
         iface = AgentInterface(
             protocol_binding="slimpatterns", url="slim://Hello_World_Agent_1.0.0"
         )
         result = parse_interface_url(iface)
-        assert result["topic"] == "hello_world_agent_1.0.0"
+        assert result["topic"] == "Hello_World_Agent_1.0.0"
         assert result["endpoint"] == "http://localhost:46357"
+
+    @pytest.mark.parametrize("binding", ["slimpatterns", "slimrpc"])
+    def test_name_keeps_case_of_every_segment(self, binding: str) -> None:
+        """SLIM names are case-sensitive, including the first segment."""
+        iface = AgentInterface(protocol_binding=binding, url="slim://Org/NS/Agent")
+        result = parse_interface_url(iface)
+        key = "identity" if binding == "slimrpc" else "topic"
+        assert result[key] == "Org/NS/Agent"
+
+    def test_explicit_endpoint_name_keeps_case(self) -> None:
+        iface = AgentInterface(
+            protocol_binding="slimpatterns", url="slim://Host:46357/Org/NS/Agent"
+        )
+        result = parse_interface_url(iface)
+        assert result["topic"] == "Org/NS/Agent"
 
     def test_three_part_name_is_the_topic(self) -> None:
         """slim://org/ns/agent is the topic org/ns/agent on the default endpoint."""
@@ -311,6 +327,11 @@ class TestParseNatsTopicOnly:
         assert result["topic"] == "my_topic"
         assert result["endpoint"] == "nats://localhost:4222"
 
+    def test_topic_keeps_case(self) -> None:
+        """NATS subjects are case-sensitive."""
+        iface = AgentInterface(protocol_binding="nats", url="nats://Weather_Agent")
+        assert parse_interface_url(iface)["topic"] == "Weather_Agent"
+
     def test_topic_only_with_env(self) -> None:
         """NATS_ENDPOINT env var overrides the default."""
         iface = AgentInterface(
@@ -395,40 +416,96 @@ class TestCardBuilderValidation:
             await builder.start()
 
     @pytest.mark.asyncio
-    async def test_raises_on_missing_slim_shared_secret(self) -> None:
-        """slimrpc interface declared but SLIM_SHARED_SECRET not set."""
+    @pytest.mark.parametrize(
+        ("binding", "url"),
+        [("slimrpc", "slim://org/ns/agent"), ("slim", "slim://my_topic")],
+    )
+    @pytest.mark.parametrize(
+        "env",
+        [{}, {"SLIM_SHARED_SECRET": slim_common.PLACEHOLDER_SHARED_SECRET}],
+        ids=["unset", "placeholder"],
+    )
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["start", "dry_run"])
+    async def test_missing_slim_shared_secret_raises(
+        self, binding: str, url: str, env: dict[str, str], dry_run: bool
+    ) -> None:
+        """Without a real secret a SLIM interface fails before anything starts,
+        so a production deploy with an unset secret does not fall back to the
+        public placeholder."""
+        factory = MagicMock()
+        session = MagicMock()
+        session.start_all_sessions = AsyncMock()
+        builder = _make_builder(
+            interfaces=[AgentInterface(protocol_binding=binding, url=url)],
+            session=session,
+            factory=factory,
+        )
+
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValueError, match="SLIM shared secret required"):
+                await (builder.dry_run() if dry_run else builder.start())
+
+        session.add.assert_not_called()
+        factory.create_transport.assert_not_called()
+        session.start_all_sessions.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_allowed_placeholder_is_left_to_the_server(self) -> None:
+        """slimrpc interface, no secret, placeholder allowed: the RPC server
+        resolves it, so CardBuilder passes ``None`` and does not warn itself."""
+        session = MagicMock()
+        session.add.return_value.with_session_id.return_value = MagicMock()
+        session.start_all_sessions = AsyncMock()
         builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     protocol_binding="slimrpc",
                     url="slim://org/ns/agent",
                 )
-            ]
-        )
+            ],
+            session=session,
+        ).allow_placeholder_secret()
 
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("SLIM_SHARED_SECRET", None)
-            with pytest.raises(ValueError, match="SLIM shared secret required"):
-                await builder.start()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(slim_common, "logger") as log,
+        ):
+            await builder.start()
+
+        config = session.add.call_args[0][0]
+        assert config.connection.shared_secret is None
+        assert not log.warning.called
 
     @pytest.mark.asyncio
-    async def test_raises_on_missing_slim_shared_secret_for_slim_transport(
+    async def test_allowed_placeholder_is_left_to_the_transport(
         self,
     ) -> None:
-        """slim interface declared but SLIM_SHARED_SECRET not set."""
+        """slim interface, no secret, placeholder allowed: SLIMTransport
+        resolves it, so CardBuilder passes ``None`` and does not warn itself."""
+        factory = MagicMock()
+        factory.create_transport.return_value = MagicMock()
+        session = MagicMock()
+        session.start_all_sessions = AsyncMock()
         builder = _make_builder(
             interfaces=[
                 AgentInterface(
                     protocol_binding="slim",
                     url="slim://my_topic",
                 )
-            ]
-        )
+            ],
+            session=session,
+            factory=factory,
+        ).allow_placeholder_secret()
 
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("SLIM_SHARED_SECRET", None)
-            with pytest.raises(ValueError, match="SLIM shared secret required"):
-                await builder.start()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(slim_common, "logger") as log,
+        ):
+            await builder.start()
+
+        call_kwargs = factory.create_transport.call_args.kwargs
+        assert call_kwargs["shared_secret_identity"] is None
+        assert not log.warning.called
 
     @pytest.mark.asyncio
     async def test_with_shared_secret_bypasses_env_var(self) -> None:
@@ -667,7 +744,8 @@ class TestCardBuilderBuildsContainers:
         assert isinstance(config, A2ASlimRpcServerConfig)
         assert config.connection.identity == "org/ns/agent"
         assert config.connection.endpoint == "http://host:46357"
-        assert config.connection.shared_secret == "secret" * 6
+        # Resolved from SLIM_SHARED_SECRET by the RPC server at setup.
+        assert config.connection.shared_secret is None
 
         mock_builder.with_session_id.assert_called_once_with("slimrpc-0")
         session.start_all_sessions.assert_awaited_once_with(keep_alive=False)
@@ -862,7 +940,7 @@ class TestCardBuilderBuildsContainers:
             "SLIM",
             endpoint="http://slim:46357",
             name="my_topic",
-            shared_secret_identity="secret" * 6,
+            shared_secret_identity=None,
             tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
@@ -903,7 +981,7 @@ class TestCardBuilderBuildsContainers:
             "SLIM",
             endpoint="http://host:46357",
             name="my_topic",
-            shared_secret_identity="secret" * 6,
+            shared_secret_identity=None,
             tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
@@ -1327,7 +1405,7 @@ class TestCardBuilderAliasedBuilds:
             "SLIM",
             endpoint="http://localhost:46357",
             name="my_topic",
-            shared_secret_identity="secret" * 6,
+            shared_secret_identity=None,
             tls_insecure=True,
         )
         mock_builder.with_topic.assert_called_once_with("my_topic")
@@ -1788,8 +1866,8 @@ class TestCardBuilderPublicUrl:
         assert _urls(card) == [("JSONRPC", _BIND_URL)]
 
     @pytest.mark.asyncio
-    async def test_without_public_url_the_card_is_served_as_is(self) -> None:
-        """Default behavior is unchanged: same object, no copy."""
+    async def test_without_public_url_an_equal_copy_is_served(self) -> None:
+        """The served card is a copy, so handler edits stay off the caller's card."""
         builder, session, _, card = _public_url_builder(
             [AgentInterface(protocol_binding="JSONRPC", url=_BIND_URL)]
         )
@@ -1797,7 +1875,30 @@ class TestCardBuilderPublicUrl:
         await builder.start()
 
         served = session.add.call_args.args[0].agent_card
-        assert served is card
+        assert served == card
+        assert served is not card
+
+    @pytest.mark.asyncio
+    async def test_handlers_share_one_copy_and_its_edits_stay_off_the_card(
+        self,
+    ) -> None:
+        from agntcy_app_sdk.semantic.a2a.card_utils import declare_identity_auth
+
+        builder, session, _, card = _public_url_builder(
+            [
+                AgentInterface(protocol_binding="slimrpc", url="slim://org/ns/agent"),
+                AgentInterface(protocol_binding="jsonrpc", url=_BIND_URL),
+            ]
+        )
+
+        with patch.dict(os.environ, {"SLIM_SHARED_SECRET": "secret" * 6}):
+            await builder.start()
+
+        served = [call.args[0].agent_card for call in session.add.call_args_list]
+        assert len(served) == 2 and served[0] is served[1]
+        declare_identity_auth(served[0])
+        assert not card.security_requirements
+        assert not card.security_schemes
 
     @pytest.mark.asyncio
     async def test_only_the_http_interface_changes_and_order_is_kept(self) -> None:
@@ -1881,7 +1982,7 @@ class TestCardBuilderPublicUrl:
 
         log.warning.assert_called_once()
         assert "ignored" in log.warning.call_args.args[0]
-        assert session.add.call_args.args[0].agent_card is card
+        assert session.add.call_args.args[0].agent_card == card
 
     @pytest.mark.asyncio
     async def test_ignored_with_a_warning_when_http_is_skipped(self) -> None:
@@ -1896,7 +1997,7 @@ class TestCardBuilderPublicUrl:
             await builder.skip("jsonrpc").with_public_url(_PUBLIC_URL).start()
 
         log.warning.assert_called_once()
-        assert session.add.call_args.args[0].agent_card is card
+        assert session.add.call_args.args[0].agent_card == card
 
     @pytest.mark.asyncio
     async def test_ignored_with_a_warning_when_http_is_overridden(self) -> None:

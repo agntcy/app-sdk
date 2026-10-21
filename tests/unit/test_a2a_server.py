@@ -13,6 +13,8 @@
 
 import asyncio
 import json
+import threading
+import time
 import warnings
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -749,6 +751,100 @@ class TestPatternsBridgeProtocol:
         assert "error" not in reply
         assert reply["result"]["message"]["parts"][0]["text"] == "Hello from agent"
 
+    @staticmethod
+    def _agent_message(text: str, **ids: str) -> dict[str, Any]:
+        return {
+            "messageId": f"m-{text}",
+            "role": "ROLE_AGENT",
+            "parts": [{"text": text}],
+            **ids,
+        }
+
+    @staticmethod
+    def _relayed_task(task: dict[str, Any]) -> bytes:
+        return json.dumps(
+            {"jsonrpc": "2.0", "id": "upstream", "result": {"task": task}}
+        ).encode()
+
+    @pytest.mark.asyncio
+    async def test_relayed_task_forwards_status_message(self) -> None:
+        server, _ = _loopback(streaming=False)
+        task = {
+            "id": "t-up",
+            "contextId": "c-up",
+            "status": {
+                "state": "TASK_STATE_COMPLETED",
+                "message": self._agent_message("status", taskId="t-up"),
+            },
+            "history": [self._agent_message("older", taskId="t-up")],
+        }
+
+        reply = await self._call(server, self._relayed_task(task))
+
+        assert "error" not in reply
+        assert reply["result"]["message"]["parts"][0]["text"] == "Hello from agent"
+
+    def test_relayed_task_without_status_message_uses_last_agent_message(
+        self,
+    ) -> None:
+        task = {
+            "id": "t-up",
+            "status": {"state": "TASK_STATE_COMPLETED"},
+            "history": [
+                self._agent_message("first"),
+                self._agent_message("last", taskId="t-up", contextId="c-up"),
+                {"messageId": "m-user", "role": "ROLE_USER", "parts": [{"text": "q"}]},
+            ],
+        }
+
+        request = json.loads(
+            A2AExperimentalServer._unwrap_relay(self._relayed_task(task))
+        )
+
+        assert request["method"] == "SendMessage"
+        assert request["params"]["message"] == {
+            "messageId": "m-last",
+            "role": "ROLE_AGENT",
+            "parts": [{"text": "last"}],
+            "contextId": "c-up",
+            "metadata": {"relayed_from": {"task_id": "t-up", "context_id": "c-up"}},
+        }
+
+    @pytest.mark.asyncio
+    async def test_relayed_task_with_artifacts_only_is_not_relayed(self) -> None:
+        server, _ = _loopback(streaming=False)
+        task = {
+            "id": "t-up",
+            "status": {"state": "TASK_STATE_COMPLETED"},
+            "artifacts": [{"artifactId": "a1", "parts": [{"text": "file"}]}],
+        }
+
+        reply = await self._call(server, self._relayed_task(task))
+
+        assert reply["error"]["code"] == -32600
+        assert "Task with no agent message" in reply["error"]["data"]
+
+    @pytest.mark.asyncio
+    async def test_relayed_message_with_upstream_task_id_moves_it_to_metadata(
+        self,
+    ) -> None:
+        server, _ = _loopback(streaming=False)
+        msg = self._agent_message("hi", taskId="t-up")
+        msg["metadata"] = {"trace": "keep"}
+        relayed = json.dumps(
+            {"jsonrpc": "2.0", "id": "upstream", "result": {"message": msg}}
+        ).encode()
+
+        request = json.loads(A2AExperimentalServer._unwrap_relay(relayed))
+        reply = await self._call(server, relayed)
+
+        assert "taskId" not in request["params"]["message"]
+        assert request["params"]["message"]["metadata"] == {
+            "trace": "keep",
+            "relayed_from": {"task_id": "t-up"},
+        }
+        assert "error" not in reply
+
     @pytest.mark.asyncio
     async def test_streaming_publishes_intermediates_then_final(self) -> None:
         server, _ = _loopback(streaming=True)
@@ -861,6 +957,29 @@ class TestPatternsBridgeProtocol:
 
         assert SENDER_HEADER not in (reply.headers or {})
 
+    @pytest.mark.asyncio
+    async def test_handler_does_not_subscribe_when_auth_setup_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from agntcy_app_sdk.semantic.a2a.server import experimental_patterns as ep
+
+        def broken_sdk() -> Any:
+            raise RuntimeError("identity service unreachable")
+
+        monkeypatch.setenv("IDENTITY_AUTH_ENABLED", "true")
+        monkeypatch.setenv("IDENTITY_SERVICE_API_KEY", "unit-test-placeholder")
+        monkeypatch.setattr(ep, "IdentityServiceSdk", broken_sdk)
+        transport = _mock_transport("SLIM")
+        handler = A2AExperimentalServerHandler(
+            _config(), transport=transport, topic="agent_t"
+        )
+
+        with pytest.raises(RuntimeError, match="unreachable"):
+            await handler.setup()
+
+        transport.subscribe.assert_not_awaited()
+        transport.set_callback.assert_not_called()
+
     def test_handler_stamps_its_topic(self) -> None:
         handler = A2AExperimentalServerHandler(
             _config(), transport=_mock_transport("NATS"), topic="agent_t"
@@ -878,7 +997,9 @@ class TestPatternsBridgeIdentityAuth:
         server.bind_server(_config())
         sdk = MagicMock()
         if not authorize_ok:
-            sdk.authorize.side_effect = RuntimeError("bad token")
+            sdk.get_auth_service.return_value.ExtAuthz.side_effect = RuntimeError(
+                "bad token"
+            )
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(ep, "IdentityServiceSdk", lambda: sdk)
             server._configure_identity_auth()
@@ -898,6 +1019,28 @@ class TestPatternsBridgeIdentityAuth:
             ).encode(),
             headers=headers,
         )
+
+    @pytest.mark.asyncio
+    async def test_setup_fails_when_identity_sdk_cannot_be_built(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from agntcy_app_sdk.semantic.a2a.card_utils import IDENTITY_AUTH_SCHEME
+        from agntcy_app_sdk.semantic.a2a.server import experimental_patterns as ep
+
+        monkeypatch.setenv("IDENTITY_AUTH_ENABLED", "true")
+        monkeypatch.setenv("IDENTITY_SERVICE_API_KEY", "unit-test-placeholder")
+        monkeypatch.setattr(
+            ep, "IdentityServiceSdk", MagicMock(side_effect=KeyError("ROOT_CA"))
+        )
+        server = A2AExperimentalServer()
+        server.bind_server(_config())
+
+        with pytest.raises(KeyError, match="ROOT_CA"):
+            await server.setup()
+
+        assert not server._auth_enabled
+        assert server._server is not None
+        assert IDENTITY_AUTH_SCHEME not in server._server.agent_card.security_schemes
 
     def test_configure_stamps_bearer_scheme_on_card(self) -> None:
         server = self._server_with_auth(True)
@@ -937,6 +1080,193 @@ class TestPatternsBridgeIdentityAuth:
         )
 
         assert "error" not in json.loads(reply.payload)
+        assert reply.status_code is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("authorize_ok", "headers", "status"),
+        [
+            (True, {}, 401),
+            (False, {"Authorization": "Bearer nope"}, 403),
+        ],
+    )
+    async def test_rejection_carries_its_status(
+        self, authorize_ok: bool, headers: dict[str, str], status: int
+    ) -> None:
+        server = self._server_with_auth(authorize_ok)
+
+        reply = await server.handle_message(self._request(headers))
+
+        assert reply.status_code == status
+        assert json.loads(reply.payload)["error"]["code"] == -32603
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("authorize_ok", "headers"),
+        [(True, {}), (False, {"Authorization": "Bearer nope"})],
+    )
+    async def test_client_recognises_the_rejection_and_drops_its_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        authorize_ok: bool,
+        headers: dict[str, str],
+    ) -> None:
+        from agntcy_app_sdk.common import auth
+
+        monkeypatch.setenv("IDENTITY_SERVICE_API_KEY", "unit-test-placeholder")
+        monkeypatch.setattr(
+            auth,
+            "_token_cache",
+            {("unit-test-placeholder", None): ("revoked", time.time() + 600)},
+        )
+        server = self._server_with_auth(authorize_ok)
+        reply = await server.handle_message(self._request(headers))
+        transport = MagicMock(spec=BaseTransport)
+        transport.request = AsyncMock(
+            return_value=Message.deserialize(reply.serialize())
+        )
+        client = PatternsClientTransport(transport, _card(), "agent_t")
+
+        response = await client.send_message(_user_request())
+
+        assert "Forbidden" in response.message.parts[0].text
+        assert not auth._token_cache
+
+
+class TestJsonRpcIdentityAuth:
+    """The HTTP JSON-RPC server enforces identity auth when it is enabled."""
+
+    _SEND = {
+        "jsonrpc": "2.0",
+        "id": "1",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "messageId": "m1",
+                "role": "ROLE_USER",
+                "parts": [{"text": "hi"}],
+            }
+        },
+    }
+
+    @staticmethod
+    async def _serve(
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        enabled: bool = True,
+        authorize_ok: bool = True,
+    ) -> tuple[TestClient, AgentCard]:
+        """Run ``setup()`` without binding a port; return the served app."""
+        from identityservice.auth import starlette as identity_starlette
+
+        from agntcy_app_sdk.semantic.a2a.server import jsonrpc
+
+        if enabled:
+            monkeypatch.setenv("IDENTITY_AUTH_ENABLED", "true")
+            monkeypatch.setenv("IDENTITY_SERVICE_API_KEY", "unit-test-placeholder")
+        else:
+            monkeypatch.delenv("IDENTITY_AUTH_ENABLED", raising=False)
+        sdk = MagicMock()
+        if not authorize_ok:
+            sdk.authorize.side_effect = RuntimeError("bad token")
+        monkeypatch.setattr(identity_starlette, "Sdk", lambda: sdk)
+        uvicorn_server = MagicMock()
+        uvicorn_server.return_value.serve = AsyncMock()
+        monkeypatch.setattr("uvicorn.Server", uvicorn_server)
+
+        card = _card()
+        handler = jsonrpc.A2AJsonRpcServerHandler(
+            _config(card), host="127.0.0.1", port=9000
+        )
+        await handler.setup()
+        await handler.teardown()
+        app = uvicorn_server.call_args.args[0].app
+        return TestClient(app), card
+
+    def _post(self, client: TestClient, headers: dict[str, str]) -> Any:
+        return client.post(
+            "/", json=self._SEND, headers={"A2A-Version": "1.0", **headers}
+        )
+
+    @pytest.mark.asyncio
+    async def test_agent_card_stays_public_and_advertises_the_scheme(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, card = await self._serve(monkeypatch)
+
+        response = client.get("/.well-known/agent-card.json")
+
+        assert response.status_code == 200
+        body = response.json()
+        scheme = body["securitySchemes"]["IdentityServiceAuthScheme"]
+        assert scheme["httpAuthSecurityScheme"]["scheme"] == "bearer"
+        assert body["securityRequirements"] == [
+            {"schemes": {"IdentityServiceAuthScheme": {"list": ["*"]}}}
+        ]
+        assert "IdentityServiceAuthScheme" in card.security_schemes
+
+    @pytest.mark.asyncio
+    async def test_missing_token_gets_401(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, _ = await self._serve(monkeypatch)
+
+        response = self._post(client, {})
+
+        assert response.status_code == 401
+        assert response.json()["error"] == "unauthorized"
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_gets_403(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, _ = await self._serve(monkeypatch, authorize_ok=False)
+
+        response = self._post(client, {"Authorization": "Bearer nope"})
+
+        assert response.status_code == 403
+        assert response.json()["error"] == "forbidden"
+
+    @pytest.mark.asyncio
+    async def test_valid_token_reaches_the_agent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, _ = await self._serve(monkeypatch)
+
+        response = self._post(client, {"Authorization": "Bearer ok"})
+
+        assert response.status_code == 200
+        assert response.json()["result"]["message"]["parts"][0]["text"] == (
+            "Hello from agent"
+        )
+
+    @pytest.mark.asyncio
+    async def test_disabled_auth_leaves_server_and_card_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client, card = await self._serve(monkeypatch, enabled=False)
+
+        assert self._post(client, {}).status_code == 200
+        assert not card.security_schemes
+        assert not card.security_requirements
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_warns_that_token_checks_block_the_loop(
+        self, monkeypatch: pytest.MonkeyPatch, enabled: bool
+    ) -> None:
+        logger = MagicMock()
+        monkeypatch.setattr("agntcy_app_sdk.semantic.a2a.server.jsonrpc.logger", logger)
+
+        await self._serve(monkeypatch, enabled=enabled)
+
+        warned = any(
+            "blocking call on the event loop and no deadline" in c.args[0]
+            and "nothing else on this event loop runs" in c.args[0]
+            and "indefinitely" in c.args[0]
+            for c in logger.warning.call_args_list
+        )
+        assert warned is enabled
 
 
 class TestJsonRpcPublicUrl:
@@ -1096,14 +1426,167 @@ class TestClientErrorForEmptyCard:
         assert "connect(url)" in str(exc.value)
 
 
-def test_authenticate_without_identity_sdk_denies() -> None:
-    server = A2AExperimentalServer(sender_id="agent")
-    server._auth_enabled = True
-    message = Message(
+def _bearer_message() -> Message:
+    return Message(
         type="request", payload=b"", headers={"Authorization": "Bearer token"}
     )
 
-    ok, reason, _ = server._authenticate(message)
+
+@pytest.mark.asyncio
+async def test_authenticate_without_identity_sdk_denies() -> None:
+    server = A2AExperimentalServer(sender_id="agent")
+    server._auth_enabled = True
+
+    ok, reason, _, status = await server._authenticate(_bearer_message())
 
     assert not ok
-    assert reason == "Identity service is not configured"
+    assert reason == "Authentication failed"
+    assert status == 403
+
+
+class TestPatternsAuthorizeOffLoop:
+    """The patterns server verifies tokens without blocking the event loop."""
+
+    @staticmethod
+    def _server(authorize: Callable[..., Any]) -> A2AExperimentalServer:
+        server = A2AExperimentalServer(sender_id="agent")
+        server._auth_enabled = True
+        sdk = MagicMock()
+        sdk.get_auth_service.return_value.ExtAuthz.side_effect = authorize
+        server._identity_sdk = sdk
+        return server
+
+    @pytest.mark.asyncio
+    async def test_valid_token_is_accepted_with_a_grpc_deadline(self) -> None:
+        from agntcy.identity.service.v1alpha1.auth_service_pb2 import ExtAuthzRequest
+
+        from agntcy_app_sdk.semantic.a2a.server import experimental_patterns
+
+        server = self._server(lambda *_, **__: None)
+
+        ok, reason, user, status = await server._authenticate(_bearer_message())
+
+        assert ok and reason == ""
+        assert user.is_authenticated
+        assert status is None
+        sdk = cast(MagicMock, server._identity_sdk)
+        sdk.get_auth_service.return_value.ExtAuthz.assert_called_once_with(
+            ExtAuthzRequest(access_token="token"),
+            timeout=experimental_patterns._AUTHORIZE_TIMEOUT,
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejected_token_gets_a_generic_reason_and_403(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def reject(*_: Any, **__: Any) -> None:
+            raise RuntimeError("grpc detail: bad token")
+
+        logger = MagicMock()
+        monkeypatch.setattr(
+            "agntcy_app_sdk.semantic.a2a.server.experimental_patterns.logger", logger
+        )
+        server = self._server(reject)
+
+        ok, reason, _, status = await server._authenticate(_bearer_message())
+
+        assert not ok
+        assert reason == "Authentication failed"
+        assert status == 403
+        logged = " ".join(str(a) for c in logger.warning.call_args_list for a in c.args)
+        assert "grpc detail: bad token" in logged
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("headers", "reason"),
+        [
+            ({}, "Missing or malformed Authorization header"),
+            (
+                {"Authorization": "Basic abc"},
+                "Missing or malformed Authorization header",
+            ),
+            ({"Authorization": "Bearer "}, "Empty bearer token"),
+        ],
+    )
+    async def test_missing_or_malformed_header_gets_401(
+        self, headers: dict[str, str], reason: str
+    ) -> None:
+        server = self._server(lambda *_, **__: None)
+        message = Message(type="request", payload=b"", headers=headers)
+
+        ok, got_reason, _, status = await server._authenticate(message)
+
+        assert not ok
+        assert got_reason == reason
+        assert status == 401
+
+    @pytest.mark.asyncio
+    async def test_event_loop_keeps_running_while_authorizing(self) -> None:
+        release = threading.Event()
+        server = self._server(lambda *_, **__: release.wait(5))
+        ticks = 0
+
+        async def tick() -> None:
+            nonlocal ticks
+            while not release.is_set():
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        async def release_soon() -> None:
+            await asyncio.sleep(0.1)
+            release.set()
+
+        (ok, _, _, _), _, _ = await asyncio.gather(
+            server._authenticate(_bearer_message()), tick(), release_soon()
+        )
+
+        assert ok
+        assert ticks > 1
+
+    @pytest.mark.asyncio
+    async def test_unanswered_identity_service_rejects_after_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from agntcy_app_sdk.semantic.a2a.server import experimental_patterns
+
+        monkeypatch.setattr(experimental_patterns, "_AUTHORIZE_TIMEOUT", 0.05)
+        release = threading.Event()
+        server = self._server(lambda *_, **__: release.wait(5))
+
+        try:
+            ok, reason, user, status = await server._authenticate(_bearer_message())
+        finally:
+            release.set()
+
+        assert not ok
+        assert reason == "Authentication failed"
+        assert status == 403
+        assert not user.is_authenticated
+
+    @pytest.mark.asyncio
+    async def test_stuck_checks_do_not_starve_the_default_executor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from agntcy_app_sdk.semantic.a2a.server import experimental_patterns
+
+        monkeypatch.setattr(experimental_patterns, "_AUTHORIZE_TIMEOUT", 0.05)
+        release = threading.Event()
+        threads: set[str] = set()
+
+        def stuck(*_: Any, **__: Any) -> None:
+            threads.add(threading.current_thread().name)
+            release.wait(5)
+
+        server = self._server(stuck)
+        workers = experimental_patterns._AUTHORIZE_EXECUTOR._max_workers
+
+        try:
+            results = await asyncio.gather(
+                *(server._authenticate(_bearer_message()) for _ in range(workers + 2))
+            )
+            await asyncio.wait_for(asyncio.to_thread(lambda: None), 1)
+        finally:
+            release.set()
+
+        assert all(not ok and status == 403 for ok, _, _, status in results)
+        assert threads and all(n.startswith("identity-authorize") for n in threads)

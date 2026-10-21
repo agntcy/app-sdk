@@ -60,6 +60,7 @@ from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.semantic.a2a.transport_types import (
     CANONICAL_TRANSPORTS as _CANONICAL_TRANSPORTS,
     InterfaceTransport,
+    name_host,
     normalize_transport as _normalize_transport,
 )
 
@@ -146,9 +147,7 @@ def _slim_endpoint_and_name(parsed: ParseResult) -> tuple[str, str]:
     or ``http://localhost:46357``.  A trailing ``/`` is not part of the name.
     An ``https://`` URL keeps that scheme; ``slim://`` has none, so its
     endpoint is ``http://`` until :meth:`CardBuilder.with_slim_tls` rewrites it.
-
-    ``urlparse`` lowercases the host, so the first segment of a port-less
-    name is lowercased.
+    The name keeps its case (SLIM names are case-sensitive).
     """
     p = parsed
     if p.port is not None:
@@ -158,7 +157,7 @@ def _slim_endpoint_and_name(parsed: ParseResult) -> tuple[str, str]:
         name = p.path.strip("/")
     else:
         endpoint = _resolve_slim_endpoint()
-        hostname = p.hostname or ""
+        hostname = name_host(p)
         path = p.path.strip("/")
         name = f"{hostname}/{path}" if path else hostname
     return endpoint, name
@@ -268,7 +267,7 @@ def _parse_nats_patterns(url: str, parsed: ParseResult) -> dict[str, str | int]:
     else:
         # Topic-only: nats://my_topic
         endpoint = _resolve_nats_endpoint()
-        topic = p.hostname or ""
+        topic = name_host(p)
 
     if not topic:
         raise ValueError(f"nats URL must include a topic: {url!r}")
@@ -336,6 +335,7 @@ class CardBuilder:
         ] = {}
         self._skips: set[str] = set()  # canonical transport_types to skip
         self._shared_secret: str | None = None
+        self._allow_placeholder_secret = False
         self._public_url: str | None = None
         self._slim_tls = False
 
@@ -380,10 +380,24 @@ class CardBuilder:
         """Provide the SLIM shared secret directly.
 
         If not called, the builder falls back to the ``SLIM_SHARED_SECRET``
-        environment variable.  A :class:`ValueError` is raised at start
-        time if neither is available and a SLIM-based transport is declared.
+        environment variable.  If neither is set, or the value is the public
+        placeholder, :meth:`dry_run` and :meth:`start` raise
+        :class:`ValueError` for SLIM-based interfaces unless
+        :meth:`allow_placeholder_secret` was called.
         """
         self._shared_secret = secret
+        return self
+
+    def allow_placeholder_secret(self) -> CardBuilder:
+        """Let SLIM interfaces start with the public placeholder secret.
+
+        For local demos and tests only: any peer that knows the placeholder
+        can join the agent's sessions.  Without this call a missing secret
+        is an error, so an unset ``SLIM_SHARED_SECRET`` in production fails
+        at start instead of silently using the placeholder.  The placeholder
+        is still logged as a warning when it is used.
+        """
+        self._allow_placeholder_secret = True
         return self
 
     def with_slim_tls(self) -> CardBuilder:
@@ -428,6 +442,9 @@ class CardBuilder:
         interface, ``.skip("jsonrpc")``, or an ``.override("jsonrpc", ...)``
         config, which is served as given), and rejected when several HTTP
         interfaces would be served, since one URL cannot describe all of them.
+
+        An ``extended_agent_card`` on the request handler is served as given;
+        set its URLs yourself.
         """
         if not url.startswith(("http://", "https://")):
             raise ValueError(
@@ -453,16 +470,39 @@ class CardBuilder:
             )
         return endpoint, not is_https
 
+    def _require_slim_secret(self, transport_type: str) -> None:
+        """Refuse a missing or placeholder secret unless the caller allowed it."""
+        from agntcy_app_sdk.transport.slim.common import (
+            PLACEHOLDER_SHARED_SECRET,
+            SLIM_SHARED_SECRET_ENV,
+        )
+
+        if self._allow_placeholder_secret:
+            return
+        secret = self._shared_secret or os.environ.get(SLIM_SHARED_SECRET_ENV)
+        if not secret or secret == PLACEHOLDER_SHARED_SECRET:
+            raise ValueError(
+                f"SLIM shared secret required for {transport_type} interface. "
+                "Use .with_shared_secret() or set the SLIM_SHARED_SECRET env "
+                "var; for a local demo, call .allow_placeholder_secret() to "
+                "use the public placeholder."
+            )
+
     def _served_card(
         self, interfaces: list[AgentInterface]
     ) -> tuple[AgentCard, int | None]:
         """Return the card to serve and the index of the interface whose URL
         was replaced by :meth:`with_public_url` (``None`` if untouched).
 
-        Without a public URL this is the caller's card, unchanged.
+        The served card is a copy shared by every handler built here, so the
+        handlers' edits (declared interfaces, identity auth) do not reach the
+        caller's card.
         """
+        from agntcy_app_sdk.semantic.a2a.card_utils import clone_card
+
+        served = clone_card(self._agent_card)
         if self._public_url is None:
-            return self._agent_card, None
+            return served, None
 
         http_indexes: list[int] = []
         for i, interface in enumerate(interfaces):
@@ -478,7 +518,7 @@ class CardBuilder:
                 "is served (none declared on the card, or it was skipped).",
                 self._public_url,
             )
-            return self._agent_card, None
+            return served, None
 
         if len(http_indexes) > 1:
             raise ValueError(
@@ -496,11 +536,8 @@ class CardBuilder:
                 self._public_url,
                 transport_type,
             )
-            return self._agent_card, None
+            return served, None
 
-        from agntcy_app_sdk.semantic.a2a.card_utils import clone_card
-
-        served = clone_card(self._agent_card)
         served.supported_interfaces[index].url = self._public_url
         return served, index
 
@@ -614,6 +651,7 @@ class CardBuilder:
                 else None
             )
             if transport_type in ("slimrpc", "slimpatterns") and slim_override is None:
+                self._require_slim_secret(transport_type)
                 slim_endpoint, tls_insecure = self._slim_connection(
                     interface, str(parsed["endpoint"])
                 )
@@ -624,17 +662,6 @@ class CardBuilder:
             if transport_type == "slimrpc":
                 override = self._overrides.get("slimrpc")
                 session_id = f"slimrpc-{i}"
-
-                if override is None:
-                    shared_secret = self._shared_secret or os.environ.get(
-                        "SLIM_SHARED_SECRET"
-                    )
-                    if not shared_secret:
-                        raise ValueError(
-                            "SLIM shared secret required for slimrpc interface. "
-                            "Use .with_shared_secret() or set SLIM_SHARED_SECRET "
-                            "env var."
-                        )
 
                 log = logger.bind(transport=transport_type, session_id=session_id)
                 log.info("Serving interface", **parsed)
@@ -659,13 +686,12 @@ class CardBuilder:
                 if override is not None:
                     session.add(override).with_session_id(session_id).build()
                 else:
-                    assert shared_secret is not None
                     config = A2ASlimRpcServerConfig(
                         agent_card=served_card,
                         request_handler=request_handler,
                         connection=SlimRpcConnectionConfig(
                             identity=str(parsed["identity"]),
-                            shared_secret=shared_secret,
+                            shared_secret=self._shared_secret,
                             endpoint=str(parsed["endpoint"]),
                             tls_insecure=tls_insecure,
                         ),
@@ -679,17 +705,6 @@ class CardBuilder:
                 # name — in SLIM, the transport name IS the routing address
                 # that clients send to.
                 routable_name = str(parsed["topic"])
-
-                if override is None:
-                    shared_secret = self._shared_secret or os.environ.get(
-                        "SLIM_SHARED_SECRET"
-                    )
-                    if not shared_secret:
-                        raise ValueError(
-                            "SLIM shared secret required for slim interface. "
-                            "Use .with_shared_secret() or set SLIM_SHARED_SECRET "
-                            "env var."
-                        )
 
                 log = logger.bind(transport=transport_type, session_id=session_id)
                 log.info("Serving interface", **parsed)
@@ -720,7 +735,7 @@ class CardBuilder:
                         "SLIM",
                         endpoint=str(parsed["endpoint"]),
                         name=routable_name,
-                        shared_secret_identity=shared_secret,
+                        shared_secret_identity=self._shared_secret,
                         tls_insecure=tls_insecure,
                     )
                 (

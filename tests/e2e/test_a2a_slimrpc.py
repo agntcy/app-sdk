@@ -26,8 +26,12 @@ from agntcy_app_sdk.semantic.a2a import ClientConfig as A2AClientConfig
 from agntcy_app_sdk.semantic.a2a import A2AClientFactory
 from agntcy_app_sdk.semantic.a2a.client.config import SlimRpcConfig
 from tests.e2e.conftest import TRANSPORT_CONFIGS, RunA2ASlimRpcServer
+from tests.server.a2a_slimrpc_server import _build_a2a_slimrpc_config
 
 pytest_plugins = "pytest_asyncio"
+
+# slima2a's setup_slim_client has no default secret; use the test server's.
+_SERVER_SECRET = _build_a2a_slimrpc_config().connection.shared_secret
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +97,7 @@ async def test_client(run_a2a_slimrpc_server: RunA2ASlimRpcServer) -> None:
         group="default",
         name="test_client",
         slim_url=endpoint,
+        secret=_SERVER_SECRET,
     )
 
     # 3. Create A2A client via upstream a2a-sdk ClientFactory + SRPCTransport
@@ -144,6 +149,7 @@ async def test_client_factory(run_a2a_slimrpc_server: RunA2ASlimRpcServer) -> No
         group="default",
         name="test_client_factory",
         slim_url=endpoint,
+        secret=_SERVER_SECRET,
     )
 
     # 3. Build SDK ClientConfig with eager slimrpc_channel_factory

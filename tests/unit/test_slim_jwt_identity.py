@@ -54,7 +54,6 @@ def test_empty_jwk_file_raises_value_error(tmp_path: Path) -> None:
     [
         ("token.jwt", None, "s" * 32, "got only jwt"),
         (None, "jwks.json", "s" * 32, "got only bundle"),
-        (None, None, None, "or a shared secret"),
     ],
 )
 async def test_incomplete_identity_is_rejected(
@@ -117,3 +116,74 @@ async def test_placeholder_shared_secret_logs_a_warning(
         assert "shared_secret_identity" in advice
         assert ".with_shared_secret()" in advice
         assert "SLIM_SHARED_SECRET" in advice
+
+
+@pytest.mark.asyncio
+async def test_missing_shared_secret_falls_back_to_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(common.SLIM_SHARED_SECRET_ENV, "e" * 32)
+    service = MagicMock()
+    service.connect_async = AsyncMock(return_value=1)
+    service.create_app.return_value.subscribe_async = AsyncMock()
+    with (
+        patch.object(common, "global_slim", None),
+        patch.object(common, "global_slim_service", None),
+        patch.object(common, "global_connection_id", None),
+        patch.object(common, "global_slim_insecure", None),
+        patch.object(common, "global_slim_endpoint", None),
+        patch.object(common, "get_or_init_slim_service", return_value=service),
+        patch.object(common, "new_client_config", MagicMock()),
+        patch.object(
+            common, "shared_secret_identity", return_value=(None, None)
+        ) as identity,
+    ):
+        await common.get_or_create_slim_instance(
+            MagicMock(),
+            "http://localhost:46357",
+            slim_insecure_client=True,
+        )
+
+    assert identity.call_args.kwargs["secret"] == "e" * 32
+
+
+@pytest.mark.parametrize(
+    ("secret", "env", "expected", "warned"),
+    [
+        ("a" * 32, "e" * 32, "a" * 32, False),
+        (None, "e" * 32, "e" * 32, False),
+        ("", "e" * 32, "e" * 32, False),
+        (None, None, common.PLACEHOLDER_SHARED_SECRET, True),
+        (None, "", common.PLACEHOLDER_SHARED_SECRET, True),
+        (
+            common.PLACEHOLDER_SHARED_SECRET,
+            None,
+            common.PLACEHOLDER_SHARED_SECRET,
+            True,
+        ),
+    ],
+    ids=[
+        "argument-wins",
+        "env-var",
+        "empty-argument-uses-env-var",
+        "placeholder",
+        "empty-env-var-uses-placeholder",
+        "explicit-placeholder-warns",
+    ],
+)
+def test_resolve_shared_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    secret: str | None,
+    env: str | None,
+    expected: str,
+    warned: bool,
+) -> None:
+    if env is None:
+        monkeypatch.delenv(common.SLIM_SHARED_SECRET_ENV, raising=False)
+    else:
+        monkeypatch.setenv(common.SLIM_SHARED_SECRET_ENV, env)
+
+    with patch.object(common, "logger") as log:
+        assert common.resolve_shared_secret(secret) == expected
+
+    assert log.warning.called is warned

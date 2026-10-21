@@ -411,6 +411,10 @@ For more details, refer to the [official documentation](https://identity-docs.ou
 
 **Important**: Ensure the `IDENTITY_SERVICE_API_KEY` values for the client and server are different to enforce proper TBAC functionality.
 
+The FastMCP server verifies each request's token with the Identity Service SDK's own middleware, which makes that call on the event loop with no deadline: while it waits, nothing else on that event loop runs (other SDK servers and clients in the same process included), and an Identity Service that never answers stalls them indefinitely. The server logs a warning about this at startup when identity auth is enabled.
+
+`call_tool` fetches a token for each tool in a worker thread, so a slow Identity Service does not hold up other work, and reuses it until 30 seconds before the expiry (`exp`) it carries, for at most 5 minutes. A token without an expiry is fetched again for every call. Calls for the same tool that need a token at the same moment share one fetch. A fetch that takes more than 10 seconds is given up, and the call goes out without a token. When the server rejects a call (status 401 or 403), `call_tool` raises `RuntimeError` and drops that tool's cached token, so the next call fetches a new one; the call is not retried. The rejection reply carries only a generic error; the server logs the details.
+
 ---
 
 ## Contributing additional Transports

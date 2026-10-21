@@ -28,6 +28,7 @@ from a2a.types import (
 
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 from agntcy_app_sdk.transport.base import BaseTransport
+from agntcy_app_sdk.transport.slim.common import resolve_shared_secret
 from tests.server.a2a_card_bootstrap_server import (
     get_slim_shared_secret,
     nats_card_endpoint,
@@ -602,6 +603,7 @@ def _reset_slim_globals() -> None:
     slim_common.global_connection_id = None
     slim_common.global_slim_insecure = None
     slim_common.global_slim_endpoint = None
+    slim_common.global_slim_auth = None
 
 
 # ---------------------------------------------------------------------------
@@ -762,13 +764,10 @@ def run_a2a_slimrpc_server() -> Iterator[RunA2ASlimRpcServer]:
         ]
         if streaming:
             extra_args.append("--streaming")
-        # The dedicated SlimRPC test server hardcodes this placeholder.
-        # Read it from the server config so the probe uses the same value.
-        from tests.server.a2a_slimrpc_server import _build_a2a_slimrpc_config
-
-        secret = _build_a2a_slimrpc_config(
-            name=name, endpoint=endpoint, streaming=streaming
-        ).connection.shared_secret
+        # The dedicated SlimRPC test server resolves its secret from
+        # SLIM_SHARED_SECRET (else the placeholder), and the subprocess
+        # inherits this environment, so the probe resolves the same value.
+        secret = resolve_shared_secret()
         return _spawn_server(
             procs,
             "tests/server/a2a_slimrpc_server.py",

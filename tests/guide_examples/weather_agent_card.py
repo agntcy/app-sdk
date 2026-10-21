@@ -16,8 +16,6 @@ Usage:
 
 import argparse
 import asyncio
-import os
-
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -137,18 +135,14 @@ async def main(transport_type: str, slim_endpoint: str, nats_endpoint: str) -> N
     await (
         session.add_a2a_card(agent_card, request_handler)
         .with_factory(factory)
+        # Demo only: without SLIM_SHARED_SECRET, server and client both use
+        # the public placeholder. Never call this in production.
+        .allow_placeholder_secret()
         .start(keep_alive=True)
     )
 
 
 if __name__ == "__main__":
-    # Set SLIM_SHARED_SECRET if not already set — add_a2a_card() requires it
-    # for SLIM transports.
-    if "SLIM_SHARED_SECRET" not in os.environ:
-        os.environ["SLIM_SHARED_SECRET"] = (
-            "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
-        )
-
     parser = argparse.ArgumentParser(
         description="Weather Agent (Card-Driven Bootstrap)"
     )

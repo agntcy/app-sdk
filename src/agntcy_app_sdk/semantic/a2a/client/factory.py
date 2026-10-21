@@ -7,23 +7,52 @@ import asyncio
 import dataclasses
 import datetime
 import warnings
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
+from contextlib import contextmanager
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import httpx
 from a2a.client import A2ACardResolver
 from a2a.client.base_client import BaseClient
-from a2a.client.client import Client
+from a2a.client.client import Client, ClientCallContext
 from a2a.client.client import ClientConfig as A2AClientConfig
 from a2a.client.client_factory import ClientFactory as UpstreamClientFactory
-from a2a.client.interceptors import ClientCallInterceptor
+from a2a.client.errors import A2AClientError
+from a2a.client.interceptors import AfterArgs, BeforeArgs, ClientCallInterceptor
 from a2a.client.transports.base import ClientTransport
 from a2a.types import AgentCard, AgentInterface
+from a2a.types.a2a_pb2 import (
+    CancelTaskRequest,
+    DeleteTaskPushNotificationConfigRequest,
+    GetExtendedAgentCardRequest,
+    GetTaskPushNotificationConfigRequest,
+    GetTaskRequest,
+    ListTaskPushNotificationConfigsRequest,
+    ListTaskPushNotificationConfigsResponse,
+    ListTasksRequest,
+    ListTasksResponse,
+    SendMessageRequest,
+    SendMessageResponse,
+    StreamResponse,
+    SubscribeToTaskRequest,
+    Task,
+    TaskPushNotificationConfig,
+)
+from a2a.utils.telemetry import SpanKind, trace_class
 
+import slim_bindings
 from slima2a.client_transport import SRPCTransport
 
+from agntcy_app_sdk.common.auth import (
+    get_access_token,
+    invalidate_access_token,
+    is_identity_auth_enabled,
+    is_plain_http_allowed,
+)
 from agntcy_app_sdk.common.logging_config import get_logger
 from agntcy_app_sdk.common.tracing import A2A_INSTRUMENTOR, instrument_if_ready
-from agntcy_app_sdk.semantic.a2a.card_utils import wire_binding
+from agntcy_app_sdk.semantic.a2a.card_utils import IDENTITY_AUTH_SCHEME, wire_binding
 from agntcy_app_sdk.semantic.a2a.client.config import ClientConfig
 from agntcy_app_sdk.semantic.a2a.client.experimental_patterns import (
     A2AExperimentalClient,
@@ -32,10 +61,19 @@ from agntcy_app_sdk.semantic.a2a.client.transports import (
     PatternsClientTransport,
     _parse_topic_from_url,
 )
+from agntcy_app_sdk.semantic.a2a.client.utils import AUTH_REJECTION_STATUSES
 from agntcy_app_sdk.semantic.a2a.transport_types import normalize_transport
 from agntcy_app_sdk.transport.base import BaseTransport
 
 logger = get_logger(__name__)
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _sends_token_in_clear(url: str) -> bool:
+    """True for a plain ``http://`` URL whose host is not the local machine."""
+    parsed = urlparse(url)
+    return parsed.scheme == "http" and parsed.hostname not in _LOCAL_HOSTS
 
 
 def _produce_slimrpc(
@@ -46,7 +84,147 @@ def _produce_slimrpc(
     config class)."""
     if not isinstance(config, ClientConfig) or config.slimrpc_channel_factory is None:
         raise ValueError("slimrpc_channel_factory is required when using sRPC")
-    return SRPCTransport(config.slimrpc_channel_factory(url), card)
+    return _MetadataSRPCTransport(config.slimrpc_channel_factory(url), card)
+
+
+def _metadata(context: ClientCallContext | None) -> dict[str, str] | None:
+    params = context.service_parameters if context is not None else None
+    return dict(params) if params else None
+
+
+# The RPC methods _MetadataSRPCTransport overrides.  slima2a traces
+# SRPCTransport's own methods; overrides need tracing again, and naming them
+# keeps the inherited ``close`` from being traced twice.
+_SRPC_TRACED_METHODS = [
+    "send_message",
+    "send_message_streaming",
+    "subscribe",
+    "get_task",
+    "list_tasks",
+    "cancel_task",
+    "create_task_push_notification_config",
+    "get_task_push_notification_config",
+    "list_task_push_notification_configs",
+    "delete_task_push_notification_config",
+    "get_extended_agent_card",
+]
+
+
+@trace_class(include_list=_SRPC_TRACED_METHODS, kind=SpanKind.CLIENT)
+class _MetadataSRPCTransport(SRPCTransport):
+    """``SRPCTransport`` that sends the call context's service parameters.
+
+    slima2a's transport ignores the ``context`` it is given, so the headers
+    interceptors add, the identity token among them, never leave the client.
+    The generated stub takes them as call ``metadata``.
+    """
+
+    async def send_message(
+        self,
+        request: SendMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> SendMessageResponse:
+        return await self.stub.SendMessage(request, metadata=_metadata(context))
+
+    async def send_message_streaming(
+        self,
+        request: SendMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> AsyncGenerator[StreamResponse, None]:
+        async for response in self.stub.SendStreamingMessage(
+            request, metadata=_metadata(context)
+        ):
+            yield response
+
+    async def subscribe(
+        self,
+        request: SubscribeToTaskRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> AsyncGenerator[StreamResponse, None]:
+        async for response in self.stub.SubscribeToTask(
+            request, metadata=_metadata(context)
+        ):
+            yield response
+
+    async def get_task(
+        self,
+        request: GetTaskRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> Task:
+        return await self.stub.GetTask(request, metadata=_metadata(context))
+
+    async def list_tasks(
+        self,
+        request: ListTasksRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> ListTasksResponse:
+        return await self.stub.ListTasks(request, metadata=_metadata(context))
+
+    async def cancel_task(
+        self,
+        request: CancelTaskRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> Task:
+        return await self.stub.CancelTask(request, metadata=_metadata(context))
+
+    async def create_task_push_notification_config(
+        self,
+        request: TaskPushNotificationConfig,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> TaskPushNotificationConfig:
+        return await self.stub.CreateTaskPushNotificationConfig(
+            request, metadata=_metadata(context)
+        )
+
+    async def get_task_push_notification_config(
+        self,
+        request: GetTaskPushNotificationConfigRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> TaskPushNotificationConfig:
+        return await self.stub.GetTaskPushNotificationConfig(
+            request, metadata=_metadata(context)
+        )
+
+    async def list_task_push_notification_configs(
+        self,
+        request: ListTaskPushNotificationConfigsRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> ListTaskPushNotificationConfigsResponse:
+        return await self.stub.ListTaskPushNotificationConfigs(
+            request, metadata=_metadata(context)
+        )
+
+    async def delete_task_push_notification_config(
+        self,
+        request: DeleteTaskPushNotificationConfigRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> None:
+        await self.stub.DeleteTaskPushNotificationConfig(
+            request, metadata=_metadata(context)
+        )
+
+    async def get_extended_agent_card(
+        self,
+        request: GetExtendedAgentCardRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> AgentCard:
+        card = self.agent_card
+        if card and not card.capabilities.extended_agent_card:
+            return card
+        return await self.stub.GetExtendedAgentCard(
+            request, metadata=_metadata(context)
+        )
 
 
 def _produce_patterns(
@@ -56,6 +234,212 @@ def _produce_patterns(
     if not isinstance(config, ClientConfig):
         raise ValueError("Patterns transports need the SDK's ClientConfig")
     return PatternsClientTransport.create(card, url, config)
+
+
+def _requires_identity_token(card: AgentCard) -> bool:
+    """True if *card* defines the Identity Service scheme and requires it."""
+    return IDENTITY_AUTH_SCHEME in card.security_schemes and any(
+        IDENTITY_AUTH_SCHEME in r.schemes for r in card.security_requirements
+    )
+
+
+class _IdentityAuthInterceptor(ClientCallInterceptor):
+    """Adds an Identity Service bearer token unless ``Authorization`` is set.
+
+    With *guard_by_card* (HTTP), only servers whose card requires the
+    Identity Service scheme get the token, so it is not handed to agents that
+    never asked for it.  Without it (slimrpc), every call carries the token:
+    slimrpc peers sit inside one SLIM deployment, like patterns peers, and
+    their cards are usually built locally without the scheme.  The token goes
+    into a copy of the call context, so a context the caller reuses never
+    keeps a stale token.
+    """
+
+    def __init__(self, *, guard_by_card: bool = True) -> None:
+        self._guard_by_card = guard_by_card
+
+    async def before(self, args: BeforeArgs) -> None:
+        if self._guard_by_card and not _requires_identity_token(args.agent_card):
+            return
+        params = (args.context.service_parameters if args.context else None) or {}
+        if any(k.lower() == "authorization" for k in params):
+            return
+        try:
+            access_token = await get_access_token()
+        except Exception as e:
+            logger.error("Failed to get access token for agent: %s", e)
+            return
+        if not access_token:
+            return
+        service_parameters = {**params, "Authorization": f"Bearer {access_token}"}
+        args.context = (
+            args.context.model_copy(update={"service_parameters": service_parameters})
+            if args.context is not None
+            else ClientCallContext(service_parameters=service_parameters)
+        )
+
+    async def after(self, args: AfterArgs) -> None:
+        return None
+
+
+_SLIMRPC_REJECTION_CODES = frozenset(
+    {slim_bindings.RpcCode.UNAUTHENTICATED, slim_bindings.RpcCode.PERMISSION_DENIED}
+)
+
+
+@contextmanager
+def _drop_token_on_rejection() -> Iterator[None]:
+    """Drop the cached identity token if the server answers 401 / 403.
+
+    a2a-sdk raises ``A2AClientError`` chained ``from`` the
+    ``httpx.HTTPStatusError``, for plain and streaming requests alike.
+    slimrpc raises ``slim_bindings.RpcError`` with ``UNAUTHENTICATED`` or
+    ``PERMISSION_DENIED`` unchanged.
+    """
+    try:
+        yield
+    except slim_bindings.RpcError as e:
+        code = getattr(e, "code", None)
+        if code in _SLIMRPC_REJECTION_CODES:
+            logger.error("Received slimrpc %s due to identity auth", code)
+            invalidate_access_token()
+        raise
+    except A2AClientError as e:
+        cause = e.__cause__
+        if (
+            isinstance(cause, httpx.HTTPStatusError)
+            and cause.response.status_code in AUTH_REJECTION_STATUSES
+        ):
+            logger.error(
+                "Received HTTP %d in A2A response due to identity auth",
+                cause.response.status_code,
+            )
+            invalidate_access_token()
+        raise
+
+
+class _DropRejectedTokenClient(Client):
+    """Drops the cached identity token when the server rejects it (401 / 403,
+    or the slimrpc codes ``UNAUTHENTICATED`` / ``PERMISSION_DENIED``).
+
+    a2a-sdk calls an interceptor's ``after`` only when a call succeeds, so
+    ``_IdentityAuthInterceptor`` never sees a rejection.  The error is
+    re-raised unchanged and the request is not retried: a 403 can also mean
+    "caller not allowed", and a request may not be safe to send twice.
+    """
+
+    def __init__(self, client: Client) -> None:
+        super().__init__()
+        self._client = client
+
+    async def send_message(
+        self,
+        request: SendMessageRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> AsyncIterator[StreamResponse]:
+        with _drop_token_on_rejection():
+            async for event in self._client.send_message(request, context=context):
+                yield event
+
+    async def get_task(
+        self,
+        request: GetTaskRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> Task:
+        with _drop_token_on_rejection():
+            return await self._client.get_task(request, context=context)
+
+    async def list_tasks(
+        self,
+        request: ListTasksRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> ListTasksResponse:
+        with _drop_token_on_rejection():
+            return await self._client.list_tasks(request, context=context)
+
+    async def cancel_task(
+        self,
+        request: CancelTaskRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> Task:
+        with _drop_token_on_rejection():
+            return await self._client.cancel_task(request, context=context)
+
+    async def create_task_push_notification_config(
+        self,
+        request: TaskPushNotificationConfig,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> TaskPushNotificationConfig:
+        with _drop_token_on_rejection():
+            return await self._client.create_task_push_notification_config(
+                request, context=context
+            )
+
+    async def get_task_push_notification_config(
+        self,
+        request: GetTaskPushNotificationConfigRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> TaskPushNotificationConfig:
+        with _drop_token_on_rejection():
+            return await self._client.get_task_push_notification_config(
+                request, context=context
+            )
+
+    async def list_task_push_notification_configs(
+        self,
+        request: ListTaskPushNotificationConfigsRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> ListTaskPushNotificationConfigsResponse:
+        with _drop_token_on_rejection():
+            return await self._client.list_task_push_notification_configs(
+                request, context=context
+            )
+
+    async def delete_task_push_notification_config(
+        self,
+        request: DeleteTaskPushNotificationConfigRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> None:
+        with _drop_token_on_rejection():
+            await self._client.delete_task_push_notification_config(
+                request, context=context
+            )
+
+    async def subscribe(
+        self,
+        request: SubscribeToTaskRequest,
+        *,
+        context: ClientCallContext | None = None,
+    ) -> AsyncIterator[StreamResponse]:
+        with _drop_token_on_rejection():
+            async for event in self._client.subscribe(request, context=context):
+                yield event
+
+    async def get_extended_agent_card(
+        self,
+        request: GetExtendedAgentCardRequest,
+        *,
+        context: ClientCallContext | None = None,
+        signature_verifier: Callable[[AgentCard], None] | None = None,
+    ) -> AgentCard:
+        with _drop_token_on_rejection():
+            return await self._client.get_extended_agent_card(
+                request, context=context, signature_verifier=signature_verifier
+            )
+
+    async def add_interceptor(self, interceptor: ClientCallInterceptor) -> None:
+        await self._client.add_interceptor(interceptor)
+
+    async def close(self) -> None:
+        await self._client.close()
 
 
 class A2AClientFactory:
@@ -131,7 +515,15 @@ class A2AClientFactory:
         Returns:
             A ``Client`` instance.  For patterns transports this is an
             ``A2AExperimentalClient``; for sync transports (JSONRPC,
-            slimrpc) it is the upstream ``Client`` (``BaseClient``).
+            slimrpc) it is the upstream ``Client`` (``BaseClient``).  With
+            identity auth enabled and a card that requires the token, the
+            JSONRPC or slimrpc client is wrapped so a rejection drops the
+            cached token.
+
+        Raises:
+            ValueError: no transport matches, or identity auth would send the
+                token over plain ``http://`` to a non-local host while
+                ``IDENTITY_AUTH_ALLOW_HTTP`` is false.
         """
         if consumers:
             warnings.warn(
@@ -180,14 +572,63 @@ class A2AClientFactory:
             selected = self._select_card(
                 card, transport_label_lower, transport_url, url=topic
             )
-            return self._upstream.create(selected, interceptors)
+            return self._create_upstream(
+                card, selected, interceptors, guard_by_card=False
+            )
         else:
             # Sync path — construct JSONRPC client via upstream factory.
             # The upstream factory matches ``protocol_binding`` exactly
             # (``"JSONRPC"``), so hand it a card holding only the chosen
             # interface with the binding rewritten to the upstream casing.
             selected = self._select_card(card, transport_label_lower, transport_url)
+            if (
+                is_identity_auth_enabled()
+                and _requires_identity_token(card)
+                and _sends_token_in_clear(transport_url)
+            ):
+                # Plain http:// is allowed by default: the SDK's demo apps
+                # run agents over plain HTTP, and refusing it would break
+                # them.  IDENTITY_AUTH_ALLOW_HTTP=false refuses it instead.
+                if not is_plain_http_allowed():
+                    raise ValueError(
+                        f"Identity auth would send the bearer token unencrypted "
+                        f"to {transport_url}, and IDENTITY_AUTH_ALLOW_HTTP is "
+                        f"false. Use https://, or set IDENTITY_AUTH_ALLOW_HTTP="
+                        f"true to allow plain http://."
+                    )
+                logger.debug(
+                    "Sending the identity token over plain http:// to %s "
+                    "(IDENTITY_AUTH_ALLOW_HTTP is true)",
+                    transport_url,
+                )
+            return self._create_upstream(
+                card, selected, interceptors, guard_by_card=True
+            )
+
+    def _create_upstream(
+        self,
+        card: AgentCard,
+        selected: AgentCard,
+        interceptors: list[ClientCallInterceptor] | None,
+        *,
+        guard_by_card: bool,
+    ) -> Client:
+        """Build a JSONRPC or slimrpc client with the upstream factory.
+
+        With identity auth enabled, the client attaches the token (with
+        *guard_by_card*, only for a card that requires it), and a rejection
+        of a call that carried it drops the cached token.
+        """
+        if not is_identity_auth_enabled():
             return self._upstream.create(selected, interceptors)
+        interceptors = [
+            *(interceptors or []),
+            _IdentityAuthInterceptor(guard_by_card=guard_by_card),
+        ]
+        client = self._upstream.create(selected, interceptors)
+        if not guard_by_card or _requires_identity_token(card):
+            return _DropRejectedTokenClient(client)
+        return client
 
     @classmethod
     async def connect(
@@ -300,6 +741,10 @@ class A2AClientFactory:
 
         # Several interfaces may share the negotiated binding (e.g. a legacy
         # 0.3 and a 1.0 JSON-RPC endpoint); pick among them as upstream does.
+        # _find_best_interface is private upstream; on an a2a-sdk upgrade the
+        # test_same_binding_prefers_protocol_version_1_0 and
+        # test_protocol_version_does_not_override_binding_preference tests
+        # fail if it was renamed or changed.
         wanted = normalize_transport(transport_protocol)
         candidates = [
             iface
@@ -463,6 +908,7 @@ class A2AClientFactory:
         from agntcy_app_sdk.transport.slim.common import (
             get_or_init_slim_service,
             new_client_config,
+            resolve_shared_secret,
         )
         from slima2a.client_transport import (
             slimrpc_channel_factory as _slimrpc_channel_factory,
@@ -495,7 +941,9 @@ class A2AClientFactory:
         rpc_app_name = slim_bindings.Name(
             rpc_cfg.namespace, rpc_cfg.group, rpc_cfg.name + "-rpc"
         )
-        slim_app = service.create_app_with_secret(rpc_app_name, rpc_cfg.secret)
+        slim_app = service.create_app_with_secret(
+            rpc_app_name, resolve_shared_secret(rpc_cfg.secret)
+        )
 
         # Subscribe the new app on the dedicated connection so that
         # RPC session handshakes can find this participant.

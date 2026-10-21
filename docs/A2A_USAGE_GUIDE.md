@@ -90,6 +90,8 @@ SlimRPC is the recommended path for agents communicating over SLIM. It uses the 
 
 ### Server: `weather_agent_srpc.py`
 
+Server and client must use the same SLIM shared secret (at least 32 characters). Both examples hardcode the same demo value on purpose. When you omit the secret, the SDK uses the `SLIM_SHARED_SECRET` environment variable, else a public placeholder and logs a warning; in production, set `SLIM_SHARED_SECRET` to a random value from a secret manager.
+
 ```python
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -169,7 +171,8 @@ async def main():
         request_handler=request_handler,
         connection=SlimRpcConnectionConfig(
             identity="default/default/weather-agent",
-            shared_secret="my-shared-secret",
+            # Hardcoded on purpose: a demo value, not a real secret.
+            shared_secret="my-shared-secret-at-least-32-characters-long",
             endpoint="http://localhost:46357",
         ),
     )
@@ -207,6 +210,9 @@ async def main():
         group="default",
         name="weather_client",
         slim_url="http://localhost:46357",
+        # Hardcoded on purpose: a demo value, not a real secret. Must match
+        # the server's shared_secret.
+        secret="my-shared-secret-at-least-32-characters-long",
     )
 
     # 2. Build a ClientConfig with slimrpc enabled.
@@ -220,7 +226,9 @@ async def main():
         # nats_config=NatsTransportConfig(...),   # for NATS patterns
     )
 
-    # 3. Create client — transport negotiation happens inside create()
+    # 3. Create client — transport negotiation happens inside create().
+    # With IDENTITY_AUTH_ENABLED, every slimrpc call carries this agent's
+    # identity token, whatever the card declares (see Identity TBAC below).
     card = minimal_agent_card("default/default/weather-agent", ["slimrpc"])
     client = await factory.a2a(config).create(card)
 
@@ -376,16 +384,14 @@ async def main():
     await (
         session.add_a2a_card(agent_card, request_handler)
         .with_factory(factory)
+        # Demo only: without SLIM_SHARED_SECRET, server and client both use
+        # the public placeholder. Never call this in production.
+        .allow_placeholder_secret()
         .start(keep_alive=True)
     )
 
 if __name__ == "__main__":
     import asyncio
-    import os
-
-    # SLIM_SHARED_SECRET is required for SLIM transports
-    if "SLIM_SHARED_SECRET" not in os.environ:
-        os.environ["SLIM_SHARED_SECRET"] = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
 
     asyncio.run(main())
 ```
@@ -476,10 +482,11 @@ if __name__ == "__main__":
   - `.with_public_url(url)` — advertise a reachable URL for the `JSONRPC` interface. The card's `JSONRPC` URL (e.g. `http://0.0.0.0:9000`) is where the server binds, which clients usually cannot reach; the served card carries `url` instead
   - `.with_slim_tls()` — connect the `slim` and `slimrpc` interfaces over TLS: explicit endpoints are dialled as `https://host:port`, and an `http://` `SLIM_ENDPOINT` is refused instead of connecting in plaintext
   - `.dry_run()` — returns a `ServeCardPlan` describing what _would_ be started, without starting anything
-- **`SLIM_SHARED_SECRET`:** Required environment variable for any SLIM-based transport. Set it before calling `start()`.
+- **`SLIM_SHARED_SECRET`:** For SLIM-based interfaces, `CardBuilder` uses `.with_shared_secret()`, else this environment variable. Set it before calling `start()`. If neither is set, or the value is the public placeholder, `start()` and `dry_run()` raise `ValueError`, unless you call `.allow_placeholder_secret()`, which is for local demos only.
 - **URL formats:** Each interface URL supports two styles:
   - **Topic-only:** `slim://my_topic` or `slim://org/ns/agent` — endpoint resolved from `SLIM_ENDPOINT` env var (default: `http://localhost:46357`). A path without a port is part of the SLIM name, not a host.
   - **Explicit endpoint:** `slim://host:46357/my_topic` or `slim://host:46357/org/ns/agent` — endpoint extracted from the URL. A port is what marks the dataplane address.
+- **Relayed replies (SLIM / NATS patterns):** a patterns server also accepts another agent's JSON-RPC success response as its input, as group chat does when it passes a reply to the next participant, and turns it into a `SendMessage` request. A Message reply is relayed as it is. A Task reply is relayed through its status message, or else the last agent message in its history. A Task with only artifacts, which is what a2a-sdk's `TaskUpdater.complete()` produces without a `message`, is rejected with `InvalidRequest`; an agent whose replies are relayed should complete with a message, for example `await updater.complete(message=...)`. The upstream `taskId` moves to `metadata["relayed_from"]`.
 - **SLIM TLS:** a SLIM connection uses TLS when its endpoint is `https://`. That is an `https://` interface URL, `SLIM_ENDPOINT=https://...` for a topic-only URL, or `.with_slim_tls()` for a `slim://host:port/...` URL. Otherwise it is plaintext. The dataplane must present a certificate this host trusts. `.override()` configs are used as given.
 
 ### Running
@@ -519,6 +526,29 @@ Activate Agntcy Identity Service TBAC by configuring the `IDENTITY_AUTH_ENABLED`
 For more details, refer to the [official documentation](https://identity-docs.outshift.com/docs/dev#a2a-integration-using-the-python-sdk).
 
 **Important**: Ensure the `IDENTITY_SERVICE_API_KEY` values for the client and server are different to enforce proper TBAC functionality.
+
+What the SDK does when identity auth is enabled:
+
+| Server transport | Token required | Rejection |
+|---|---|---|
+| HTTP JSON-RPC | On every request except the agent card at `/.well-known/agent-card.json` | HTTP 401 for a missing or malformed `Authorization` header, HTTP 403 for a token that fails verification |
+| SLIM / NATS patterns | On every request | A JSON-RPC error reply |
+| SLIM-RPC (`slimrpc`) | On every call. The SDK client sends the token as call metadata | RPC error `UNAUTHENTICATED` for a missing or malformed `Authorization` entry, `PERMISSION_DENIED` for a token that fails verification |
+
+Each token is verified with a call to the Identity Service:
+
+- The SLIM / NATS patterns server and the SLIM-RPC server make that call in their own pool of worker threads, so other requests keep being served while it waits. If the Identity Service does not answer within 10 seconds, the request is rejected like an invalid token. If the Identity Service SDK cannot be set up (for example, a missing setting), the server does not start: it fails before it subscribes, so it never serves a request it cannot check. A rejected request gets status 401 (`UNAUTHENTICATED` on SLIM-RPC) when the `Authorization` header is missing or malformed, and 403 (`PERMISSION_DENIED`) when the token is rejected or cannot be checked; the reply says only "Authentication failed", and the details go to the server log.
+- The HTTP JSON-RPC server uses the Identity Service SDK's own middleware, which makes the call on the event loop with no deadline: while it waits, nothing else on that event loop runs (other SDK servers and clients in the same process included), and an Identity Service that never answers stalls them indefinitely. The server logs a warning about this at startup when identity auth is enabled. The middleware sets up the Identity Service SDK on the first request, so a missing setting gives an error response to each request rather than a startup failure. Its 403 body is `{"error": "forbidden", "reason": "Authentication failed: <error>"}`, where `<error>` is the Identity Service SDK's exception text, which can name internal hosts; this comes from identity SDK 0.0.7 and is not changed by this SDK.
+
+The server also advertises the scheme on the agent card it serves: `IdentityServiceAuthScheme` (HTTP bearer, JWT) becomes the card's only entry in `security_requirements`, replacing any requirement you declared (a warning names the dropped ones, their schemes are removed from `security_schemes`, and skill requirements that name a removed scheme are dropped too, with a warning per skill), because the server enforces only this scheme. Schemes that no card-level requirement named, and skill requirements that name only such schemes, stay on the card and are not enforced, so remove them from the card yourself if the agent does not check them. `session.add_a2a_card(...)` serves a copy of your card, shared by every handler it builds, so your card object is not changed. A handler you build yourself, without `add_a2a_card`, edits the card you give it.
+
+On the client side, SDK-built clients attach an Identity Service bearer token to every SLIM / NATS patterns request (including broadcast and group chat), to every SLIM-RPC call, and to every HTTP JSON-RPC request to a server whose agent card requires `IdentityServiceAuthScheme`, unless the request already has an `Authorization` header in any letter case (for example, from your own interceptor). Broadcast and group chat add the token to a copy, so the message you pass in is not changed. `slima2a`'s own `SRPCTransport` sends no call metadata, so the SDK's client uses a subclass that sends the call's service parameters, the token among them, as metadata, and keeps `slima2a`'s client tracing spans; a client built directly from `slima2a` sends no token and is rejected. A SLIM-RPC client has no served card to read, and is usually built from `minimal_agent_card(...)`, which declares no scheme, so it sends the token to every SLIM-RPC peer it calls: any peer that receives it can replay it to other agents that accept the same token until it expires, so only call SLIM-RPC peers you trust with it. An HTTP client built from a card that does not require the scheme sends no token; `A2AClientFactory.connect(url)` reads the served card, which does. With identity auth enabled, `A2AClientFactory.create()` returns a wrapper `Client` for HTTP JSON-RPC (when the card requires the scheme) and for SLIM-RPC, not a2a-sdk's `BaseClient`, so do not rely on `BaseClient`-only attributes. The token is fetched in a worker thread, so a slow Identity Service does not hold up other work, and it is reused until 30 seconds before the expiry (`exp`) it carries, for at most 5 minutes. A token without an expiry is fetched again for every request. Requests that need a token at the same moment share one fetch, and all get its token or its error. A fetch that takes more than 10 seconds is given up, and the request goes out without a token. When a SLIM / NATS patterns server rejects a request, the client returns an "Access Forbidden" message (a streaming call yields it and ends) and drops the cached token, so the next request fetches a new one; the request is not retried. When an HTTP JSON-RPC server answers 401 / 403, or a SLIM-RPC server answers `UNAUTHENTICATED` / `PERMISSION_DENIED`, the client drops the cached token and raises the error unchanged; the request is not retried either.
+
+The bearer token is only as safe as the connection that carries it: over plain `http://` anyone on the network can read and replay it. Plain `http://` is allowed by default, because the SDK's demo apps run their agents that way. Set `IDENTITY_AUTH_ALLOW_HTTP=false` where agents should only be reached over `https://` (or behind a TLS-terminating proxy): `A2AClientFactory.create()` then raises `ValueError`, before sending anything, when it would send the token to an HTTP JSON-RPC agent at a plain `http://` URL on a host other than `localhost`, `127.0.0.1` or `::1`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `IDENTITY_AUTH_ALLOW_HTTP` | `true` | `false` (or `0`, `no`, `off`, `disabled`) refuses to send the identity token to an HTTP JSON-RPC agent at a non-local plain `http://` URL. It does not cover SLIM, NATS, SLIM-RPC or MCP connections; secure those with TLS on the SLIM / NATS endpoint. With the flag false, a card advertising `http://0.0.0.0:…` makes `create()` raise: advertise a reachable URL with `with_public_url`. An unrecognised value logs a warning and counts as `true`. |
 
 ---
 

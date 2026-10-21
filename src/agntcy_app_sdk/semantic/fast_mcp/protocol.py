@@ -67,6 +67,13 @@ class FastMCPProtocol:
 
         if is_identity_auth_enabled():
             logger.info("Identity auth enabled")
+            logger.warning(
+                "The Identity Service middleware verifies each request's token "
+                "with a blocking call on the event loop and no deadline: while "
+                "it waits, nothing else on this event loop runs (other servers "
+                "and clients in this process included), and an Identity "
+                "Service that never answers stalls them indefinitely."
+            )
             self._app.add_middleware(IdentityServiceMCPMiddleware)
 
         host = os.getenv("FAST_MCP_HOST", "0.0.0.0")
@@ -288,18 +295,21 @@ class FastMCPProtocol:
             # Extract the payload from the response body
             body = bytes(response_data["body"]).decode("utf-8").strip()
 
-            if any(
-                keyword in body.lower()
-                for keyword in ["authentication failed", "unauthorized"]
-            ):
+            status = response_data["status"]
+            if status in (401, 403):
+                # The middleware's body can describe the Identity Service and
+                # its policies, so it is logged here and not sent back.
+                logger.warning(
+                    "Identity auth rejected an MCP request (%s): %s", status, body
+                )
                 error_message = {
-                    "error": "Authentication failed or unauthorized access detected",
-                    "response_body": body,
+                    "error": "Authentication failed or unauthorized access detected"
                 }
                 return Message(
                     type="MCPResponse",
                     payload=json.dumps(error_message).encode("utf-8"),
                     reply_to=message.reply_to,
+                    status_code=status,
                 )
 
             for line in body.splitlines():

@@ -3,12 +3,14 @@
 
 import asyncio
 import base64
+import hashlib
 import warnings
 import weakref
 
 import click
 import datetime
 import json
+import os
 from typing import Any, cast
 
 import slim_bindings
@@ -18,6 +20,26 @@ from agntcy_app_sdk.common.logging_config import get_logger
 logger = get_logger(__name__)
 
 PLACEHOLDER_SHARED_SECRET = "slim-mls-secret-REPLACE_WITH_RANDOM_32PLUS_CHARS"
+SLIM_SHARED_SECRET_ENV = "SLIM_SHARED_SECRET"
+
+
+def resolve_shared_secret(secret: str | None = None) -> str:
+    """The SLIM shared secret to use: *secret*, else ``SLIM_SHARED_SECRET``.
+
+    Falls back to the public :data:`PLACEHOLDER_SHARED_SECRET`, which only
+    suits demos and local tests: any peer with the default can join your
+    sessions.  Read at call time, so an env var set after import applies.
+    """
+    resolved = secret or os.environ.get(SLIM_SHARED_SECRET_ENV)
+    if not resolved or resolved == PLACEHOLDER_SHARED_SECRET:
+        logger.warning(
+            "Using the placeholder SLIM shared secret; any peer with the "
+            "default can join your sessions. Pass shared_secret_identity, "
+            "SlimRpcConfig.secret or CardBuilder .with_shared_secret(), or set "
+            "the SLIM_SHARED_SECRET env var."
+        )
+        return PLACEHOLDER_SHARED_SECRET
+    return resolved
 
 
 # Split an ID into its components
@@ -164,6 +186,9 @@ global_slim_service: slim_bindings.Service | None = None
 # ``insecure`` flag the cached connection above was opened with.
 global_slim_insecure: bool | None = None
 global_slim_endpoint: str | None = None
+# Credentials the cached connection above was opened with; the shared secret
+# is kept only as a SHA-256 digest.
+global_slim_auth: tuple[Any, ...] | None = None
 
 
 def get_or_init_slim_service() -> slim_bindings.Service:
@@ -296,18 +321,26 @@ async def _get_or_create_slim_instance(
     audience: list[str] | None = None,
 ) -> tuple[slim_bindings.Service, slim_bindings.App, int]:
     global global_slim, global_connection_id, global_slim_service
-    global global_slim_insecure, global_slim_endpoint
+    global global_slim_insecure, global_slim_endpoint, global_slim_auth
+
+    if jwt or bundle:
+        secret = None
+        auth: tuple[Any, ...] = ("jwt", jwt, bundle, tuple(audience or ()))
+    else:
+        secret = resolve_shared_secret(shared_secret)
+        auth = ("secret", hashlib.sha256(secret.encode()).hexdigest())
 
     # One connection is shared by every SLIMTransport in the process.  Reusing
     # it is fine, but only if it is the connection this caller asked for.
     #
     # WHY we refuse a mismatch instead of reusing silently: a transport that is
-    # handed a connection to a different dataplane (or one opened with the other
-    # ``tls_insecure`` setting) does not fail, it just talks to the wrong place,
-    # and the cause is invisible from the caller's side.  Raising turns that
-    # into an immediate, self-explanatory error at the point of the mistake,
-    # without changing how the shared connection works for callers that are
-    # consistent.
+    # handed a connection to a different dataplane, one opened with the other
+    # ``tls_insecure`` setting, or one authenticated with other credentials
+    # (for example the public placeholder secret) does not fail, it just talks
+    # to the wrong place or as the wrong identity, and the cause is invisible
+    # from the caller's side.  Raising turns that into an immediate,
+    # self-explanatory error at the point of the mistake, without changing how
+    # the shared connection works for callers that are consistent.
     if (
         global_slim is not None
         and global_slim_service is not None
@@ -332,6 +365,13 @@ async def _get_or_create_slim_instance(
                 "one process share a single connection and must use the same "
                 "tls_insecure setting."
             )
+        if global_slim_auth is not None and auth != global_slim_auth:
+            raise ValueError(
+                "A SLIM connection is already open in this process with "
+                "different credentials (shared secret or JWT) than this "
+                "transport asked for. All SLIMTransports in one process share "
+                "a single connection and must use the same credentials."
+            )
         return global_slim_service, global_slim, global_connection_id
 
     slim_service = get_or_init_slim_service()
@@ -341,7 +381,7 @@ async def _get_or_create_slim_instance(
     client_config = new_client_config(slim_endpoint, insecure=slim_insecure_client)
 
     # Derive identity provider and verifier from JWK and JWT
-    if jwt or bundle:
+    if secret is None:
         if not (jwt and bundle):
             raise ValueError(
                 "JWT authentication needs both jwt and bundle; got only "
@@ -353,19 +393,11 @@ async def _get_or_create_slim_instance(
             local_name=str(local),
             aud=audience,
         )
-    elif shared_secret:
-        if shared_secret == PLACEHOLDER_SHARED_SECRET:
-            logger.warning(
-                "Using the placeholder SLIM shared secret; any peer with the "
-                "default can join your sessions. Set shared_secret_identity, "
-                "or .with_shared_secret() / SLIM_SHARED_SECRET with CardBuilder."
-            )
+    else:
         provider, verifier = shared_secret_identity(
             identity=str(local),
-            secret=shared_secret,
+            secret=secret,
         )
-    else:
-        raise ValueError("Either JWT or bundle must be provided, or a shared secret.")
 
     slim_app = slim_service.create_app(local, provider, verifier)
 
@@ -378,5 +410,6 @@ async def _get_or_create_slim_instance(
     global_connection_id = slim_conn_id
     global_slim_insecure = slim_insecure_client
     global_slim_endpoint = slim_endpoint
+    global_slim_auth = auth
 
     return slim_service, slim_app, slim_conn_id
