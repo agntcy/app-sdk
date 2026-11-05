@@ -189,6 +189,96 @@ global_slim_endpoint: str | None = None
 # Credentials the cached connection above was opened with; the shared secret
 # is kept only as a SHA-256 digest.
 global_slim_auth: tuple[Any, ...] | None = None
+# Shares of the cached connection above: one per ``get_or_create_slim_instance``
+# call that returned it and has not been released yet.
+global_slim_users: int = 0
+# Shares still held on connections that were retired from the cache (see
+# :func:`retire_slim_connection`), by connection id.  A retired connection is
+# disconnected when its last share is released.
+_retired_connection_users: dict[int, int] = {}
+
+
+def release_slim_connection(connection_id: int) -> bool:
+    """Give back one share of the connection *connection_id*.
+
+    Every :class:`SLIMTransport` in a process shares one connection, and each
+    holds one share of it.  Disconnecting it on every ``close()`` would cut the
+    line under the transports that still use it, so only the **last** share to
+    be released may disconnect.
+
+    Returns ``True`` when the caller held the last share and must now call
+    ``service.disconnect(connection_id)``; the cached connection is already
+    forgotten by then, so the next transport opens a new one even if the
+    disconnect fails.  Returns ``False`` while other transports still hold a
+    share: the caller must leave the connection open.
+
+    A *connection_id* the cache does not know (it was forgotten by hand, or
+    was never shared) has no other holders to protect, so it is the caller's to
+    disconnect: ``True``.
+
+    Not thread-safe: call it from the event loop thread.  It never awaits, so
+    it cannot interleave with another task on that loop.
+    """
+    global global_slim, global_connection_id, global_slim_service
+    global global_slim_insecure, global_slim_endpoint, global_slim_auth
+    global global_slim_users
+
+    if connection_id == global_connection_id:
+        global_slim_users = max(global_slim_users - 1, 0)
+        if global_slim_users > 0:
+            return False
+        global_slim = None
+        global_slim_service = None
+        global_connection_id = None
+        global_slim_insecure = None
+        global_slim_endpoint = None
+        global_slim_auth = None
+        return True
+
+    retired = _retired_connection_users.get(connection_id)
+    if retired is None:
+        return True
+    if retired > 1:
+        _retired_connection_users[connection_id] = retired - 1
+        return False
+    del _retired_connection_users[connection_id]
+    return True
+
+
+def retire_slim_connection(connection_id: int | None = None) -> bool:
+    """Stop handing out the cached connection; the next transport opens a new one.
+
+    For a connection that is known to be broken.  Transports that already
+    hold a share keep it, so nobody is cut off by someone else's report; the
+    retired connection is disconnected when the last of them releases its
+    share (see :func:`release_slim_connection`).
+
+    With *connection_id*, only that connection is retired.  A late report
+    about a connection that was already replaced does nothing, so it cannot
+    retire the healthy replacement.  Without it, the current connection is
+    retired.
+
+    Returns ``True`` if a cached connection was retired.  Same threading rule
+    as :func:`release_slim_connection`.
+    """
+    global global_slim, global_connection_id, global_slim_service
+    global global_slim_insecure, global_slim_endpoint, global_slim_auth
+    global global_slim_users
+
+    if global_connection_id is None or (
+        connection_id is not None and connection_id != global_connection_id
+    ):
+        return False
+    if global_slim_users > 0:
+        _retired_connection_users[global_connection_id] = global_slim_users
+    global_slim = None
+    global_slim_service = None
+    global_connection_id = None
+    global_slim_insecure = None
+    global_slim_endpoint = None
+    global_slim_auth = None
+    global_slim_users = 0
+    return True
 
 
 def get_or_init_slim_service() -> slim_bindings.Service:
@@ -289,6 +379,12 @@ async def get_or_create_slim_instance(
     bundle: str | None = None,
     audience: list[str] | None = None,
 ) -> tuple[slim_bindings.Service, slim_bindings.App, int]:
+    """The process-wide SLIM connection, opened on first use.
+
+    Each call takes one share of the connection.  Give it back with
+    :func:`release_slim_connection` when done; the connection is disconnected
+    only when the last share is released.
+    """
     if enable_opentelemetry is not None:
         warnings.warn(
             "enable_opentelemetry is deprecated and ignored. SLIM is traced "
@@ -322,6 +418,7 @@ async def _get_or_create_slim_instance(
 ) -> tuple[slim_bindings.Service, slim_bindings.App, int]:
     global global_slim, global_connection_id, global_slim_service
     global global_slim_insecure, global_slim_endpoint, global_slim_auth
+    global global_slim_users
 
     if jwt or bundle:
         secret = None
@@ -372,6 +469,7 @@ async def _get_or_create_slim_instance(
                 "transport asked for. All SLIMTransports in one process share "
                 "a single connection and must use the same credentials."
             )
+        global_slim_users += 1
         return global_slim_service, global_slim, global_connection_id
 
     slim_service = get_or_init_slim_service()
@@ -411,5 +509,6 @@ async def _get_or_create_slim_instance(
     global_slim_insecure = slim_insecure_client
     global_slim_endpoint = slim_endpoint
     global_slim_auth = auth
+    global_slim_users = 1
 
     return slim_service, slim_app, slim_conn_id

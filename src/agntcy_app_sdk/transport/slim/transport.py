@@ -11,6 +11,8 @@ from slim_bindings import Name, Session, MessageContext
 
 from .common import (
     get_or_create_slim_instance,
+    release_slim_connection,
+    retire_slim_connection,
     split_id,
 )
 from agntcy_app_sdk.common.logging_config import get_logger
@@ -158,6 +160,11 @@ class SLIMTransport(BaseTransport):
         self._slim_service = slim_service
         self._slim_app = slim_app
         self._slim_connection_id = slim_connection_id
+        # True once the connection comes from the process-wide shared cache, so
+        # this transport holds one share of it.  A connection injected through
+        # the constructor belongs to the caller and is never shared.
+        self._shares_connection = False
+        self._share_released = False
 
         self._callback: Callable[..., Awaitable[Any]] | None = None
         self._callback_takes_publish_fn = False
@@ -588,9 +595,29 @@ class SLIMTransport(BaseTransport):
         return self.TRANSPORT_TYPE
 
     async def close(self) -> None:
+        """Let go of this transport's SLIM connection.
+
+        Every transport in the process shares one connection, so ``close()``
+        gives back only this transport's share.  The last transport to close
+        disconnects it and clears the cache; the others keep working.  A second
+        ``close()`` on the same transport does nothing.
+        """
         if not self._slim_service or self._slim_connection_id is None:
             logger.warning("SLIM client is not initialized, no connection close.")
             return
+
+        if self._shares_connection:
+            if self._share_released:
+                logger.debug("SLIM transport already closed.")
+                return
+            self._share_released = True
+            if not release_slim_connection(self._slim_connection_id):
+                logger.debug(
+                    "SLIM connection %s is still used by other transports, "
+                    "leaving it open.",
+                    self._slim_connection_id,
+                )
+                return
 
         # handle slim server disconnection
         try:
@@ -603,6 +630,32 @@ class SLIMTransport(BaseTransport):
                 pass
             else:
                 logger.error(f"Error disconnecting SLIM transport: {e}")
+
+    def mark_connection_broken(self) -> None:
+        """Report that this transport's shared SLIM connection no longer works.
+
+        The next transport that sets up opens a new connection instead of being
+        handed this one.  Transports already on it keep their share, so
+        nothing is cut off by this report; the broken connection is
+        disconnected when the last of them closes.  Call :meth:`close` as
+        usual afterwards.
+
+        Does nothing for a connection injected through the constructor, for a
+        transport that has already closed, or when the connection was already
+        replaced.
+        """
+        if (
+            not self._shares_connection
+            or self._share_released
+            or self._slim_connection_id is None
+        ):
+            return
+        if retire_slim_connection(self._slim_connection_id):
+            logger.warning(
+                "SLIM connection %s reported broken; new transports will open "
+                "a new connection.",
+                self._slim_connection_id,
+            )
 
     def set_callback(self, handler: Callable[..., Awaitable[Any]]) -> None:
         """Set the message handler function."""
@@ -870,6 +923,7 @@ class SLIMTransport(BaseTransport):
         self._slim_service = slim_service
         self._slim_app = slim_app
         self._slim_connection_id = connection_id
+        self._shares_connection = True
         self._session_manager.set_slim(slim_app, connection_id)
 
     def sanitize_topic(self, topic: str) -> str:
