@@ -8,13 +8,17 @@ and clears the cache, so a short-lived transport (a health probe, say) cannot
 cut the connection under transports that still use it.
 """
 
+import asyncio
 import itertools
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agntcy_app_sdk.transport.slim import common
+from agntcy_app_sdk.transport.slim import transport as slim_transport
+from agntcy_app_sdk.transport.slim.session_manager import SessionManager
 from agntcy_app_sdk.transport.slim.transport import SLIMTransport
 
 pytest_plugins = "pytest_asyncio"
@@ -342,3 +346,269 @@ class TestMarkConnectionBroken:
         )
 
         injected.mark_connection_broken()
+
+
+async def _noop(_message: Any) -> None:
+    return None
+
+
+async def _listening(
+    *names: str,
+) -> tuple[list[SLIMTransport], "asyncio.Queue[MagicMock]"]:
+    """Transports that listen on one shared app with a single session queue.
+
+    Like the real shared ``App``, each ``listen_for_session_async`` call takes
+    the next session, whoever asks.
+    """
+    queue: asyncio.Queue[MagicMock] = asyncio.Queue()
+    transports = [_transport(name) for name in names]
+    for transport in transports:
+        await transport.setup()
+
+    async def listen(timeout: object = None) -> MagicMock:
+        return await queue.get()
+
+    assert common.global_slim is not None
+    setattr(common.global_slim, "listen_for_session_async", listen)
+    for transport in transports:
+        transport.set_callback(_noop)
+    await asyncio.sleep(0)  # let every listener start waiting
+    return transports, queue
+
+
+def _on_session(
+    transport: SLIMTransport, handler: Callable[[MagicMock], Awaitable[None]]
+) -> None:
+    """Replace what the transport's listener runs for each incoming session."""
+    setattr(transport, "_handle_session_receive", handler)
+
+
+def _record_sessions(transport: SLIMTransport) -> list[MagicMock]:
+    pulled: list[MagicMock] = []
+
+    async def handle(session: MagicMock) -> None:
+        pulled.append(session)
+
+    _on_session(transport, handle)
+    return pulled
+
+
+class TestCloseStopsTheInstance:
+    """``close()`` stops what the transport started, whoever else is still open."""
+
+    @pytest.mark.asyncio
+    async def test_a_closed_transport_stops_taking_sessions_from_the_shared_app(
+        self, service: MagicMock
+    ) -> None:
+        (closed, live), queue = await _listening("closed", "live")
+        taken_by_closed = _record_sessions(closed)
+        taken_by_live = _record_sessions(live)
+
+        await closed.close()
+        assert closed._listener_task is None
+        for _ in range(6):
+            queue.put_nowait(MagicMock())
+            await asyncio.sleep(0.01)
+
+        assert taken_by_closed == []
+        assert len(taken_by_live) == 6
+        service.disconnect.assert_not_called()
+        await live.close()
+
+    @pytest.mark.asyncio
+    async def test_the_last_close_stops_its_listener_too(
+        self, service: MagicMock
+    ) -> None:
+        (only,), _ = await _listening("only")
+        listener = only._listener_task
+        assert listener is not None
+
+        await only.close()
+
+        assert listener.done()
+        service.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_clears_the_callback_and_signals_shutdown(
+        self, service: MagicMock
+    ) -> None:
+        (closed, live), _ = await _listening("closed", "live")
+
+        await closed.close()
+
+        assert closed._callback is None
+        assert closed._shutdown_event.is_set()
+        assert live._callback is not None
+        assert not live._shutdown_event.is_set()
+        await live.close()
+
+    @pytest.mark.asyncio
+    async def test_running_session_handlers_are_cancelled(
+        self, service: MagicMock
+    ) -> None:
+        (closed, live), queue = await _listening("closed", "live")
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def slow_handler(_session: MagicMock) -> None:
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        _on_session(closed, slow_handler)
+        _record_sessions(live)
+        queue.put_nowait(MagicMock())
+        await asyncio.wait_for(started.wait(), 1)
+
+        await closed.close()
+
+        assert cancelled.is_set()
+        assert not closed._tasks or all(t.done() for t in closed._tasks)
+        await live.close()
+
+    @pytest.mark.asyncio
+    async def test_close_from_inside_a_handler_does_not_cancel_itself(
+        self, service: MagicMock
+    ) -> None:
+        (transport,), queue = await _listening("only")
+        finished = asyncio.Event()
+
+        async def closing_handler(_session: MagicMock) -> None:
+            await transport.close()
+            finished.set()
+
+        _on_session(transport, closing_handler)
+        queue.put_nowait(MagicMock())
+
+        await asyncio.wait_for(finished.wait(), 1)
+
+        service.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_closing_twice_is_harmless(self, service: MagicMock) -> None:
+        (closed, live), _ = await _listening("closed", "live")
+
+        await closed.close()
+        await closed.close()
+
+        service.disconnect.assert_not_called()
+        assert common.global_connection_id == live._slim_connection_id
+        await live.close()
+        service.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_an_injected_app_without_a_service_still_stops_its_tasks(
+        self, service: MagicMock
+    ) -> None:
+        app = MagicMock()
+        listening = asyncio.Event()
+
+        async def listen(timeout: object = None) -> MagicMock:
+            listening.set()
+            await asyncio.sleep(60)
+            raise AssertionError("unreachable")
+
+        app.listen_for_session_async = listen
+        transport = SLIMTransport(
+            routable_name="org/ns/injected",
+            endpoint=_ENDPOINT,
+            slim_app=app,
+            slim_connection_id=7,
+        )
+        transport.set_callback(_noop)
+        await asyncio.wait_for(listening.wait(), 1)
+        listener = transport._listener_task
+        assert listener is not None
+
+        await transport.close()
+
+        assert listener.done()
+
+    @pytest.mark.asyncio
+    async def test_a_listener_that_will_not_stop_is_abandoned(
+        self, service: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(slim_transport, "_CLOSE_TIMEOUT", 0.05)
+        (closed, live), _ = await _listening("closed", "live")
+        release = False
+
+        async def stubborn() -> None:
+            while True:
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    if release:
+                        raise
+
+        old_listener = closed._listener_task
+        assert old_listener is not None
+        old_listener.cancel()
+        stubborn_task = asyncio.create_task(stubborn())
+        closed._listener_task = stubborn_task
+        await asyncio.sleep(0)
+
+        await asyncio.wait_for(closed.close(), 1)
+
+        assert not stubborn_task.done()
+        release = True
+        stubborn_task.cancel()
+        await asyncio.gather(stubborn_task, return_exceptions=True)
+        await live.close()
+
+
+class TestSessionManagerCloseAll:
+    @staticmethod
+    def _manager() -> tuple[SessionManager, MagicMock]:
+        app = MagicMock()
+        handle = MagicMock(wait_async=AsyncMock())
+        app.delete_session_async = AsyncMock(return_value=handle)
+        manager = SessionManager()
+        manager.set_slim(app, 7)
+        return manager, app
+
+    @staticmethod
+    def _session(session_id: int) -> MagicMock:
+        session = MagicMock()
+        session.session_id.return_value = session_id
+        return session
+
+    @pytest.mark.asyncio
+    async def test_closes_every_cached_session(self) -> None:
+        manager, app = self._manager()
+        first, second = self._session(1), self._session(2)
+        manager._sessions = {"a": first, "b": second}
+
+        await manager.close_all()
+
+        assert app.delete_session_async.await_count == 2
+        assert manager._sessions == {}
+
+    @pytest.mark.asyncio
+    async def test_one_failure_does_not_stop_the_others(self) -> None:
+        manager, app = self._manager()
+        broken, fine = self._session(1), self._session(2)
+        calls = itertools.count()
+
+        def fails_once() -> int:
+            if next(calls) == 0:
+                raise RuntimeError("closed")
+            return 1
+
+        broken.session_id.side_effect = fails_once
+        manager._sessions = {"a": broken, "b": fine}
+
+        await manager.close_all()
+
+        app.delete_session_async.assert_awaited_once_with(fine)
+
+    @pytest.mark.asyncio
+    async def test_without_a_slim_app_it_does_nothing(self) -> None:
+        manager = SessionManager()
+        manager._sessions = {"a": self._session(1)}
+
+        await manager.close_all()
+
+        assert len(manager._sessions) == 1

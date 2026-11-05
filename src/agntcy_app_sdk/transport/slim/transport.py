@@ -49,6 +49,9 @@ _SESSION_GONE = (
 _RECEIVE_RETRIES = 3
 _RECEIVE_BACKOFF = 0.5
 
+# Seconds ``close()`` waits for the cancelled listener and handler tasks.
+_CLOSE_TIMEOUT = 5.0
+
 """
 SLIM implementation of the BaseTransport interface.
 """
@@ -595,13 +598,23 @@ class SLIMTransport(BaseTransport):
         return self.TRANSPORT_TYPE
 
     async def close(self) -> None:
-        """Let go of this transport's SLIM connection.
+        """Stop this transport and let go of its SLIM connection.
+
+        The transport first stops receiving: it cancels its session listener
+        and the handlers it started, drops its callback and closes the
+        sessions it still caches.  That happens on every ``close()``, because
+        the shared SLIM app outlives a transport that is not the last user, and
+        a listener left running would keep taking sessions meant for the
+        transports that are still open.
 
         Every transport in the process shares one connection, so ``close()``
-        gives back only this transport's share.  The last transport to close
-        disconnects it and clears the cache; the others keep working.  A second
-        ``close()`` on the same transport does nothing.
+        then gives back only this transport's share.  The last transport to
+        close disconnects it and clears the cache; the others keep working.  A
+        second ``close()`` on the same transport does nothing.  A closed
+        transport is not meant to be used again.
         """
+        await self._stop_receiving()
+
         if not self._slim_service or self._slim_connection_id is None:
             logger.warning("SLIM client is not initialized, no connection close.")
             return
@@ -630,6 +643,37 @@ class SLIMTransport(BaseTransport):
                 pass
             else:
                 logger.error(f"Error disconnecting SLIM transport: {e}")
+
+    async def _stop_receiving(self) -> None:
+        """Stop what this transport started: listener, handlers, callback, sessions.
+
+        Sessions that peers opened to this transport are not deleted: the peer
+        that invited us owns them, and cancelling their handlers is enough.
+        """
+        self._shutdown_event.set()
+        self._callback = None
+
+        # ``close()`` may be called from inside a handler: never cancel it.
+        current = asyncio.current_task()
+        tasks = [
+            task
+            for task in (self._listener_task, *tuple(self._tasks))
+            if task is not None and task is not current and not task.done()
+        ]
+        self._listener_task = None
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=_CLOSE_TIMEOUT)
+            if pending:
+                logger.warning(
+                    "%d SLIM task(s) did not stop within %ss of close(); "
+                    "giving up on them.",
+                    len(pending),
+                    _CLOSE_TIMEOUT,
+                )
+
+        await self._session_manager.close_all()
 
     def mark_connection_broken(self) -> None:
         """Report that this transport's shared SLIM connection no longer works.
