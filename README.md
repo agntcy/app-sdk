@@ -53,7 +53,7 @@ It is intended as an integration and learning surface primarily used in [coffeeA
 
 - A2A protocol (point-to-point, broadcast, group chat)
 - MCP and FastMCP protocol bridges
-- Transport-agnostic — same API across all transports
+- Transport-agnostic - same API across all transports
 
 </td>
 <td width="25%" valign="top">
@@ -115,16 +115,16 @@ The Application SDK provides a single factory interface that abstracts over mult
 
 |               | Protocol | Transport                     | Client Type             | Patterns                                  |
 | ------------- | -------- | ----------------------------- | ----------------------- | ----------------------------------------- |
-| **Section 1** | A2A      | Card-driven (multi-transport) | —                       | All (via `add_a2a_card()`)                |
+| **Section 1** | A2A      | Card-driven (multi-transport) | -                       | All (via `add_a2a_card()`)                |
 | **Section 2** | A2A      | SlimRPC                       | `a2a.client.Client`     | Point-to-point                            |
 | **Section 3** | A2A      | SLIM patterns / NATS patterns | `A2AExperimentalClient` | Point-to-point, broadcast                 |
 | **Section 4** | A2A      | SLIM patterns                 | `A2AExperimentalClient` | Group chat                                |
 | **Section 5** | MCP      | SLIM / NATS                   | `MCPClientSession`      | Point-to-point                            |
 |               | FastMCP  | SLIM / NATS                   | `FastMCPClient`         | [Point-to-point](docs/MCP_USAGE_GUIDE.md) |
 
-**SlimRPC** is the native A2A-over-SLIM RPC transport — simplest setup for 1:1 request/response. **SLIM patterns** and **NATS patterns** are experimental transports that unlock pub/sub fan-out and moderated group chat via the same `AgntcyFactory` interface. The factory negotiates the best transport automatically from the agent card.
+**SlimRPC** is the native A2A-over-SLIM RPC transport - simplest setup for 1:1 request/response. **SLIM patterns** and **NATS patterns** are experimental transports that unlock pub/sub fan-out and moderated group chat via the same `AgntcyFactory` interface. The factory negotiates the best transport automatically from the agent card.
 
-> **Running examples:** Save any snippet as a `.py` file and run with `uv run python my_script.py`. The SDK is async — wrap top-level `await` calls in `asyncio.run(main())`.
+> **Running examples:** Save any snippet as a `.py` file and run with `uv run python my_script.py`. The SDK is async - wrap top-level `await` calls in `asyncio.run(main())`.
 
 ---
 
@@ -139,7 +139,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from agntcy_app_sdk.factory import AgntcyFactory
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
-# Declare transports in the card — this is the single source of truth.
+# Declare transports in the card - this is the single source of truth.
 # The order of `supported_interfaces` is the server's preference order:
 # the first entry is the preferred transport.
 agent_card = AgentCard(
@@ -157,7 +157,7 @@ agent_card = AgentCard(
     description="My agent description",
 )
 
-# One call does it all — add_a2a_card() reads the card's interfaces.
+# One call does it all - add_a2a_card() reads the card's interfaces.
 # a2a-sdk 1.x requires the card at handler construction.
 factory = AgntcyFactory()
 session = factory.create_app_session(max_sessions=10)
@@ -216,7 +216,7 @@ from agntcy_app_sdk.semantic.a2a.client.config import (
     ClientConfig, SlimRpcConfig, SlimTransportConfig, NatsTransportConfig,
 )
 
-# Multi-transport config — factory picks the right one from the agent card
+# Multi-transport config - factory picks the right one from the agent card
 config = ClientConfig(
     slimrpc_config=SlimRpcConfig(
         namespace="default",
@@ -237,10 +237,10 @@ config = ClientConfig(
     ),
 )
 
-# Create the factory — supports slimrpc, slimpatterns, natspatterns, and JSONRPC
+# Create the factory - supports slimrpc, slimpatterns, natspatterns, and JSONRPC
 a2a = A2AClientFactory(config)
 
-# Create a client — factory negotiates over the card's supported_interfaces
+# Create a client - factory negotiates over the card's supported_interfaces
 # (server order wins unless ClientConfig(use_client_preference=True))
 client = await a2a.create(agent_card)
 
@@ -299,7 +299,7 @@ async for event in client.send_message(request):
 
 ## 3. Broadcast to Many Agents
 
-Fan out a single request to N agents simultaneously. Broadcast uses the **SLIM patterns** or **NATS patterns** transport (not SlimRPC) — the factory returns an `A2AExperimentalClient` with `broadcast_message()` when transport negotiation selects `slimpatterns` or `natspatterns`.
+Fan out a single request to N agents simultaneously. Broadcast uses the **SLIM patterns** or **NATS patterns** transport (not SlimRPC) - the factory returns an `A2AExperimentalClient` with `broadcast_message()` when transport negotiation selects `slimpatterns` or `natspatterns`.
 
 <details>
 <summary><b>Broadcast example (SLIM patterns)</b></summary>
@@ -317,7 +317,7 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 factory = AgntcyFactory()
 
-# SLIM patterns transport — creates an A2AExperimentalClient
+# SLIM patterns transport - creates an A2AExperimentalClient
 # (swap SlimTransportConfig for NatsTransportConfig + nats:// scheme for NATS)
 config = ClientConfig(
     slim_config=SlimTransportConfig(
@@ -377,7 +377,7 @@ except A2ABroadcastError as err:
         print(f"{failure.sender} failed: {failure.error}")
     print(f"missing: {err.missing_recipients or err.missing}")
 
-# Streaming variant — yields a StreamResponse for each event as it arrives
+# Streaming variant - yields a StreamResponse for each event as it arrives
 async for resp in client.broadcast_message_streaming(
     request,
     broadcast_topic="status_channel",
@@ -400,7 +400,7 @@ async for resp in client.broadcast_message_streaming(
 
 ## 4. Run a Group Chat
 
-Start a moderated multi-party conversation between agents. Each participant processes the message and forwards it to the next. Group chat uses the **SLIM patterns** transport — the same `A2AExperimentalClient` from above.
+Start a moderated multi-party conversation between agents. Each participant processes the message and forwards it to the next. Group chat uses the **SLIM patterns** transport - the same `A2AExperimentalClient` from above.
 
 > **Note:** Group chat currently requires SLIM transport.
 
@@ -420,7 +420,7 @@ from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
 
 factory = AgntcyFactory()
 
-# SLIM patterns transport — creates an A2AExperimentalClient
+# SLIM patterns transport - creates an A2AExperimentalClient
 config = ClientConfig(
     slim_config=SlimTransportConfig(
         endpoint="http://localhost:46357",
@@ -450,7 +450,7 @@ request = SendMessageRequest(
     message=new_text_message("Plan a team lunch", role=Role.ROLE_USER)
 )
 
-# Non-streaming group chat — collects all messages then returns
+# Non-streaming group chat - collects all messages then returns
 responses = await client.start_groupchat(
     init_message=request,
     group_channel="lunch_planning",
@@ -462,7 +462,7 @@ responses = await client.start_groupchat(
 for resp in responses:
     print(f"Group message: {resp}")
 
-# Streaming group chat — yields each message as it arrives
+# Streaming group chat - yields each message as it arrives
 async for message in client.start_streaming_groupchat(
     init_message=request,
     group_channel="lunch_planning",
@@ -481,7 +481,7 @@ async for message in client.start_streaming_groupchat(
 
 ## 5. Use MCP Tools over a Transport
 
-Connect to a remote MCP server and call its tools — same transport layer as A2A, different protocol:
+Connect to a remote MCP server and call its tools - same transport layer as A2A, different protocol:
 
 ```python
 import asyncio
@@ -528,8 +528,8 @@ The SDK negotiates the best transport automatically by intersecting the server's
 | **Point-to-Point**       |  ✅  |  ✅  | Standard 1:1 `send_message()` over transport               |
 | **Broadcast**            |  ✅  |  ✅  | 1:N fan-out via `broadcast_message()`                      |
 | **Broadcast Streaming**  |  ✅  |  ✅  | Streaming variant via `broadcast_message_streaming()`      |
-| **Group Chat**           |  ✅  |  —   | Multi-party moderated conversation via `start_groupchat()` |
-| **Group Chat Streaming** |  ✅  |  —   | Streaming variant via `start_streaming_groupchat()`        |
+| **Group Chat**           |  ✅  |  -   | Multi-party moderated conversation via `start_groupchat()` |
+| **Group Chat Streaming** |  ✅  |  -   | Streaming variant via `start_streaming_groupchat()`        |
 
 ---
 
@@ -572,7 +572,7 @@ The SDK negotiates the best transport automatically by intersecting the server's
 
 ### Card-Driven Bootstrap (Recommended)
 
-`add_a2a_card()` reads the agent card's `supported_interfaces` and creates all transports automatically — no manual builder chains required:
+`add_a2a_card()` reads the agent card's `supported_interfaces` and creates all transports automatically - no manual builder chains required:
 
 ```python
 from agntcy_app_sdk.semantic.a2a.server.card_bootstrap import InterfaceTransport
@@ -686,14 +686,14 @@ This initialises the [Agntcy Observe SDK](https://github.com/agntcy/observe) (Op
     ├── 📂 directory/            # Agent directory services
     ├── 🔐 identity/             # Authentication & identity
     ├── 🧠 semantic/             # Protocol layer
-    │   ├── a2a/                 #   A2A protocol + experimental patterns
-    │   ├── mcp/                 #   MCP protocol bridge
-    │   └── fast_mcp/            #   FastMCP protocol bridge
+    │   ├── a2a/                #   A2A protocol + experimental patterns
+    │   ├── mcp/                #   MCP protocol bridge
+    │   └── fast_mcp/           #   FastMCP protocol bridge
     ├── 🌐 transport/            # Transport implementations
-    │   ├── slim/                #   SLIM (Secure Low-Latency Interactive Messaging)
-    │   ├── nats/                #   NATS messaging
-    │   └── streamable_http/     #   HTTP-based transport
-    └── 🛠️  common/              # Shared utilities & logging
+    │   ├── slim/               #   SLIM (Secure Low-Latency Interactive Messaging)
+    │   ├── nats/               #   NATS messaging
+    │   └── streamable_http/    #   HTTP-based transport
+    └── 🛠️  common/             # Shared utilities & logging
 ```
 
 # Reference Application
@@ -722,9 +722,9 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
 ## Prerequisites
 
 - **Python 3.12+**
-- **[uv](https://docs.astral.sh/uv/)** — Package manager
-- **[Task](https://taskfile.dev/)** — Build orchestration (used locally and in CI)
-- **Docker** — Required for E2E tests
+- **[uv](https://docs.astral.sh/uv/)** - Package manager
+- **[Task](https://taskfile.dev/)** - Build orchestration (used locally and in CI)
+- **Docker** - Required for E2E tests
 
 ## Setup
 
@@ -839,13 +839,15 @@ Every push to `main` and every pull request triggers the **build-and-test** work
 Releases are automated via [release-please](https://github.com/googleapis/release-please):
 
 1. Merge pull requests with [Conventional Commits](https://www.conventionalcommits.org/) (e.g., `feat: add X`, `fix: resolve Y`).
-2. **release-please** automatically creates a release PR that bumps the version in `pyproject.toml` and updates the changelog.
+2. **release-please** automatically creates a release PR that bumps the version in `pyproject.toml` and `.github/release-manifest.json` and updates `CHANGELOG.md`.
 3. Merge the release PR to create a GitHub release and push a `v*` tag.
-4. The **release workflow** builds multi-platform wheels (Linux x86/ARM, macOS ARM, Windows) and publishes to PyPI.
+4. The **release workflow** validates the tag, builds the wheel and sdist, and publishes to PyPI.
 
 ```
-PR merged → release-please creates release PR → merge → tag v* → build wheels → publish to PyPI
+PR merged → release-please creates release PR → merge → tag v* → validate tag → build → publish to PyPI
 ```
+
+Do not push release tags by hand: the workflow rejects tags whose version files were not updated. See the [release runbook](docs/RELEASING.md) for details, failure triage and the manual fallback.
 
 # Contributing
 

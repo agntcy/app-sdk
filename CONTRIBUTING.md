@@ -37,6 +37,11 @@ We expect new pull requests to include tests for any affected behavior, and, as
 we follow semantic versioning, we may reserve breaking changes until the next
 major version release.
 
+## Releasing
+
+Releases are made by the release-please bot, not by hand. Do not push `v*` tags
+manually. Maintainers: see the [release runbook](docs/RELEASING.md).
+
 ## Other Ways to Contribute
 
 We welcome anyone that wants to contribute to `app-sdk` to triage and
