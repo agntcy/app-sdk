@@ -168,6 +168,21 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Error deleting session {session_id}: {e}")
 
+    async def close_all(self) -> None:
+        """Close every session still cached here, best effort.
+
+        One session failing to close does not stop the others.
+        """
+        if not self._slim:
+            return
+        async with self._lock:
+            sessions = list(self._sessions.values())
+        for session in sessions:
+            try:
+                await self.close_session(session)
+            except Exception as e:
+                logger.error(f"Error closing cached session: {e}")
+
     async def _local_cache_cleanup(self, session_id: int) -> None:
         """
         Perform local cleanup of a session without attempting to close it on the SLIM client.

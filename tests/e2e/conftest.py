@@ -604,6 +604,9 @@ def _reset_slim_globals() -> None:
     slim_common.global_slim_insecure = None
     slim_common.global_slim_endpoint = None
     slim_common.global_slim_auth = None
+    # Forget the share count and any retired connections with the cache.
+    slim_common.global_slim_users = 0
+    slim_common._retired_connection_users.clear()
 
 
 # ---------------------------------------------------------------------------
