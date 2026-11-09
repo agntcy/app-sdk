@@ -117,6 +117,28 @@ def test_wrong_manifest_version_is_rejected(repo: Path) -> None:
     assert "release-manifest.json" in problems[0]
 
 
+def _commit_raw(repo: Path, path: str, content: str) -> None:
+    (repo / path).write_text(content)
+    _git(repo, "commit", "-am", "x")
+    _git(repo, "tag", "v0.7.0")
+
+
+@pytest.mark.parametrize("content", ["[project\nversion =", "project = 1\n"])
+def test_malformed_pyproject_is_reported_not_raised(repo: Path, content: str) -> None:
+    _commit_raw(repo, "pyproject.toml", content)
+    problems = _check(repo, "v0.7.0")
+    assert len(problems) == 1
+    assert "pyproject.toml" in problems[0]
+
+
+@pytest.mark.parametrize("content", ["{not json", "[1]", '"text"', "null"])
+def test_malformed_manifest_is_reported_not_raised(repo: Path, content: str) -> None:
+    _commit_raw(repo, ".github/release-manifest.json", content)
+    problems = _check(repo, "v0.7.0")
+    assert len(problems) == 1
+    assert "release-manifest.json" in problems[0]
+
+
 def test_missing_changelog_entry_is_rejected(repo: Path) -> None:
     _write_release_files(repo, changelog="0.6.0")
     _git(repo, "commit", "-am", "x")

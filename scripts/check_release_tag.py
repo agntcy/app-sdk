@@ -57,21 +57,34 @@ def validate(repo: Path, tag: str, main_ref: str = "origin/main") -> list[str]:
     if pyproject is None:
         problems.append(f"{PYPROJECT_PATH} is missing at the tagged commit.")
     else:
-        found = tomllib.loads(pyproject).get("project", {}).get("version")
-        if found != version:
-            problems.append(
-                f"{PYPROJECT_PATH} has version '{found}', the tag needs '{version}'."
-            )
+        try:
+            project = tomllib.loads(pyproject).get("project", {})
+        except tomllib.TOMLDecodeError as exc:
+            problems.append(f"{PYPROJECT_PATH} is not valid TOML: {exc}")
+        else:
+            found = project.get("version") if isinstance(project, dict) else None
+            if found != version:
+                problems.append(
+                    f"{PYPROJECT_PATH} has version '{found}', the tag needs '{version}'."
+                )
 
     manifest = _read_at(repo, commit, MANIFEST_PATH)
     if manifest is None:
         problems.append(f"{MANIFEST_PATH} is missing at the tagged commit.")
     else:
-        found = json.loads(manifest).get(".")
-        if found != version:
-            problems.append(
-                f"{MANIFEST_PATH} has version '{found}' for '.', the tag needs '{version}'."
-            )
+        try:
+            data = json.loads(manifest)
+        except json.JSONDecodeError as exc:
+            problems.append(f"{MANIFEST_PATH} is not valid JSON: {exc}")
+        else:
+            if not isinstance(data, dict):
+                problems.append(
+                    f"{MANIFEST_PATH} must be a JSON object, got {type(data).__name__}."
+                )
+            elif data.get(".") != version:
+                problems.append(
+                    f"{MANIFEST_PATH} has version '{data.get('.')}' for '.', the tag needs '{version}'."
+                )
 
     changelog = _read_at(repo, commit, CHANGELOG_PATH)
     heading = re.compile(rf"^## \[{re.escape(version)}\]", re.MULTILINE)
