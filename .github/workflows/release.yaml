@@ -27,6 +27,10 @@ jobs:
         with:
           fetch-depth: 0 # full history: the tag must be reachable from main
 
+      - name: Fetch main
+        # A tag-push checkout does not guarantee origin/main exists locally.
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
       - name: Check the tag is a prepared release
         env:
           TAG: ${{ github.ref_name }}
