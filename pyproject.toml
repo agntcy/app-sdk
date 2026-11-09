@@ -14,11 +14,11 @@ dependencies = [
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
     "ioa-observe-sdk==1.1.0",
-    "slim-bindings>=3.3.6,<4",
+    "slim-bindings==3.3.9",
     "agntcy-identity-service-sdk==0.0.7",
     "slima2a==0.9.3",
     "agntcy-dir>=1.0.0",
-    "grpcio-tools>=1.84.0",
+    "grpcio-tools==1.85.1",
 ]
 
 [project.urls]
