@@ -91,10 +91,16 @@ def validate(repo: Path, tag: str, main_ref: str = "origin/main") -> list[str]:
     if changelog is None or not heading.search(changelog):
         problems.append(f"{CHANGELOG_PATH} has no '## [{version}]' release heading.")
 
-    on_main = _git(repo, "merge-base", "--is-ancestor", commit, main_ref)
-    if on_main.returncode != 0:
+    main_resolved = _git(repo, "rev-parse", "--verify", "--quiet", main_ref)
+    if main_resolved.returncode != 0:
         problems.append(
-            f"The tagged commit is not on {main_ref}. Releases are cut from main."
+            f"{main_ref} could not be resolved, so the tag cannot be checked against "
+            f"main. Run 'git fetch origin' and retry."
+        )
+    elif _git(repo, "merge-base", "--is-ancestor", commit, main_ref).returncode != 0:
+        problems.append(
+            f"The tagged commit is not on {main_ref}. Releases are cut from main. "
+            f"If the release PR was just merged, run 'git fetch origin' and retry."
         )
 
     return problems

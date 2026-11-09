@@ -166,6 +166,14 @@ def test_tag_off_main_is_rejected(repo: Path) -> None:
     assert "main" in problems[0]
 
 
+def test_unresolvable_main_ref_is_reported_as_such(repo: Path) -> None:
+    _git(repo, "tag", "v0.7.0")
+    problems: list[str] = guard.validate(repo, "v0.7.0", main_ref="origin/main")
+    assert len(problems) == 1
+    assert "could not be resolved" in problems[0]
+    assert "git fetch origin" in problems[0]
+
+
 def test_files_are_read_from_the_tag_not_the_working_tree(repo: Path) -> None:
     _git(repo, "tag", "v0.7.0")
     _write_release_files(repo, pyproject="9.9.9", manifest="9.9.9", changelog="9.9.9")

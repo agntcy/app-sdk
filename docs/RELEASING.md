@@ -51,7 +51,7 @@ Only when the bot cannot produce the release. Releases are cut from `main`, with
 4. Tag the merge commit and push: `git tag vX.Y.Z <merge-commit> && git push origin vX.Y.Z`.
 5. Check the pipeline run. A manual tag does not create a GitHub Release, so create it from the tag if you want one.
 
-Before pushing the tag, `task release:check-tag -- vX.Y.Z` runs the same check as the pipeline against the local tag.
+Before pushing the tag, run `git fetch origin` and then `task release:check-tag -- vX.Y.Z`. It runs the same check as the pipeline against the local tag. The fetch matters: the check compares the tag with your local `origin/main`, and a stale ref right after a merge gives a false "not on origin/main".
 
 ## Recovery
 

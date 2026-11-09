@@ -25,11 +25,11 @@ The single source of truth is [docs/RELEASING.md](../../../../docs/RELEASING.md)
 - [ ] 2. Find out the situation: normal release, failed run, or manual fallback
 - [ ] 3. Normal release: point to the release PR, check version and changelog, stop there
 - [ ] 4. Failed run: read the failing job (validate-tag, build-sdk-wheel, pypi-publish) and map it with the "Reading a failed release run" table
-- [ ] 5. Before any manual tag: run `task release:check-tag -- vX.Y.Z` and fix what it reports
+- [ ] 5. Before any manual tag: make sure the user has fetched the remote (see docs/RELEASING.md), then run `task release:check-tag -- vX.Y.Z` and fix what it reports
 - [ ] 6. Report the next step for the user to run, preferring the bot path
 ```
 
 ## Checks
 
-- `task release:check-tag -- vX.Y.Z` runs the same validation as the pipeline (`scripts/check_release_tag.py`) against a local tag.
+- `task release:check-tag -- vX.Y.Z` runs the same validation as the pipeline (`scripts/check_release_tag.py`) against a local tag. It compares with the local `origin/main`, so the remote must be fetched first (the command is in docs/RELEASING.md), or a fresh merge reads as "not on origin/main".
 - Do not check `uv.lock` for the SDK version: release-please does not update it.
