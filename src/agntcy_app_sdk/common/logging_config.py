@@ -83,7 +83,12 @@ def configure_logging() -> None:
     if formatter == "json":
         renderer: structlog.types.Processor = structlog.processors.JSONRenderer()
     else:
-        renderer = structlog.dev.ConsoleRenderer()
+        # ``format_exc_info`` above has already turned the traceback into text.
+        # Say so explicitly: the default formatter would be the rich one, and
+        # structlog warns when it is handed text it cannot pretty-print.
+        renderer = structlog.dev.ConsoleRenderer(
+            exception_formatter=structlog.dev.plain_traceback
+        )
 
     # stdlib dictConfig
     formatters = {
