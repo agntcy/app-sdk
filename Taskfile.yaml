@@ -72,3 +72,8 @@ tasks:
     desc: "Build Python package and generate distribution artifacts"
     cmds:
       - uv build {{.UV_ARGS}}
+
+  release:check-tag:
+    desc: "Check that a release tag is a properly prepared release, e.g. task release:check-tag -- v0.7.0"
+    cmds:
+      - uv run {{.UV_ARGS}} python scripts/check_release_tag.py {{.CLI_ARGS}}
