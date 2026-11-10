@@ -36,6 +36,15 @@ logger = get_logger(__name__)
 IDENTITY_AUTH_SCHEME = "IdentityServiceAuthScheme"
 """Key of the Identity Service bearer-JWT scheme in ``security_schemes``."""
 
+A2A_PROTOCOL_VERSION = "1.0"
+"""A2A spec version the SDK declares on the interfaces it creates.
+
+Deliberately a literal, not ``a2a.utils.constants.PROTOCOL_VERSION_CURRENT``:
+the declared version must change only when someone has checked that the SDK
+implements the new one, not silently on an a2a-sdk upgrade.  a2a-sdk 1.2 logs a
+warning for every interface that leaves ``protocol_version`` empty.
+"""
+
 # Canonical transport -> casing expected by the upstream a2a-sdk
 # (``a2a.utils.constants.TransportProtocol``).  SDK-only transports
 # (slimrpc, slimpatterns, natspatterns) are kept lower-case.
@@ -125,7 +134,7 @@ def add_interface(
     *,
     prefer: bool = False,
     replace: bool = False,
-    protocol_version: str = "",
+    protocol_version: str = A2A_PROTOCOL_VERSION,
 ) -> AgentInterface:
     """Ensure *card* declares an interface for *transport*.
 
@@ -138,8 +147,9 @@ def add_interface(
         replace: When an interface for *transport* already exists, overwrite
             its URL.  By default an existing entry is left untouched because
             it was declared explicitly by the agent author.
-        protocol_version: Optional ``protocol_version`` for a newly-created
-            interface.
+        protocol_version: ``protocol_version`` for a newly-created interface;
+            defaults to :data:`A2A_PROTOCOL_VERSION`.  An existing interface
+            keeps the version it was declared with.
 
     Returns:
         The (new or existing) ``AgentInterface`` now present on the card.

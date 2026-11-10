@@ -308,7 +308,7 @@ class A2ASRPCServerHandler(BaseA2AServerHandler):
 
         # Ensure the global SLIM runtime is initialised and grab the service.
         # We deliberately do NOT use ``get_or_create_slim_instance`` here: it
-        # subscribes a pub/sub App under ``name``, and SLIM 2.x would route
+        # subscribes a pub/sub App under ``name``, and SLIM can then deliver
         # the clients' RPC sessions to that App (which has no RPC handler)
         # instead of the RPC server below.
         service = get_or_init_slim_service()

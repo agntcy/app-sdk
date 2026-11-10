@@ -18,10 +18,11 @@ logger = get_logger(__name__)
 
 
 def _mls_settings(enabled: bool) -> MlsSettings | None:
-    """Translate the SDK's ``mls_enabled`` flag to slim-bindings 2.x settings.
+    """Translate the SDK's ``mls_enabled`` flag to slim-bindings ``mls_settings``.
 
-    slim-bindings 2.x replaced ``SessionConfig(enable_mls=...)`` with
-    ``mls_settings``: ``None`` disables MLS, an ``MlsSettings`` enables it.
+    slim-bindings takes ``mls_settings`` instead of
+    ``SessionConfig(enable_mls=...)``: ``None`` disables MLS, an
+    ``MlsSettings`` enables it.
     """
     if not enabled:
         return None

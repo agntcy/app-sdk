@@ -710,12 +710,12 @@ For a fully functional distributed multi-agent sample app, check out our [coffee
   <img alt="Agntcy App SDK Architecture" src="assets/app-sdk-arch.jpg" width="600">
 </a>
 
-| Component       | Version  | Description                                                                                                                                                                                  | Repo                                                 |
-| --------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| **SLIM**        | `2.2.0`  | Secure Low-Latency Interactive Messaging (SLIM) facilitates communication between AI agents using request-reply and moderated group-chat patterns.                                           | [Repo](https://github.com/agntcy/slim)               |
-| **Observe SDK** | `1.0.34` | Enables multi-agent observability by setting `enable_tracing=True` when initializing the `AgntcyFactory`. This automatically configures tracing and auto-instrumentation for SLIM and A2A.   | [Repo](https://github.com/agntcy/observe/tree/main)  |
-| **Directory**   | `1.0.0`  | Agent discovery and registration via the Agntcy Directory service. Push, pull, and search agent records with automatic OASF ↔ AgentCard conversion. Integrated into `AppSession` lifecycle. | [Repo](https://github.com/agntcy/dir)                |
-| **Identity**    | `0.0.7`  | Agent identity and authentication via the Agntcy Identity Service SDK. Supports shared-secret and JWT identity providers, access token management, and auth middleware for A2A and FastMCP.  | [Repo](https://github.com/agntcy/identity/tree/main) |
+| Component       | Version                               | Description                                                                                                                                                                                  | Repo                                                 |
+| --------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| **SLIM**        | node `3.4.6`, `slim-bindings` `3.3.9` | Secure Low-Latency Interactive Messaging (SLIM) facilitates communication between AI agents using request-reply and moderated group-chat patterns.                                           | [Repo](https://github.com/agntcy/slim)               |
+| **Observe SDK** | `1.1.0`                               | Enables multi-agent observability by setting `enable_tracing=True` when initializing the `AgntcyFactory`. This automatically configures tracing and auto-instrumentation for SLIM and A2A.   | [Repo](https://github.com/agntcy/observe/tree/main)  |
+| **Directory**   | `1.0.0`                               | Agent discovery and registration via the Agntcy Directory service. Push, pull, and search agent records with automatic OASF ↔ AgentCard conversion. Integrated into `AppSession` lifecycle. | [Repo](https://github.com/agntcy/dir)                |
+| **Identity**    | `0.0.7`                               | Agent identity and authentication via the Agntcy Identity Service SDK. Supports shared-secret and JWT identity providers, access token management, and auth middleware for A2A and FastMCP.  | [Repo](https://github.com/agntcy/identity/tree/main) |
 
 # Development
 

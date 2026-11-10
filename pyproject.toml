@@ -14,11 +14,13 @@ dependencies = [
     "mcp[cli]>=1.10.1",
     "httpx>=0.28.1",
     "ioa-observe-sdk==1.1.0",
-    "slim-bindings>=3.3.6,<4",
+    "slim-bindings==3.3.9",
     "agntcy-identity-service-sdk==0.0.7",
     "slima2a==0.9.3",
     "agntcy-dir>=1.0.0",
-    "grpcio-tools>=1.84.0",
+    # Floor only: ioa-observe-sdk 1.1.0 needs protobuf>=7.36.2, and a consumer whose lock holds
+    # grpcio-tools<1.85 makes uv backtrack to an unbuildable 1.30.0. SDK code does not import grpc_tools.
+    "grpcio-tools>=1.85.1",
 ]
 
 [project.urls]
@@ -28,7 +30,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest==7.4.4",
-    "pytest-asyncio==0.17.2",
+    "pytest-asyncio==0.23.8",
     "pytest-cov==4.1.0",
     "typing-extensions==4.15.0",
     "tiktoken==0.8.0",

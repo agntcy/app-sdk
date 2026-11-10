@@ -288,8 +288,8 @@ def get_or_init_slim_service() -> slim_bindings.Service:
     ``App`` or open a connection, so nothing gets subscribed to the SLIM
     dataplane.  Use it when the caller manages its own app and connection
     (the SlimRPC server does: a pub/sub app subscribed under the same name
-    as the RPC server would receive the clients' RPC sessions, which SLIM
-    2.x routes to the first matching subscriber).
+    as the RPC server can receive the clients' RPC sessions, because SLIM
+    delivers a session to only one of the subscribers of a name).
     """
     if not slim_bindings.is_initialized():
         tracing_config = slim_bindings.new_tracing_config()

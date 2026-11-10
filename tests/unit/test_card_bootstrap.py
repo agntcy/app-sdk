@@ -1053,7 +1053,7 @@ class TestCardBuilderBuildsContainers:
 
 
 # =========================================================================
-# slim + slimrpc under one name (SLIM 2.x delivers to a single subscriber)
+# slim + slimrpc under one name (SLIM delivers a session to one subscriber)
 # =========================================================================
 
 

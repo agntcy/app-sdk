@@ -45,7 +45,10 @@ from a2a.utils.errors import InternalError, TaskNotFoundError
 from slima2a.client_transport import SRPCTransport
 
 from agntcy_app_sdk.common import auth
-from agntcy_app_sdk.semantic.a2a.card_utils import declare_identity_auth
+from agntcy_app_sdk.semantic.a2a.card_utils import (
+    A2A_PROTOCOL_VERSION,
+    declare_identity_auth,
+)
 from agntcy_app_sdk.semantic.a2a.client.config import (
     ClientConfig,
     NatsTransportConfig,
@@ -2279,6 +2282,21 @@ class TestMultiTransportNegotiation:
             "JSONRPC",
             "http://new:9999",
         )
+
+    def test_sdk_declared_version_wins_over_unversioned_same_binding(self) -> None:
+        """Declaring A2A_PROTOCOL_VERSION changes the pick against a hand-built,
+        unversioned interface of the same binding, so a card that mixes both
+        negotiates the SDK-declared one regardless of order."""
+        factory = A2AClientFactory(ClientConfig())
+        unversioned = _iface("JSONRPC", "http://old:9999")
+        declared = _iface("JSONRPC", "http://new:9999")
+        declared.protocol_version = A2A_PROTOCOL_VERSION
+
+        for interfaces in ([unversioned, declared], [declared, unversioned]):
+            assert factory._negotiate(_make_agent_card(interfaces)) == (
+                "JSONRPC",
+                "http://new:9999",
+            )
 
     def test_protocol_version_does_not_override_binding_preference(self) -> None:
         """Version only breaks ties within the negotiated binding."""
