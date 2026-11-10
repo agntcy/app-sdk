@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0](https://github.com/agntcy/app-sdk/compare/v0.6.1...v0.7.0) (2026-11-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** requires slim-bindings 3.x (pinned 3.3.9); 2.x can no longer be installed next to the SDK. Callers that pass their own slim_bindings objects (for example SLIMTransport(slim_app=...)) must create them with slim-bindings 3.x. Also requires protobuf>=7.36.2 (via ioa-observe-sdk 1.1.0) and grpcio-tools>=1.85.1 (and so grpcio>=1.85.1). Run SLIM nodes at 3.x before or together with the clients (tested: 3.4.6). A 3.3.9 client against a 2.2.0 node, or against a 3.x node other than 3.4.6, was not tested. a2a-sdk 1.2.3 logs an "AgentCard is not spec-compliant" warning for any AgentInterface built without protocol_version, on startup and on every agent-card request. Interfaces created by add_interface now carry protocol_version "1.0"; cards built by hand without it still log the warning.
+
+### Features
+
+* **deps:** upgrade to SLIM 3 (slim-bindings 3.3.9, node 3.4.6) ([#143](https://github.com/agntcy/app-sdk/issues/143)) ([d51bfe5](https://github.com/agntcy/app-sdk/commit/d51bfe517f6218e00304a1146c95412709f1670b))
+
 ## [0.6.1](https://github.com/agntcy/app-sdk/compare/v0.6.0...v0.6.1) (2026-11-06)
 
 
