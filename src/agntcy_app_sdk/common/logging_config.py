@@ -83,9 +83,8 @@ def configure_logging() -> None:
     if formatter == "json":
         renderer: structlog.types.Processor = structlog.processors.JSONRenderer()
     else:
-        # ``format_exc_info`` above has already turned the traceback into text.
-        # Say so explicitly: the default formatter would be the rich one, and
-        # structlog warns when it is handed text it cannot pretty-print.
+        # ``format_exc_info`` above has already turned the traceback into text,
+        # so use plain_traceback; the default pretty formatter would otherwise warn.
         renderer = structlog.dev.ConsoleRenderer(
             exception_formatter=structlog.dev.plain_traceback
         )

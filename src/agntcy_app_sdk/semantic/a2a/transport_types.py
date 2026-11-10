@@ -39,11 +39,16 @@ class InterfaceTransport:
         AgentInterface(
             protocol_binding=InterfaceTransport.SLIM_PATTERNS,
             url="slim://topic",
+            protocol_version="1.0",
         )
         AgentInterface(
             protocol_binding=InterfaceTransport.JSONRPC,
             url="http://0.0.0.0:9999",
+            protocol_version="1.0",
         )
+
+    Set ``protocol_version`` on every interface: a2a-sdk 1.2 logs an
+    "AgentCard is not spec-compliant" warning for each one that leaves it empty.
 
     The ``JSONRPC`` URL is the address the server **binds** to.  When that is
     not an address clients can reach (``0.0.0.0``, in-container, behind a

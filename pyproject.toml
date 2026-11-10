@@ -18,7 +18,9 @@ dependencies = [
     "agntcy-identity-service-sdk==0.0.7",
     "slima2a==0.9.3",
     "agntcy-dir>=1.0.0",
-    "grpcio-tools==1.85.1",
+    # Floor only: ioa-observe-sdk 1.1.0 needs protobuf>=7.36.2, and a consumer whose lock holds
+    # grpcio-tools<1.85 makes uv backtrack to an unbuildable 1.30.0. SDK code does not import grpc_tools.
+    "grpcio-tools>=1.85.1",
 ]
 
 [project.urls]

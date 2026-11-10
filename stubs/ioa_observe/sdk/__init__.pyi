@@ -1,4 +1,4 @@
-# Local type stubs for ioa-observe-sdk 1.0.49, which ships no py.typed
+# Local type stubs for ioa-observe-sdk 1.1.0, which ships no py.typed
 # marker. Only the API this repository uses is declared.
 
 from opentelemetry.propagators.textmap import TextMapPropagator

@@ -568,7 +568,7 @@ def _reset_slim_globals() -> None:
     # "http://…:46357/", and ones the SDK opens internally).  Their ids are not
     # all stored anywhere (and looking them up by endpoint misses some, which
     # makes the next SLIM test fail with "connection not found"), so we
-    # brute-force disconnect ids 0..9.  SLIM 2.x logs a harmless
+    # brute-force disconnect ids 0..9.  SLIM logs a harmless
     # "connection unknown" ERROR line for every id that is not open; pytest
     # hides that output unless a test fails.
     try:
@@ -592,7 +592,7 @@ def _reset_slim_globals() -> None:
 
     # Clear the cached event loop so subsequent calls fall back to
     # asyncio.get_running_loop() and pick up the new test's loop.
-    # slim-bindings 2.x keeps one loop global per UniFFI namespace
+    # slim-bindings keeps one loop global per UniFFI namespace
     # (core + slimrpc); clear both.
     slim_bindings._slim_bindings.slim_bindings._UNIFFI_GLOBAL_EVENT_LOOP = None
     slim_bindings._slim_bindings.slim_rpc._UNIFFI_GLOBAL_EVENT_LOOP = None

@@ -19,24 +19,26 @@ Example::
 
 URL formats
 -----------
-Each transport accepts **two** URL styles:
+Each transport accepts **two** URL styles.  Every example also sets
+``protocol_version``: a2a-sdk 1.2 logs an "AgentCard is not spec-compliant"
+warning for each interface that leaves it empty.
 
 **Topic-only** (compatible with ``create_transport_uri`` / client cards)::
 
-    AgentInterface(protocol_binding="slimpatterns", url="slim://my_topic")
-    AgentInterface(protocol_binding="slimpatterns", url="slim://org/ns/agent")
-    AgentInterface(protocol_binding="natspatterns", url="nats://my_topic")
-    AgentInterface(protocol_binding="slimrpc",     url="slim://org/ns/agent")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://my_topic", protocol_version="1.0")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://org/ns/agent", protocol_version="1.0")
+    AgentInterface(protocol_binding="natspatterns", url="nats://my_topic", protocol_version="1.0")
+    AgentInterface(protocol_binding="slimrpc",     url="slim://org/ns/agent", protocol_version="1.0")
 
 Endpoint is resolved from ``SLIM_ENDPOINT`` / ``NATS_ENDPOINT`` env vars,
 defaulting to ``localhost`` with the standard port.
 
 **Explicit endpoint** (endpoint + path encoded in one URL)::
 
-    AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/my_topic")
-    AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/org/ns/agent")
-    AgentInterface(protocol_binding="natspatterns", url="nats://host:4222/my_topic")
-    AgentInterface(protocol_binding="slimrpc",     url="slim://host:46357/org/ns/agent")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/my_topic", protocol_version="1.0")
+    AgentInterface(protocol_binding="slimpatterns", url="slim://host:46357/org/ns/agent", protocol_version="1.0")
+    AgentInterface(protocol_binding="natspatterns", url="nats://host:4222/my_topic", protocol_version="1.0")
+    AgentInterface(protocol_binding="slimrpc",     url="slim://host:46357/org/ns/agent", protocol_version="1.0")
 
 Detection heuristic:
 
@@ -544,10 +546,12 @@ class CardBuilder:
     def _warn_on_slim_name_collision(self, interfaces: list[AgentInterface]) -> None:
         """Warn when ``slim`` (pub/sub) and ``slimrpc`` share one SLIM name.
 
-        SLIM 2.x hands an incoming session to a single subscriber of a name.
-        If a pub/sub app and an RPC server subscribe under the same name, RPC
-        calls can be delivered to the pub/sub app (which has no RPC handler)
-        and hang until they time out.
+        SLIM hands an incoming session to one subscriber of a name.  If a
+        pub/sub app and an RPC server subscribe under the same name, a call
+        can reach the wrong one (which has no handler for it) and hang until
+        it times out.  Observed on SLIM node 3.4.6 with slim-bindings 3.3.9:
+        with both subscribed, 0 of 5 slimrpc and 2 of 5 slim calls were
+        answered; with either one alone, 5 of 5.
         """
         rpc_names: set[str] = set()
         pubsub_names: set[str] = set()
@@ -563,9 +567,10 @@ class CardBuilder:
         for name in sorted(rpc_names & pubsub_names):
             logger.warning(
                 "The card declares both a 'slim' and a 'slimrpc' interface "
-                "for '%s'. SLIM 2.x delivers a session to only one subscriber "
-                "of a name, so slimrpc calls may never be answered. Give the "
-                "two interfaces different identities, or .skip() one of them.",
+                "for '%s'. A SLIM session may be delivered to only one "
+                "subscriber of a name, so calls over either interface may "
+                "never be answered (observed on SLIM 3.4.6). Give the two "
+                "interfaces different identities, or .skip() one of them.",
                 name,
             )
 

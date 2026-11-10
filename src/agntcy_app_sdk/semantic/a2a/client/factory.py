@@ -883,7 +883,7 @@ class A2AClientFactory:
           1. Initialise the global SLIM runtime via
              ``get_or_init_slim_service()`` — idempotent if slimpatterns
              already ran.  No pub/sub App is created: it is not needed for
-             RPC and SLIM 2.x does not cope with it next to the RPC App.
+             RPC, and next to the RPC App SLIM could deliver sessions to it.
           2. Open a *second* connection using ``endpoint + "/"`` so
              ``slim_bindings`` treats it as a distinct endpoint key.
           3. Create a separate App under ``name + "-rpc"`` to isolate

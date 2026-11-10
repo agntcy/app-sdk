@@ -135,7 +135,7 @@ async def main(
     # List order = server preference: move the requested transport to the front.
     preferred = _PREFERRED_TRANSPORT[transport_type]
 
-    # SLIM 2.x delivers a session to ONE subscriber of a name, so a pub/sub
+    # SLIM delivers a session to ONE subscriber of a name, so a pub/sub
     # (slim) interface and an RPC (slimrpc) interface must not share the same
     # identity.  Declare only the SLIM flavour that the test exercises.
     if preferred == InterfaceTransport.SLIM_RPC:

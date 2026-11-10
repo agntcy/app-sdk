@@ -1,4 +1,4 @@
-# Local type stubs for ioa-observe-sdk 1.0.49 (no py.typed).
+# Local type stubs for ioa-observe-sdk 1.1.0 (no py.typed).
 
 from contextlib import AbstractContextManager
 

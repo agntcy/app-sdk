@@ -68,7 +68,7 @@ card makes no claim.
     or that was running when the token was dropped, does not put its token
     back in the cache.
 - **SlimRPC server enforces the token, and the client sends it.** No
-  `slima2a` release forwards the call context (checked from 0.1.0 to 0.9.2),
+  `slima2a` release forwards the call context (checked from 0.1.0 to 0.9.3),
   but its generated stub accepts call metadata and the server can read it.
   So the SDK's client uses an `SRPCTransport` subclass that sends the call's
   service parameters, the token among them, as metadata, and keeps

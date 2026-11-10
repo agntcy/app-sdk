@@ -79,7 +79,7 @@ requires-dist = [
     { name = "a2a-sdk", specifier = "==1.2.3" },
     { name = "agntcy-dir", specifier = ">=1.0.0" },
     { name = "agntcy-identity-service-sdk", specifier = "==0.0.7" },
-    { name = "grpcio-tools", specifier = "==1.85.1" },
+    { name = "grpcio-tools", specifier = ">=1.85.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "ioa-observe-sdk", specifier = "==1.1.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.10.1" },

@@ -1,6 +1,6 @@
 # Test Coverage Report
 
-> Last updated: 2026-10-19 (SLIM 2.2.0, slim-bindings 2.2, a2a-sdk 1.1.0)
+> Last updated: 2026-11-09 (SLIM node 3.4.6, slim-bindings 3.3.9, slima2a 0.9.3, a2a-sdk 1.2.3)
 
 ## Overview
 
@@ -9,8 +9,8 @@
 | **Unit**  |   731 |    731 |      0 |       0 |
 | **E2E**   |    68 |     56 |      0 |      12 |
 
-E2E figures are from runs on 2026-10-19, one file at a time, against local
-SLIM 2.2.0, NATS, `dir-api-server` and `zot` containers. Identity auth was
+E2E figures in the Overview and in the per-file sections are from the
+2026-10-19 runs, one file at a time, against local SLIM 2.2.0, NATS, `dir-api-server` and `zot` containers. Identity auth was
 not enabled; no E2E test covers it. After the last identity-auth changes,
 every E2E file except `test_directory.py` was re-run (47 passed, 12 skipped);
 `test_directory.py` (9 passed) was last run earlier that day, because
@@ -20,9 +20,9 @@ Upgrade check on 2026-11-09 (SLIM node 3.4.6, slim-bindings 3.3.9, slima2a
 0.9.3, a2a-sdk 1.2.3): every E2E file was run against the compose services,
 including `test_slim_tls.py` and `test_a2a_usage_guide.py`, which `task
 test-e2e` does not run. Result: 56 passed, 12 skipped, 0 failed, the same
-figures as above. The unit suite had 788 passed. The per-file unit table
-below was not refreshed in that check and is still the 2026-10-19 snapshot
-(731 tests).
+figures as above. The unit suite had 812 passed. The Overview unit row and
+the per-file unit table below were not refreshed in that check and are still
+the 2026-10-19 snapshot (731 tests; 812 on the 2026-11-09 run).
 
 The E2E count is what pytest collects across every E2E file, including
 `test_directory.py` (9 tests, run against `dir-api-server` v1.0.0 and `zot`)

@@ -20,6 +20,7 @@ from a2a.types import (
 )
 
 from agntcy_app_sdk.semantic.a2a.card_utils import (
+    A2A_PROTOCOL_VERSION,
     IDENTITY_AUTH_SCHEME,
     add_interface,
     clone_card,
@@ -279,3 +280,29 @@ class TestAddInterface:
         iface = add_interface(card, "jsonrpc", "http://h", protocol_version="1.0")
 
         assert iface.protocol_version == "1.0"
+
+    def test_new_interface_defaults_to_the_sdk_protocol_version(self) -> None:
+        """a2a-sdk 1.2 warns about every interface with an empty version."""
+        card = _card()
+
+        iface = add_interface(card, "slim", "slim://a")
+
+        assert A2A_PROTOCOL_VERSION == "1.0"
+        assert iface.protocol_version == A2A_PROTOCOL_VERSION
+        assert card.supported_interfaces[0].protocol_version == A2A_PROTOCOL_VERSION
+
+    def test_explicit_protocol_version_overrides_the_default(self) -> None:
+        card = _card()
+
+        iface = add_interface(card, "jsonrpc", "http://h", protocol_version="0.3")
+
+        assert iface.protocol_version == "0.3"
+
+    def test_existing_interface_keeps_its_declared_protocol_version(self) -> None:
+        """The default applies to new interfaces only, never to declared ones."""
+        card = _card(("JSONRPC", "http://h"))
+
+        iface = add_interface(card, "jsonrpc", "http://other", replace=True)
+
+        assert iface.url == "http://other"
+        assert iface.protocol_version == ""
